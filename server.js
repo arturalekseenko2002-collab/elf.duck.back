@@ -181,8 +181,8 @@ app.post("/tg/prepared-referral-message", async (req, res) => {
     const photo = "https://blush-impressive-moth-462.mypinata.cloud/ipfs/bafybeihgmrlfe3p5p5dlc2ic7lcobhv6pwl4cp45injv24vuife7dtcowa";
 
     const caption =
-      `ELF DUCK\n` +
-      `Залетай по моей ссылке и получи 10% скидки на заказ`;
+      `🦆 ELF DUCK\n\n` +
+      `💸 Залетай по моей ссылке и получи 10% скидки на заказ!`;
 
     // Уникальный id для inline-result (обязателен)
     const resultId = crypto
