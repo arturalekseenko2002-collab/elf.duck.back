@@ -202,17 +202,13 @@ app.post("/tg/prepared-referral-message", async (req, res) => {
       parse_mode: "HTML",
     };
 
-    const sent = await bot.telegram.sendPhoto(
-      userId,
-      photo,
-      {
-        caption,
-        parse_mode: "HTML",
-        disable_notification: true,
-      }
-    );
+    // Create a PreparedInlineMessage for WebApp.shareMessage()
+    const prepared = await bot.telegram.callApi("savePreparedInlineMessage", {
+      user_id: userId,
+      result,
+    });
 
-    return res.json({ ok: true, message_id: sent?.message_id });
+    return res.json({ ok: true, id: prepared?.id });
 
   } catch (e) {
     console.error("/tg/prepared-referral-message error:", e);
