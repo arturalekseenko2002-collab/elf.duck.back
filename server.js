@@ -5,6 +5,7 @@ import mongoose from "mongoose";
 import cors from "cors";
 import { Telegraf, Markup } from "telegraf";
 import User from "./models/User.js";
+import crypto from "crypto";
 
 import path from "path";
 import fs from "fs";
@@ -148,6 +149,66 @@ app.get("/get-user", async (req, res) => {
   } catch (e) {
     console.error("/get-user error:", e);
     res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+// ===== Telegram prepared share (rich preview like “via @bot”) =====
+app.post("/tg/prepared-referral-message", async (req, res) => {
+  try {
+    if (!bot) {
+      return res.status(500).json({ ok: false, error: "Bot disabled (no TELEGRAM_BOT_TOKEN)" });
+    }
+
+    const { tgUserId, refCode } = req.body || {};
+
+    const userId = Number(tgUserId);
+    if (!userId || Number.isNaN(userId)) {
+      return res.status(400).json({ ok: false, error: "tgUserId is required" });
+    }
+
+    const code = String(refCode || "").trim();
+    if (!code) {
+      return res.status(400).json({ ok: false, error: "refCode is required" });
+    }
+
+    // Это ссылка, которую получатель откроет
+    const startParam = `ref_${code}`;
+    const deepLink = `https://t.me/elfduck_shop_bot?startapp=${encodeURIComponent(startParam)}`;
+
+    // Твой баннер/картинка для карточки
+    const photo = "https://blush-impressive-moth-462.mypinata.cloud/ipfs/bafybeihgmrlfe3p5p5dlc2ic7lcobhv6pwl4cp45injv24vuife7dtcowa";
+
+    const caption =
+      `🦆 ELF DUCK\n` +
+      `Залетай по моей ссылке и получи бонус 👇\n\n` +
+      `${deepLink}`;
+
+    // Уникальный id для inline-result (обязателен)
+    const resultId = crypto
+      .createHash("sha256")
+      .update(`${userId}|${startParam}|${photo}`)
+      .digest("hex")
+      .slice(0, 32);
+
+    // InlineQueryResultPhoto
+    const result = {
+      type: "photo",
+      id: resultId,
+      photo_url: photo,
+      thumbnail_url: photo,
+      caption,
+      parse_mode: "HTML",
+    };
+
+    const prepared = await bot.telegram.callApi("savePreparedInlineMessage", {
+      user_id: userId,
+      result,
+    });
+
+    return res.json({ ok: true, id: prepared?.id });
+  } catch (e) {
+    console.error("/tg/prepared-referral-message error:", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
   }
 });
 
