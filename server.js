@@ -182,8 +182,7 @@ app.post("/tg/prepared-referral-message", async (req, res) => {
 
     const caption =
       `🦆 ELF DUCK\n` +
-      `Залетай по моей ссылке и получи бонус 👇\n\n` +
-      `${deepLink}`;
+      `Залетай по моей ссылке и получи бонус 👇`;
 
     // Уникальный id для inline-result (обязателен)
     const resultId = crypto
@@ -200,6 +199,16 @@ app.post("/tg/prepared-referral-message", async (req, res) => {
       thumbnail_url: photo,
       caption,
       parse_mode: "HTML",
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "Получить бонус",
+              url: deepLink,
+            },
+          ],
+        ],
+      },
     };
 
     // Create a PreparedInlineMessage for WebApp.shareMessage()
