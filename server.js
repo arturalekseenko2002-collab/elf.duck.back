@@ -206,6 +206,11 @@ app.post("/tg/prepared-referral-message", async (req, res) => {
     const prepared = await bot.telegram.callApi("savePreparedInlineMessage", {
       user_id: userId,
       result,
+      // важно: нужно разрешить хотя бы один тип чатов, иначе будет ошибка
+      allow_user_chats: true,
+      allow_group_chats: true,
+      allow_channel_chats: true,
+      allow_bot_chats: true,
     });
 
     return res.json({ ok: true, id: prepared?.id });
