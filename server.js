@@ -210,10 +210,11 @@ app.post("/tg/prepared-referral-message", async (req, res) => {
 
     return res.json({ ok: true, id: prepared?.id });
 
-  } catch (e) {
-    console.error("/tg/prepared-referral-message error:", e);
-    return res.status(500).json({ ok: false, error: "Server error" });
-  }
+} catch (e) {
+  console.error("/tg/prepared-referral-message error:", e);
+  const tgDesc = e?.response?.description || e?.description || e?.message;
+  return res.status(500).json({ ok: false, error: tgDesc || "Server error" });
+}
 });
 
 // ==== Telegram бот ====
