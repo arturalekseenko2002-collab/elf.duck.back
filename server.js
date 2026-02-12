@@ -14,6 +14,8 @@ console.log("CWD:", process.cwd());
 console.log("ENV FILE EXISTS:", fs.existsSync(path.resolve(process.cwd(), ".env")));
 console.log("MONGODB_URI at runtime:", process.env.MONGODB_URI);
 
+let bot = null;
+
 const app = express();
 
 // CORS
@@ -217,8 +219,6 @@ app.post("/tg/prepared-referral-message", async (req, res) => {
 const TG_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const WEBAPP_URL = process.env.WEBAPP_URL || "";
 const START_BANNER_URL = process.env.START_BANNER_URL || "";
-
-let bot = null;
 
 if (TG_BOT_TOKEN) {
   bot = new Telegraf(TG_BOT_TOKEN);
