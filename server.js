@@ -415,6 +415,64 @@ app.post("/admin/products", requireAdmin, async (req, res) => {
   }
 });
 
+// ===== Admin: обновить товар (categoryKey, isActive, media, UI fields) =====
+app.patch("/admin/products/:id", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const b = req.body || {};
+
+    const allow = [
+      "productKey",
+      "categoryKey",
+      "isActive",
+      "title1",
+      "title2",
+      "titleModal",
+      "price",
+      "cardBgUrl",
+      "cardDuckUrl",
+      "orderImgUrl",
+      "classCardDuck",
+      "classActions",
+      "classNewBadge",
+      "newBadge",
+      "accentColor",
+    ];
+
+    const update = {};
+    for (const k of allow) {
+      if (b[k] !== undefined) update[k] = b[k];
+    }
+
+    if (update.productKey !== undefined) update.productKey = String(update.productKey);
+    if (update.categoryKey !== undefined) update.categoryKey = String(update.categoryKey);
+    if (update.title1 !== undefined) update.title1 = String(update.title1);
+    if (update.title2 !== undefined) update.title2 = String(update.title2);
+    if (update.titleModal !== undefined) update.titleModal = String(update.titleModal);
+    if (update.price !== undefined) update.price = Number(update.price || 0);
+    if (update.cardBgUrl !== undefined) update.cardBgUrl = String(update.cardBgUrl);
+    if (update.cardDuckUrl !== undefined) update.cardDuckUrl = String(update.cardDuckUrl);
+    if (update.orderImgUrl !== undefined) update.orderImgUrl = String(update.orderImgUrl);
+    if (update.classCardDuck !== undefined) update.classCardDuck = String(update.classCardDuck);
+    if (update.classActions !== undefined) update.classActions = String(update.classActions);
+    if (update.classNewBadge !== undefined) update.classNewBadge = String(update.classNewBadge);
+    if (update.newBadge !== undefined) update.newBadge = String(update.newBadge);
+    if (update.accentColor !== undefined) update.accentColor = String(update.accentColor);
+
+    const updated = await Product.findByIdAndUpdate(id, update, { new: true });
+    if (!updated) return res.status(404).json({ ok: false, error: "Product not found" });
+
+    return res.json({ ok: true, product: updated });
+  } catch (e) {
+    console.error("PATCH /admin/products/:id error:", e);
+    // duplicate key
+    if (e?.code === 11000) {
+      return res.status(409).json({ ok: false, error: "Product key already exists" });
+    }
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
 // ===== Admin: обновить склад вкуса у менеджера =====
 
 app.patch("/admin/products/:id/flavors/:flavorId/stock", requireAdmin, async (req, res) => {
