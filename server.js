@@ -4,8 +4,13 @@ import express from "express";
 import mongoose from "mongoose";
 import cors from "cors";
 import { Telegraf, Markup } from "telegraf";
-import User from "./models/User.js";
 import crypto from "crypto";
+
+import User from "./models/User.js";
+import Category from "./models/Category.js";
+import Product from "./models/Product.js";
+import Manager from "./models/Manager.js";
+
 
 import path from "path";
 import fs from "fs";
@@ -22,8 +27,8 @@ const app = express();
 app.use(
   cors({
     origin: (origin, cb) => cb(null, true),
-    methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type"],
+    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "x-admin-token"],
   })
 );
 app.use(express.json());
@@ -92,6 +97,17 @@ async function attachReferralIfAny(newUser, refRaw) {
       },
     }
   );
+}
+
+function requireAdmin(req, res, next) {
+  const token = req.header("x-admin-token") || "";
+  if (!process.env.ADMIN_API_TOKEN) {
+    return res.status(500).json({ ok: false, error: "ADMIN_API_TOKEN is not set" });
+  }
+  if (token !== process.env.ADMIN_API_TOKEN) {
+    return res.status(401).json({ ok: false, error: "Unauthorized" });
+  }
+  next();
 }
 
 // ==== API ====
@@ -230,6 +246,144 @@ app.post("/tg/prepared-referral-message", async (req, res) => {
   return res.status(500).json({ ok: false, error: tgDesc || "Server error" });
 }
 });
+
+// ===== Admin: создать категорию =====
+
+app.get("/categories", async (req, res) => {
+  try {
+    const onlyActive = String(req.query.active || "1") === "1";
+    const filter = onlyActive ? { isActive: true } : {};
+    const categories = await Category.find(filter).sort({ sortOrder: 1, createdAt: -1 }).lean();
+    res.json({ ok: true, categories });
+  } catch (e) {
+    console.error("GET /categories error:", e);
+    res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+// ===== Public: получить товары (с фильтром по categoryKey) =====
+
+app.get("/products", async (req, res) => {
+  try {
+    const onlyActive = String(req.query.active || "1") === "1";
+    const filter = onlyActive ? { isActive: true } : {};
+    if (req.query.categoryKey) filter.categoryKey = String(req.query.categoryKey);
+
+    const products = await Product.find(filter).lean();
+
+    // totalsByManager (общее количество по товару для каждого менеджера)
+    const withTotals = products.map((p) => {
+      const map = new Map(); // managerTelegramId -> { totalQty, availableFlavorsCount }
+
+      for (const fl of p.flavors || []) {
+        if (fl.isActive === false) continue;
+
+        for (const s of fl.stockByManager || []) {
+          const mid = String(s.managerTelegramId || "");
+          if (!mid) continue;
+
+          const qty = Number(s.qty || 0);
+          const cur = map.get(mid) || { managerTelegramId: mid, totalQty: 0, availableFlavorsCount: 0 };
+          cur.totalQty += qty;
+          if (qty > 0) cur.availableFlavorsCount += 1;
+
+          map.set(mid, cur);
+        }
+      }
+
+      return { ...p, totalsByManager: Array.from(map.values()) };
+    });
+
+    res.json({ ok: true, products: withTotals });
+  } catch (e) {
+    console.error("GET /products error:", e);
+    res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+// ===== Admin: создать товар =====
+
+app.post("/admin/products", requireAdmin, async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.productKey) return res.status(400).json({ ok: false, error: "productKey is required" });
+    if (!b.categoryKey) return res.status(400).json({ ok: false, error: "categoryKey is required" });
+
+    const created = await Product.create({
+      productKey: String(b.productKey),
+      categoryKey: String(b.categoryKey),
+      isActive: b.isActive ?? true,
+
+      title1: b.title1 || "",
+      title2: b.title2 || "",
+      titleModal: b.titleModal || "",
+      price: Number(b.price || 0),
+
+      cardBgUrl: b.cardBgUrl || "",
+      cardDuckUrl: b.cardDuckUrl || "",
+      orderImgUrl: b.orderImgUrl || "",
+
+      classCardDuck: b.classCardDuck || "",
+      classActions: b.classActions || "",
+      classNewBadge: b.classNewBadge || "",
+      newBadge: b.newBadge || "",
+
+      accentColor: b.accentColor || "",
+
+      flavors: Array.isArray(b.flavors) ? b.flavors : [],
+    });
+
+    res.json({ ok: true, product: created });
+  } catch (e) {
+    console.error("POST /admin/products error:", e);
+    res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+// ===== Admin: обновить склад вкуса у менеджера =====
+
+app.patch("/admin/products/:id/flavors/:flavorId/stock", requireAdmin, async (req, res) => {
+  try {
+    const { id, flavorId } = req.params;
+    const { managerTelegramId, qty, updatedByTelegramId } = req.body || {};
+
+    if (!managerTelegramId) {
+      return res.status(400).json({ ok: false, error: "managerTelegramId is required" });
+    }
+
+    const nextQty = Math.max(0, Number(qty || 0));
+
+    const product = await Product.findById(id);
+    if (!product) return res.status(404).json({ ok: false, error: "Product not found" });
+
+    const flavor = product.flavors.id(flavorId);
+    if (!flavor) return res.status(404).json({ ok: false, error: "Flavor not found" });
+
+    const mid = String(managerTelegramId);
+
+    const existing = (flavor.stockByManager || []).find((s) => String(s.managerTelegramId) === mid);
+
+    if (existing) {
+      existing.qty = nextQty;
+      existing.updatedAt = new Date();
+      existing.updatedByTelegramId = String(updatedByTelegramId || "");
+    } else {
+      flavor.stockByManager.push({
+        managerTelegramId: mid,
+        qty: nextQty,
+        updatedAt: new Date(),
+        updatedByTelegramId: String(updatedByTelegramId || ""),
+      });
+    }
+
+    await product.save();
+    res.json({ ok: true, product });
+  } catch (e) {
+    console.error("PATCH stock error:", e);
+    res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
 
 // ==== Telegram бот ====
 
