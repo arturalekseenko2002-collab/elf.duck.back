@@ -12,12 +12,6 @@ import Product from "./models/Product.js";
 import Manager from "./models/Manager.js";
 
 
-import path from "path";
-import fs from "fs";
-
-console.log("CWD:", process.cwd());
-console.log("ENV FILE EXISTS:", fs.existsSync(path.resolve(process.cwd(), ".env")));
-console.log("MONGODB_URI at runtime:", process.env.MONGODB_URI);
 
 let bot = null;
 
@@ -34,7 +28,6 @@ app.use(
 app.use(express.json());
 
 // MongoDB
-console.log("MONGODB_URI at runtime:", process.env.MONGODB_URI);
 mongoose
   .connect(process.env.MONGODB_URI)
   .then(() => console.log("✅ MongoDB connected"))
@@ -44,6 +37,45 @@ mongoose
 
 function genRefCode() {
   return Math.random().toString(36).slice(2, 8); // 6 симолов
+}
+
+function translitRuToLat(input) {
+  const s = String(input || "").trim().toLowerCase();
+  const map = {
+    а:"a", б:"b", в:"v", г:"g", д:"d", е:"e", ё:"e", ж:"zh", з:"z", и:"i", й:"y",
+    к:"k", л:"l", м:"m", н:"n", о:"o", п:"p", р:"r", с:"s", т:"t", у:"u", ф:"f",
+    х:"h", ц:"ts", ч:"ch", ш:"sh", щ:"sch", ъ:"", ы:"y", ь:"", э:"e", ю:"yu", я:"ya",
+  };
+
+  let out = "";
+  for (const ch of s) {
+    if (map[ch] !== undefined) out += map[ch];
+    else if (/[a-z0-9]/.test(ch)) out += ch;
+    else out += "-";
+  }
+
+  out = out.replace(/-+/g, "-").replace(/^-+/, "").replace(/-+$/, "");
+  if (out.length < 2) out = "category";
+  if (out.length > 32) out = out.slice(0, 32).replace(/-+$/, "");
+  return out;
+}
+
+async function ensureUniqueCategoryKey(baseKey) {
+  let key = String(baseKey || "").trim();
+  if (!key) key = "category";
+
+  const exists0 = await Category.findOne({ key }, { _id: 1 }).lean();
+  if (!exists0) return key;
+
+  for (let i = 2; i <= 50; i++) {
+    const suffix = `-${i}`;
+    const cut = Math.max(0, 32 - suffix.length);
+    const candidate = `${key.slice(0, cut).replace(/-+$/, "")}${suffix}`;
+    const exists = await Category.findOne({ key: candidate }, { _id: 1 }).lean();
+    if (!exists) return candidate;
+  }
+
+  return `${key.slice(0, 24).replace(/-+$/, "")}-${Date.now().toString(36).slice(-6)}`;
 }
 
 async function ensureUserRefCode(user) {
@@ -265,12 +297,17 @@ app.get("/categories", async (req, res) => {
 app.post("/admin/categories", requireAdmin, async (req, res) => {
   try {
     const b = req.body || {};
-    if (!b.key || !b.title) {
-      return res.status(400).json({ ok: false, error: "key and title are required" });
+    if (!b.title) {
+      return res.status(400).json({ ok: false, error: "title is required" });
     }
 
+    // auto key if omitted
+    const rawTitle = String(b.title || "");
+    const baseKey = b.key ? String(b.key) : translitRuToLat(rawTitle);
+    const finalKey = await ensureUniqueCategoryKey(baseKey);
+
     const created = await Category.create({
-      key: String(b.key),
+      key: finalKey,
       title: String(b.title),
       isActive: b.isActive ?? true,
 
