@@ -41,6 +41,8 @@ const productSchema = new mongoose.Schema(
     // 🔥 category is dynamic (created from admin/front). Store by key.
     categoryKey: { type: String, required: true },
 
+    sortOrder: { type: Number, default: 0 },
+
     isActive: { type: Boolean, default: true },
 
     title1: { type: String, default: "" },

@@ -78,6 +78,24 @@ async function ensureUniqueCategoryKey(baseKey) {
   return `${key.slice(0, 24).replace(/-+$/, "")}-${Date.now().toString(36).slice(-6)}`;
 }
 
+async function ensureUniqueProductKey(baseKey) {
+  let key = String(baseKey || "").trim();
+  if (!key) key = "product";
+
+  const exists0 = await Product.findOne({ productKey: key }, { _id: 1 }).lean();
+  if (!exists0) return key;
+
+  for (let i = 2; i <= 50; i++) {
+    const suffix = `-${i}`;
+    const cut = Math.max(0, 32 - suffix.length);
+    const candidate = `${key.slice(0, cut).replace(/-+$/, "")}${suffix}`;
+    const exists = await Product.findOne({ productKey: candidate }, { _id: 1 }).lean();
+    if (!exists) return candidate;
+  }
+
+  return `${key.slice(0, 24).replace(/-+$/, "")}-${Date.now().toString(36).slice(-6)}`;
+}
+
 async function ensureUserRefCode(user) {
   if (user?.referral?.code) return user.referral.code;
   let code = genRefCode();
@@ -386,7 +404,7 @@ app.get("/products", async (req, res) => {
     const filter = onlyActive ? { isActive: true } : {};
     if (req.query.categoryKey) filter.categoryKey = String(req.query.categoryKey);
 
-    const products = await Product.find(filter).lean();
+    const products = await Product.find(filter).sort({ sortOrder: 1, createdAt: -1 }).lean();
 
     // totalsByManager (общее количество по товару для каждого менеджера)
     const withTotals = products.map((p) => {
@@ -422,12 +440,17 @@ app.get("/products", async (req, res) => {
 
 app.post("/admin/products", requireAdmin, async (req, res) => {
   try {
+    
     const b = req.body || {};
-    if (!b.productKey) return res.status(400).json({ ok: false, error: "productKey is required" });
-    if (!b.categoryKey) return res.status(400).json({ ok: false, error: "categoryKey is required" });
+    const t1 = String(b.title1 || "").trim();
+    const t2 = String(b.title2 || "").trim();
+    const baseFromTitle = translitRuToLat([t1, t2].filter(Boolean).join(" "));
+    const baseKey = b.productKey ? String(b.productKey) : baseFromTitle;
+    const finalProductKey = await ensureUniqueProductKey(baseKey);
 
     const created = await Product.create({
-      productKey: String(b.productKey),
+      productKey: finalProductKey,
+      sortOrder: Number(b.sortOrder || 0),
       categoryKey: String(b.categoryKey),
       isActive: b.isActive ?? true,
 
@@ -465,6 +488,7 @@ app.patch("/admin/products/:id", requireAdmin, async (req, res) => {
 
     const allow = [
       "productKey",
+      "sortOrder",
       "categoryKey",
       "isActive",
       "title1",
@@ -487,6 +511,7 @@ app.patch("/admin/products/:id", requireAdmin, async (req, res) => {
     }
 
     if (update.productKey !== undefined) update.productKey = String(update.productKey);
+    if (update.sortOrder !== undefined) update.sortOrder = Number(update.sortOrder || 0);
     if (update.categoryKey !== undefined) update.categoryKey = String(update.categoryKey);
     if (update.title1 !== undefined) update.title1 = String(update.title1);
     if (update.title2 !== undefined) update.title2 = String(update.title2);
