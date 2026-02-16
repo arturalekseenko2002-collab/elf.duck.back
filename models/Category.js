@@ -30,6 +30,8 @@ const categorySchema = new mongoose.Schema(
     // текст бейджа (например "NEW DROP")
     badgeText: { type: String, default: "" },
 
+    badgeSide: { type: String, enum: ["left", "right"], default: "left" },
+
     // сортировка в сетке категорий
     sortOrder: { type: Number, default: 0 },
   },

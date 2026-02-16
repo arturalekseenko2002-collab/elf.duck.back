@@ -280,6 +280,7 @@ app.post("/admin/categories", requireAdmin, async (req, res) => {
       titleClass: b.titleClass || "cardTitle",
       showOverlay: !!b.showOverlay,
       badgeText: b.badgeText || "",
+      badgeSide: (b.badgeSide === "right" ? "right" : "left"),
       sortOrder: Number(b.sortOrder || 0),
     });
 
@@ -311,6 +312,7 @@ app.patch("/admin/categories/:id", requireAdmin, async (req, res) => {
       "titleClass",
       "showOverlay",
       "badgeText",
+      "badgeSide",
       "sortOrder",
     ];
 
@@ -322,6 +324,9 @@ app.patch("/admin/categories/:id", requireAdmin, async (req, res) => {
     if (update.title !== undefined) update.title = String(update.title);
     if (update.sortOrder !== undefined) update.sortOrder = Number(update.sortOrder || 0);
     if (update.showOverlay !== undefined) update.showOverlay = !!update.showOverlay;
+    if (update.badgeSide !== undefined) {
+      update.badgeSide = (update.badgeSide === "right" ? "right" : "left");
+    }
 
     const cat = await Category.findByIdAndUpdate(id, update, { new: true });
     if (!cat) return res.status(404).json({ ok: false, error: "Category not found" });
