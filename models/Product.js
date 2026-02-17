@@ -1,10 +1,19 @@
 import mongoose from "mongoose";
 
-/* ================= STOCK PER MANAGER ================= */
-const stockByManagerSchema = new mongoose.Schema(
+/* ================= STOCK PER PICKUP POINT ================= */
+const stockByPickupPointSchema = new mongoose.Schema(
   {
-    managerTelegramId: { type: String, required: true },
-    qty: { type: Number, default: 0 },
+    pickupPointId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "PickupPoint",
+      required: true,
+    },
+
+    // ФИЗИЧЕСКИЙ остаток на точке
+    totalQty: { type: Number, default: 0, min: 0 },
+
+    // зарезервировано заявками "в обработке"
+    reservedQty: { type: Number, default: 0, min: 0 },
 
     updatedByTelegramId: { type: String, default: "" },
     updatedAt: { type: Date, default: Date.now },
@@ -15,7 +24,9 @@ const stockByManagerSchema = new mongoose.Schema(
 /* ================= FLAVOR ================= */
 const flavorSchema = new mongoose.Schema(
   {
-    flavorKey: { type: String, required: true },
+    // stable id like "strawberry-dragon" (formerly flavorKey)
+    flavorKey: { type: String, required: true, trim: true, lowercase: true },
+
     label: { type: String, required: true },
     isActive: { type: Boolean, default: true },
 
@@ -28,7 +39,8 @@ const flavorSchema = new mongoose.Schema(
       },
     },
 
-    stockByManager: { type: [stockByManagerSchema], default: [] },
+    // qty is stored per pickup point (NOT globally, NOT shared across products)
+    stockByPickupPoint: { type: [stockByPickupPointSchema], default: [] },
   },
   { timestamps: false }
 );
@@ -38,11 +50,10 @@ const productSchema = new mongoose.Schema(
   {
     productKey: { type: String, required: true, unique: true },
 
-    // 🔥 category is dynamic (created from admin/front). Store by key.
+    // category is dynamic (created from admin/front). Store by key.
     categoryKey: { type: String, required: true },
 
     sortOrder: { type: Number, default: 0 },
-
     isActive: { type: Boolean, default: true },
 
     title1: { type: String, default: "" },
@@ -68,4 +79,4 @@ const productSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-export default mongoose.model("Product", productSchema);
+export default mongoose.models.Product || mongoose.model("Product", productSchema);

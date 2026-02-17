@@ -9,7 +9,7 @@ import crypto from "crypto";
 import User from "./models/User.js";
 import Category from "./models/Category.js";
 import Product from "./models/Product.js";
-import PickupPoint from "./models/Manager.js"; // временно держим модель тут
+import PickupPoint from "./models/PickupPoint.js"; // временно держим модель тут
 
 
 
@@ -523,12 +523,12 @@ app.get("/products", async (req, res) => {
       for (const fl of p.flavors || []) {
         if (fl.isActive === false) continue;
 
-        for (const s of fl.stockByManager || []) {
-          const mid = String(s.managerTelegramId || "");
+        for (const s of fl.stockByPickupPoint || []) {
+          const mid = String(s.pickupPointId || "");
           if (!mid) continue;
 
-          const qty = Number(s.qty || 0);
-          const cur = map.get(mid) || { managerTelegramId: mid, totalQty: 0, availableFlavorsCount: 0 };
+          const qty = Number(s.totalQty || 0);
+          const cur = map.get(mid) || { pickupPointId: mid, totalQty: 0, availableFlavorsCount: 0 };
           cur.totalQty += qty;
           if (qty > 0) cur.availableFlavorsCount += 1;
 
@@ -536,7 +536,7 @@ app.get("/products", async (req, res) => {
         }
       }
 
-      return { ...p, totalsByManager: Array.from(map.values()) };
+      return { ...p, totalsByPickupPoint: Array.from(map.values()) };
     });
 
     res.json({ ok: true, products: withTotals });
@@ -650,18 +650,69 @@ app.patch("/admin/products/:id", requireAdmin, async (req, res) => {
   }
 });
 
-// ===== Admin: обновить склад вкуса у менеджера =====
+// ===== Admin: создать/обновить вкус у товара =====
+app.post("/admin/products/:id/flavors", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const b = req.body || {};
 
+    const flavorKey = String(b.flavorKey || "").trim().toLowerCase();
+    const label = String(b.label || "").trim();
+
+    if (!flavorKey) {
+      return res.status(400).json({ ok: false, error: "flavorKey is required" });
+    }
+    if (!label) {
+      return res.status(400).json({ ok: false, error: "label is required" });
+    }
+
+    const gradient = Array.isArray(b.gradient) ? b.gradient.map((x) => String(x)) : [];
+    if (gradient.length !== 2) {
+      return res.status(400).json({ ok: false, error: "gradient must contain exactly 2 colors" });
+    }
+
+    const product = await Product.findById(id);
+    if (!product) return res.status(404).json({ ok: false, error: "Product not found" });
+
+    const existing = (product.flavors || []).find(
+      (f) => String(f.flavorKey || "").toLowerCase() === flavorKey
+    );
+
+    if (existing) {
+      // update flavor meta
+      existing.label = label;
+      existing.gradient = gradient;
+      if (b.isActive !== undefined) existing.isActive = !!b.isActive;
+    } else {
+      // create new flavor
+      product.flavors.push({
+        flavorKey,
+        label,
+        isActive: b.isActive ?? true,
+        gradient,
+        stockByPickupPoint: [],
+      });
+    }
+
+    await product.save();
+    return res.json({ ok: true, product });
+  } catch (e) {
+    console.error("POST /admin/products/:id/flavors error:", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+// ===== Admin: обновить склад вкуса по точке самовывоза =====
 app.patch("/admin/products/:id/flavors/:flavorId/stock", requireAdmin, async (req, res) => {
   try {
     const { id, flavorId } = req.params;
-    const { managerTelegramId, qty, updatedByTelegramId } = req.body || {};
+    const { pickupPointId, totalQty, updatedByTelegramId } = req.body || {};
 
-    if (!managerTelegramId) {
-      return res.status(400).json({ ok: false, error: "managerTelegramId is required" });
+    if (!pickupPointId) {
+      return res.status(400).json({ ok: false, error: "pickupPointId is required" });
     }
 
-    const nextQty = Math.max(0, Number(qty || 0));
+    const nextQty = Math.max(0, Number(totalQty ?? 0));
 
     const product = await Product.findById(id);
     if (!product) return res.status(404).json({ ok: false, error: "Product not found" });
@@ -669,28 +720,32 @@ app.patch("/admin/products/:id/flavors/:flavorId/stock", requireAdmin, async (re
     const flavor = product.flavors.id(flavorId);
     if (!flavor) return res.status(404).json({ ok: false, error: "Flavor not found" });
 
-    const mid = String(managerTelegramId);
+    const pid = String(pickupPointId);
 
-    const existing = (flavor.stockByManager || []).find((s) => String(s.managerTelegramId) === mid);
+    const existing = (flavor.stockByPickupPoint || []).find(
+      (s) => String(s.pickupPointId) === pid
+    );
 
     if (existing) {
-      existing.qty = nextQty;
+      existing.totalQty = nextQty;
+      // reservedQty пока не трогаем (вы сказали резерв позже)
       existing.updatedAt = new Date();
       existing.updatedByTelegramId = String(updatedByTelegramId || "");
     } else {
-      flavor.stockByManager.push({
-        managerTelegramId: mid,
-        qty: nextQty,
+      flavor.stockByPickupPoint.push({
+        pickupPointId, // важно: сюда приходит ObjectId строки, mongoose приведёт
+        totalQty: nextQty,
+        reservedQty: 0,
         updatedAt: new Date(),
         updatedByTelegramId: String(updatedByTelegramId || ""),
       });
     }
 
     await product.save();
-    res.json({ ok: true, product });
+    return res.json({ ok: true, product });
   } catch (e) {
-    console.error("PATCH stock error:", e);
-    res.status(500).json({ ok: false, error: "Server error" });
+    console.error("PATCH /admin/products/:id/flavors/:flavorId/stock error:", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
   }
 });
 
