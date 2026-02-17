@@ -9,7 +9,8 @@ import crypto from "crypto";
 import User from "./models/User.js";
 import Category from "./models/Category.js";
 import Product from "./models/Product.js";
-import PickupPoint from "./models/PickupPoint.js"; // временно держим модель тут
+import PickupPoint from "./models/PickupPoint.js"; 
+import Cart from "./models/Cart.js";
 
 
 
@@ -542,6 +543,70 @@ app.get("/products", async (req, res) => {
     res.json({ ok: true, products: withTotals });
   } catch (e) {
     console.error("GET /products error:", e);
+    res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+// ===== Public: get cart by telegramId =====
+app.get("/cart", async (req, res) => {
+  try {
+    const telegramId = String(req.query.telegramId || "").trim();
+    if (!telegramId) return res.status(400).json({ ok: false, error: "telegramId is required" });
+
+    const cart = await Cart.findOne({ telegramId }).lean();
+    res.json({ ok: true, cart: cart || { telegramId, items: [], checkoutPickupPointId: null } });
+  } catch (e) {
+    console.error("GET /cart error:", e);
+    res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+// ===== Public: replace cart (save full state) =====
+app.put("/cart", async (req, res) => {
+  try {
+    const b = req.body || {};
+    const telegramId = String(b.telegramId || "").trim();
+    if (!telegramId) return res.status(400).json({ ok: false, error: "telegramId is required" });
+
+    const items = Array.isArray(b.items) ? b.items : [];
+    const checkoutPickupPointId = b.checkoutPickupPointId || null;
+
+    // минимальная нормализация
+    const cleanItems = items
+      .map((it) => ({
+        productKey: String(it.productKey || "").trim(),
+        flavorKey: String(it.flavorKey || "").trim(),
+        qty: Math.max(1, Number(it.qty || 1)),
+
+        flavorLabel: String(it.flavorLabel || ""),
+        gradient: Array.isArray(it.gradient) ? it.gradient.slice(0, 2) : [],
+
+        // ✅ snapshot для UI
+        title1: String(it.title1 || ""),
+        title2: String(it.title2 || ""),
+        unitPrice: Number(it.unitPrice || 0),
+
+        cardBgUrl: String(it.cardBgUrl || ""),
+        cardDuckUrl: String(it.cardDuckUrl || ""),
+        newBadge: String(it.newBadge || ""),
+      }))
+      .filter((it) => it.productKey && it.flavorKey);
+
+    const updated = await Cart.findOneAndUpdate(
+      { telegramId },
+      {
+        $set: {
+          telegramId,
+          items: cleanItems,
+          checkoutPickupPointId,
+        },
+      },
+      { upsert: true, new: true }
+    ).lean();
+
+    res.json({ ok: true, cart: updated });
+  } catch (e) {
+    console.error("PUT /cart error:", e);
     res.status(500).json({ ok: false, error: "Server error" });
   }
 });
