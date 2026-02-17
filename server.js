@@ -579,17 +579,12 @@ app.put("/cart", async (req, res) => {
         flavorKey: String(it.flavorKey || "").trim(),
         qty: Math.max(1, Number(it.qty || 1)),
 
-        flavorLabel: String(it.flavorLabel || ""),
-        gradient: Array.isArray(it.gradient) ? it.gradient.slice(0, 2) : [],
-
-        // ✅ snapshot для UI
-        title1: String(it.title1 || ""),
-        title2: String(it.title2 || ""),
+        // цена фиксируется в корзине (чтобы не прыгала)
         unitPrice: Number(it.unitPrice || 0),
 
-        cardBgUrl: String(it.cardBgUrl || ""),
-        cardDuckUrl: String(it.cardDuckUrl || ""),
-        newBadge: String(it.newBadge || ""),
+        // для UI вкуса
+        flavorLabel: String(it.flavorLabel || ""),
+        gradient: Array.isArray(it.gradient) ? it.gradient.slice(0, 2) : [],
       }))
       .filter((it) => it.productKey && it.flavorKey);
 
