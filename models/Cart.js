@@ -37,9 +37,6 @@ const cartSchema = new mongoose.Schema(
 
     // “сохраненная” точка на оформлении (можно менять потом в корзине)
     checkoutPickupPointId: { type: mongoose.Schema.Types.ObjectId, ref: "PickupPoint", default: null },
-
-    // TTL: удаляем корзины, которые не обновлялись 1 день
-    updatedAt: { timestamps: true },
   },
   { timestamps: true }
 );
