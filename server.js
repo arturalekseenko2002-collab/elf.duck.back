@@ -19,14 +19,14 @@ let bot = null;
 const app = express();
 
 // CORS
-app.use(
-  cors({
-    origin: (origin, cb) => cb(null, true),
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "x-admin-token"],
-  })
-);
-app.options("*", cors());
+const corsOptions = {
+  origin: (origin, cb) => cb(null, true),
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "x-admin-token"],
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 app.use(express.json());
 
 // MongoDB
