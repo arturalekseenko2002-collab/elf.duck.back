@@ -96,6 +96,24 @@ async function ensureUniqueProductKey(baseKey) {
   return `${key.slice(0, 24).replace(/-+$/, "")}-${Date.now().toString(36).slice(-6)}`;
 }
 
+async function ensureUniquePickupPointKey(baseKey) {
+  let key = String(baseKey || "").trim();
+  if (!key) key = "point";
+
+  const exists0 = await PickupPoint.findOne({ key }, { _id: 1 }).lean();
+  if (!exists0) return key;
+
+  for (let i = 2; i <= 50; i++) {
+    const suffix = `-${i}`;
+    const cut = Math.max(0, 32 - suffix.length);
+    const candidate = `${key.slice(0, cut).replace(/-+$/, "")}${suffix}`;
+    const exists = await PickupPoint.findOne({ key: candidate }, { _id: 1 }).lean();
+    if (!exists) return candidate;
+  }
+
+  return `${key.slice(0, 24).replace(/-+$/, "")}-${Date.now().toString(36).slice(-6)}`;
+}
+
 async function ensureUserRefCode(user) {
   if (user?.referral?.code) return user.referral.code;
   let code = genRefCode();
@@ -295,6 +313,98 @@ app.post("/tg/prepared-referral-message", async (req, res) => {
   const tgDesc = e?.response?.description || e?.description || e?.message;
   return res.status(500).json({ ok: false, error: tgDesc || "Server error" });
 }
+});
+
+// ===== Public: pickup points =====
+app.get("/pickup-points", async (req, res) => {
+  try {
+    const onlyActive = String(req.query.active || "1") === "1";
+    const filter = onlyActive ? { isActive: true } : {};
+    const points = await PickupPoint.find(filter).sort({ sortOrder: 1, createdAt: -1 }).lean();
+    res.json({ ok: true, pickupPoints: points });
+  } catch (e) {
+    console.error("GET /pickup-points error:", e);
+    res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+// ===== Admin: pickup points (CRUD) =====
+app.post("/admin/pickup-points", requireAdmin, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const rawTitle = String(b.title || "").trim();
+    const rawAddress = String(b.address || "").trim();
+
+    if (!rawTitle && !rawAddress) {
+      return res.status(400).json({ ok: false, error: "title or address is required" });
+    }
+
+    const baseKey = b.key ? String(b.key) : translitRuToLat(rawTitle || rawAddress);
+    const finalKey = await ensureUniquePickupPointKey(baseKey);
+
+    const allowed = Array.isArray(b.allowedAdminTelegramIds)
+      ? b.allowedAdminTelegramIds.map((x) => String(x)).filter(Boolean)
+      : [];
+
+    const created = await PickupPoint.create({
+      key: finalKey,
+      title: rawTitle,
+      address: rawAddress,
+      sortOrder: Number(b.sortOrder || 0),
+      isActive: b.isActive ?? true,
+      allowedAdminTelegramIds: allowed,
+    });
+
+    res.json({ ok: true, pickupPoint: created });
+  } catch (e) {
+    console.error("POST /admin/pickup-points error:", e);
+    if (e?.code === 11000) return res.status(409).json({ ok: false, error: "Pickup point key already exists" });
+    res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+app.patch("/admin/pickup-points/:id", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const b = req.body || {};
+
+    const allow = ["key", "title", "address", "sortOrder", "isActive", "allowedAdminTelegramIds"];
+    const update = {};
+    for (const k of allow) if (b[k] !== undefined) update[k] = b[k];
+
+    if (update.key !== undefined) update.key = String(update.key);
+    if (update.title !== undefined) update.title = String(update.title);
+    if (update.address !== undefined) update.address = String(update.address);
+    if (update.sortOrder !== undefined) update.sortOrder = Number(update.sortOrder || 0);
+    if (update.isActive !== undefined) update.isActive = !!update.isActive;
+
+    if (update.allowedAdminTelegramIds !== undefined) {
+      update.allowedAdminTelegramIds = Array.isArray(update.allowedAdminTelegramIds)
+        ? update.allowedAdminTelegramIds.map((x) => String(x)).filter(Boolean)
+        : [];
+    }
+
+    const updated = await PickupPoint.findByIdAndUpdate(id, update, { new: true });
+    if (!updated) return res.status(404).json({ ok: false, error: "Pickup point not found" });
+
+    res.json({ ok: true, pickupPoint: updated });
+  } catch (e) {
+    console.error("PATCH /admin/pickup-points/:id error:", e);
+    if (e?.code === 11000) return res.status(409).json({ ok: false, error: "Pickup point key already exists" });
+    res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+app.delete("/admin/pickup-points/:id", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deleted = await PickupPoint.findByIdAndDelete(id);
+    if (!deleted) return res.status(404).json({ ok: false, error: "Pickup point not found" });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("DELETE /admin/pickup-points/:id error:", e);
+    res.status(500).json({ ok: false, error: "Server error" });
+  }
 });
 
 // ===== Public: categories =====
