@@ -22,10 +22,11 @@ const app = express();
 app.use(
   cors({
     origin: (origin, cb) => cb(null, true),
-    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "x-admin-token"],
   })
 );
+app.options("*", cors());
 app.use(express.json());
 
 // MongoDB
