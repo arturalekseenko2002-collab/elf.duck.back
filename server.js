@@ -579,10 +579,10 @@ app.put("/cart", async (req, res) => {
         flavorKey: String(it.flavorKey || "").trim(),
         qty: Math.max(1, Number(it.qty || 1)),
 
-        // цена фиксируется в корзине (чтобы не прыгала)
         unitPrice: Number(it.unitPrice || 0),
 
-        // для UI вкуса
+        pickupPointId: it.pickupPointId || null,
+
         flavorLabel: String(it.flavorLabel || ""),
         gradient: Array.isArray(it.gradient) ? it.gradient.slice(0, 2) : [],
       }))
