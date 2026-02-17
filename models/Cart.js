@@ -3,15 +3,17 @@ import mongoose from "mongoose";
 /* ================= CART ITEM ================= */
 const cartItemSchema = new mongoose.Schema(
   {
-    // чтобы можно было однозначно мерджить одинаковые позиции
-    // (товар + вкус + точка)
+    // unique position key: (product + flavor)
     productKey: { type: String, required: true },
     flavorKey: { type: String, required: true },
 
-    // количество выбранного вкуса
+    // quantity
     qty: { type: Number, required: true, min: 1, default: 1 },
 
-    // для UI / истории (не обязательное, но удобно)
+    // IMPORTANT: price is stored per item (snapshot)
+    unitPrice: { type: Number, default: 0, min: 0 },
+
+    // UI helpers (optional)
     flavorLabel: { type: String, default: "" },
     gradient: { type: [String], default: [] }, // ["#..", "#.."]
   },
@@ -23,20 +25,15 @@ const cartSchema = new mongoose.Schema(
   {
     telegramId: { type: String, required: true, unique: true, index: true },
 
-    // текущая корзина
+    // current cart items
     items: { type: [cartItemSchema], default: [] },
 
-    title1: { type: String, default: "" },
-    title2: { type: String, default: "" },
-    unitPrice: { type: Number, default: 0 },
-
-    cardBgUrl: { type: String, default: "" },
-    cardDuckUrl: { type: String, default: "" },
-
-    newBadge: { type: String, default: "" }, // "NEW"/"SALE"/"" 
-
-    // “сохраненная” точка на оформлении (можно менять потом в корзине)
-    checkoutPickupPointId: { type: mongoose.Schema.Types.ObjectId, ref: "PickupPoint", default: null },
+    // one order = one pickup point (can be changed later in cart/checkout)
+    checkoutPickupPointId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "PickupPoint",
+      default: null,
+    },
   },
   { timestamps: true }
 );
