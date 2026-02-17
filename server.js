@@ -9,7 +9,7 @@ import crypto from "crypto";
 import User from "./models/User.js";
 import Category from "./models/Category.js";
 import Product from "./models/Product.js";
-import Manager from "./models/Manager.js";
+import "./models/Manager.js";
 
 
 

@@ -1,17 +1,28 @@
-// ===== PickupPoint model (kept in server.js for now) =====
-const PickupPointSchema = new mongoose.Schema(
-  {
-    key: { type: String, required: true, unique: true, index: true }, // "krucza-03"
-    title: { type: String, default: "" },
-    address: { type: String, default: "" },
-    sortOrder: { type: Number, default: 0 },
-    isActive: { type: Boolean, default: true },
+import mongoose from "mongoose";
 
-    // telegramId админов/менеджеров, которым разрешено работать с этой точкой
-    allowedAdminTelegramIds: { type: [String], default: [] },
+// ===== Manager model =====
+// Менеджер = админ, который работает с ассортиментом.
+// telegramId используется как уникальный идентификатор.
+const ManagerSchema = new mongoose.Schema(
+  {
+    telegramId: { type: String, required: true, unique: true, index: true },
+
+    // удобно для UI/логов
+    username: { type: String, default: "" },
+    name: { type: String, default: "" },
+
+    // закрепленная точка самовывоза (чтобы менеджер не выбирал её каждый раз)
+    pickupPointId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "PickupPoint",
+      default: null,
+    },
+
+    isActive: { type: Boolean, default: true },
   },
   { timestamps: true }
 );
 
-const PickupPoint =
-  mongoose.models.PickupPoint || mongoose.model("PickupPoint", PickupPointSchema);
+const Manager = mongoose.models.Manager || mongoose.model("Manager", ManagerSchema);
+
+export default Manager;
