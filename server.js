@@ -9,7 +9,7 @@ import crypto from "crypto";
 import User from "./models/User.js";
 import Category from "./models/Category.js";
 import Product from "./models/Product.js";
-import "./models/Manager.js";
+import PickupPoint from "./models/Manager.js"; // временно держим модель тут
 
 
 

@@ -1,28 +1,21 @@
+// ===== PickupPoint model (temporarily stored in Manager.js) =====
 import mongoose from "mongoose";
 
-// ===== Manager model =====
-// Менеджер = админ, который работает с ассортиментом.
-// telegramId используется как уникальный идентификатор.
-const ManagerSchema = new mongoose.Schema(
+const PickupPointSchema = new mongoose.Schema(
   {
-    telegramId: { type: String, required: true, unique: true, index: true },
-
-    // удобно для UI/логов
-    username: { type: String, default: "" },
-    name: { type: String, default: "" },
-
-    // закрепленная точка самовывоза (чтобы менеджер не выбирал её каждый раз)
-    pickupPointId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "PickupPoint",
-      default: null,
-    },
-
+    key: { type: String, required: true, unique: true, index: true }, // "krucza-03"
+    title: { type: String, default: "" },
+    address: { type: String, default: "" },
+    sortOrder: { type: Number, default: 0 },
     isActive: { type: Boolean, default: true },
+
+    // telegramId админов/менеджеров, которым разрешено работать с этой точкой
+    allowedAdminTelegramIds: { type: [String], default: [] },
   },
   { timestamps: true }
 );
 
-const Manager = mongoose.models.Manager || mongoose.model("Manager", ManagerSchema);
+const PickupPoint =
+  mongoose.models.PickupPoint || mongoose.model("PickupPoint", PickupPointSchema);
 
-export default Manager;
+export default PickupPoint;
