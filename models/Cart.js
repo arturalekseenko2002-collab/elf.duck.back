@@ -28,6 +28,20 @@ const cartSchema = new mongoose.Schema(
     // current cart items
     items: { type: [cartItemSchema], default: [] },
 
+    // fixed (by first add) method of receiving goods
+    checkoutDeliveryType: {
+      type: String,
+      enum: ["delivery", "pickup"],
+      default: null,
+    },
+
+    // for delivery only
+    checkoutDeliveryMethod: {
+      type: String,
+      enum: ["courier", "inpost"],
+      default: null,
+    },
+
     // one order = one pickup point (can be changed later in cart/checkout)
     checkoutPickupPointId: {
       type: mongoose.Schema.Types.ObjectId,

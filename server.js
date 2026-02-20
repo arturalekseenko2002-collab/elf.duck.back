@@ -555,7 +555,17 @@ app.get("/cart", async (req, res) => {
     if (!telegramId) return res.status(400).json({ ok: false, error: "telegramId is required" });
 
     const cart = await Cart.findOne({ telegramId }).lean();
-    res.json({ ok: true, cart: cart || { telegramId, items: [], checkoutPickupPointId: null } });
+    res.json({
+      ok: true,
+      cart:
+        cart || {
+          telegramId,
+          items: [],
+          checkoutDeliveryType: null,
+          checkoutDeliveryMethod: null,
+          checkoutPickupPointId: null,
+        },
+    });
   } catch (e) {
     console.error("GET /cart error:", e);
     res.status(500).json({ ok: false, error: "Server error" });
@@ -570,7 +580,18 @@ app.put("/cart", async (req, res) => {
     if (!telegramId) return res.status(400).json({ ok: false, error: "telegramId is required" });
 
     const items = Array.isArray(b.items) ? b.items : [];
+
     const checkoutPickupPointId = b.checkoutPickupPointId || null;
+
+    const checkoutDeliveryType =
+      b.checkoutDeliveryType === "pickup" || b.checkoutDeliveryType === "delivery"
+        ? b.checkoutDeliveryType
+        : null;
+
+    const checkoutDeliveryMethod =
+      b.checkoutDeliveryMethod === "courier" || b.checkoutDeliveryMethod === "inpost"
+        ? b.checkoutDeliveryMethod
+        : null;
 
     // минимальная нормализация
     const cleanItems = items
@@ -594,6 +615,8 @@ app.put("/cart", async (req, res) => {
         $set: {
           telegramId,
           items: cleanItems,
+          checkoutDeliveryType,
+          checkoutDeliveryMethod,
           checkoutPickupPointId,
         },
       },
