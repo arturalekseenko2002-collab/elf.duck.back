@@ -31,14 +31,13 @@ const cartSchema = new mongoose.Schema(
     // fixed (by first add) method of receiving goods
     checkoutDeliveryType: {
       type: String,
-      enum: ["delivery", "pickup"],
+      enum: ["pickup", "delivery", null],
       default: null,
     },
 
-    // for delivery only
     checkoutDeliveryMethod: {
       type: String,
-      enum: ["courier", "inpost"],
+      enum: ["courier", "inpost", null],
       default: null,
     },
 

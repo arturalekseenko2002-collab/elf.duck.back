@@ -593,6 +593,8 @@ app.put("/cart", async (req, res) => {
         ? b.checkoutDeliveryMethod
         : null;
 
+    const forceCheckoutSelection = !!b.forceCheckoutSelection;
+
     // минимальная нормализация
     const cleanItems = items
       .map((it) => ({
@@ -609,15 +611,30 @@ app.put("/cart", async (req, res) => {
       }))
       .filter((it) => it.productKey && it.flavorKey);
 
+    const existing = await Cart.findOne({ telegramId }).lean();
+
+    const prevType = existing?.checkoutDeliveryType ?? null;
+    const prevMethod = existing?.checkoutDeliveryMethod ?? null;
+    const prevPickup = existing?.checkoutPickupPointId ?? null;
+
+    const finalCheckoutDeliveryType =
+      forceCheckoutSelection ? checkoutDeliveryType : (prevType ?? checkoutDeliveryType ?? null);
+
+    const finalCheckoutDeliveryMethod =
+      forceCheckoutSelection ? checkoutDeliveryMethod : (prevMethod ?? checkoutDeliveryMethod ?? null);
+
+    const finalCheckoutPickupPointId =
+      forceCheckoutSelection ? checkoutPickupPointId : (prevPickup ?? checkoutPickupPointId ?? null);
+
     const updated = await Cart.findOneAndUpdate(
       { telegramId },
       {
         $set: {
           telegramId,
           items: cleanItems,
-          checkoutDeliveryType,
-          checkoutDeliveryMethod,
-          checkoutPickupPointId,
+          checkoutDeliveryType: finalCheckoutDeliveryType,
+          checkoutDeliveryMethod: finalCheckoutDeliveryMethod,
+          checkoutPickupPointId: finalCheckoutPickupPointId,
         },
       },
       { upsert: true, new: true }
