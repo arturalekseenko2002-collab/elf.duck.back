@@ -583,16 +583,6 @@ app.put("/cart", async (req, res) => {
 
     const checkoutPickupPointId = b.checkoutPickupPointId || null;
 
-    const courierAddress = String(b.courierAddress || "").trim() || null;
-
-    const inpostData = {
-      fullName: String(b?.inpostData?.fullName || "").trim() || null,
-      phone: String(b?.inpostData?.phone || "").trim() || null,
-      email: String(b?.inpostData?.email || "").trim() || null,
-      city: String(b?.inpostData?.city || "").trim() || null,
-      lockerAddress: String(b?.inpostData?.lockerAddress || "").trim() || null,
-    };
-
     const checkoutDeliveryType =
       b.checkoutDeliveryType === "pickup" || b.checkoutDeliveryType === "delivery"
         ? b.checkoutDeliveryType
@@ -602,6 +592,36 @@ app.put("/cart", async (req, res) => {
       b.checkoutDeliveryMethod === "courier" || b.checkoutDeliveryMethod === "inpost"
         ? b.checkoutDeliveryMethod
         : null;
+
+      const courierAddress =
+        b.courierAddress === null || b.courierAddress === undefined
+          ? null
+          : String(b.courierAddress || "").trim();
+
+      const inpostDataRaw = b.inpostData && typeof b.inpostData === "object" ? b.inpostData : {};
+
+      const inpostData = {
+        fullName:
+          inpostDataRaw.fullName === null || inpostDataRaw.fullName === undefined
+            ? null
+            : String(inpostDataRaw.fullName || "").trim(),
+        phone:
+          inpostDataRaw.phone === null || inpostDataRaw.phone === undefined
+            ? null
+            : String(inpostDataRaw.phone || "").trim(),
+        email:
+          inpostDataRaw.email === null || inpostDataRaw.email === undefined
+            ? null
+            : String(inpostDataRaw.email || "").trim(),
+        city:
+          inpostDataRaw.city === null || inpostDataRaw.city === undefined
+            ? null
+            : String(inpostDataRaw.city || "").trim(),
+        lockerAddress:
+          inpostDataRaw.lockerAddress === null || inpostDataRaw.lockerAddress === undefined
+            ? null
+            : String(inpostDataRaw.lockerAddress || "").trim(),
+      };
 
     const forceCheckoutSelection = !!b.forceCheckoutSelection;
 
