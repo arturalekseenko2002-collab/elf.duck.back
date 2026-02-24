@@ -41,6 +41,16 @@ const cartSchema = new mongoose.Schema(
       default: null,
     },
 
+    courierAddress: { type: String, default: null },
+
+    inpostData: {
+      fullName: { type: String, default: null },
+      phone: { type: String, default: null },
+      email: { type: String, default: null },
+      city: { type: String, default: null },
+      lockerAddress: { type: String, default: null },
+    },
+
     // one order = one pickup point (can be changed later in cart/checkout)
     checkoutPickupPointId: {
       type: mongoose.Schema.Types.ObjectId,

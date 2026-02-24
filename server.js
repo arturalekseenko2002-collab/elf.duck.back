@@ -583,6 +583,16 @@ app.put("/cart", async (req, res) => {
 
     const checkoutPickupPointId = b.checkoutPickupPointId || null;
 
+    const courierAddress = String(b.courierAddress || "").trim() || null;
+
+    const inpostData = {
+      fullName: String(b?.inpostData?.fullName || "").trim() || null,
+      phone: String(b?.inpostData?.phone || "").trim() || null,
+      email: String(b?.inpostData?.email || "").trim() || null,
+      city: String(b?.inpostData?.city || "").trim() || null,
+      lockerAddress: String(b?.inpostData?.lockerAddress || "").trim() || null,
+    };
+
     const checkoutDeliveryType =
       b.checkoutDeliveryType === "pickup" || b.checkoutDeliveryType === "delivery"
         ? b.checkoutDeliveryType
@@ -635,6 +645,9 @@ app.put("/cart", async (req, res) => {
           checkoutDeliveryType: finalCheckoutDeliveryType,
           checkoutDeliveryMethod: finalCheckoutDeliveryMethod,
           checkoutPickupPointId: finalCheckoutPickupPointId,
+
+          courierAddress,
+          inpostData,
         },
       },
       { upsert: true, new: true }
