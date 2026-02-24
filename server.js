@@ -708,16 +708,33 @@ app.put("/cart", async (req, res) => {
     const prevSum = sumItems(existing?.items);
     const nextSum = sumItems(cleanItems);
 
+    const normFlavorKey = (v) => String(v || "").trim().replace(/,+$/, "");
+
     const applyReservedDelta = async ({ productKey, flavorKey, pickupPointId, delta }) => {
       const d = Number(delta || 0);
       if (!pickupPointId || !productKey || !flavorKey || !Number.isFinite(d) || d === 0) return;
+
+      // IMPORTANT:
+      // - In DB some pickupPointId values may be stored as strings (older data) OR as ObjectId.
+      // - Some flavorKey values may accidentally contain a trailing comma (e.g. "apple-pear,").
+      // We handle both cases by matching by $in with both representations.
+
+      const ppIdObj = pickupPointId; // could be ObjectId
+      const ppIdStr = String(pickupPointId);
+
+      const fkNorm = normFlavorKey(flavorKey);
+      const fkCandidates = Array.from(
+        new Set([String(flavorKey || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean))
+      );
+
+      const ppCandidates = [ppIdObj, ppIdStr].filter(Boolean);
 
       // 1) try to inc existing stock row
       const res1 = await Product.updateOne(
         {
           productKey,
-          "flavors.flavorKey": flavorKey,
-          "flavors.stockByPickupPoint.pickupPointId": pickupPointId,
+          "flavors.flavorKey": { $in: fkCandidates },
+          "flavors.stockByPickupPoint.pickupPointId": { $in: ppCandidates },
         },
         {
           $inc: {
@@ -726,8 +743,8 @@ app.put("/cart", async (req, res) => {
         },
         {
           arrayFilters: [
-            { "f.flavorKey": flavorKey },
-            { "s.pickupPointId": pickupPointId },
+            { "f.flavorKey": { $in: fkCandidates } },
+            { "s.pickupPointId": { $in: ppCandidates } },
           ],
         }
       );
@@ -735,24 +752,25 @@ app.put("/cart", async (req, res) => {
       // 2) if stock row missing, push it then inc again
       if (!res1?.modifiedCount) {
         await Product.updateOne(
-          { productKey, "flavors.flavorKey": flavorKey },
+          { productKey, "flavors.flavorKey": { $in: fkCandidates } },
           {
             $push: {
+              // store pickupPointId as string for compatibility with existing documents
               "flavors.$[f].stockByPickupPoint": {
-                pickupPointId,
+                pickupPointId: ppIdStr,
                 totalQty: 0,
                 reservedQty: 0,
               },
             },
           },
-          { arrayFilters: [{ "f.flavorKey": flavorKey }] }
+          { arrayFilters: [{ "f.flavorKey": { $in: fkCandidates } }] }
         );
 
         await Product.updateOne(
           {
             productKey,
-            "flavors.flavorKey": flavorKey,
-            "flavors.stockByPickupPoint.pickupPointId": pickupPointId,
+            "flavors.flavorKey": { $in: fkCandidates },
+            "flavors.stockByPickupPoint.pickupPointId": { $in: ppCandidates },
           },
           {
             $inc: {
@@ -761,8 +779,8 @@ app.put("/cart", async (req, res) => {
           },
           {
             arrayFilters: [
-              { "f.flavorKey": flavorKey },
-              { "s.pickupPointId": pickupPointId },
+              { "f.flavorKey": { $in: fkCandidates } },
+              { "s.pickupPointId": { $in: ppCandidates } },
             ],
           }
         );
