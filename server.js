@@ -656,6 +656,161 @@ app.put("/cart", async (req, res) => {
     const finalCheckoutPickupPointId =
       forceCheckoutSelection ? checkoutPickupPointId : (prevPickup ?? checkoutPickupPointId ?? null);
 
+    // ================= STOCK RESERVATION (reservedQty) =================
+    // Goal: when items are in the cart, we reserve their qty on the selected stock context
+    // (pickup point OR delivery warehouse), so other users can't over-buy.
+
+    const normPPKey = (v) => String(v || "").trim().toLowerCase().replace(/,+$/, "");
+
+    // Delivery warehouses are stored as PickupPoints with key "delivery" and "delivery-2"
+    const [courierPP, inpostPP] = await Promise.all([
+      PickupPoint.findOne({ key: { $in: ["delivery", "delivery,"] } }, { _id: 1, key: 1 }).lean(),
+      PickupPoint.findOne({ key: { $in: ["delivery-2", "delivery-2,"] } }, { _id: 1, key: 1 }).lean(),
+    ]);
+
+    const courierWarehouseId = courierPP?._id || null;
+    const inpostWarehouseId = inpostPP?._id || null;
+
+    const stockContextIdFor = ({ type, method, pickupPointId }) => {
+      if (type === "pickup") return pickupPointId || null;
+      if (type === "delivery") {
+        if (method === "inpost") return inpostWarehouseId;
+        return courierWarehouseId;
+      }
+      return null;
+    };
+
+    const prevContextId = stockContextIdFor({
+      type: prevType,
+      method: prevMethod,
+      pickupPointId: prevPickup,
+    });
+
+    const nextContextId = stockContextIdFor({
+      type: finalCheckoutDeliveryType,
+      method: finalCheckoutDeliveryMethod,
+      pickupPointId: finalCheckoutPickupPointId,
+    });
+
+    const sumItems = (itemsArr) => {
+      const map = new Map();
+      for (const it of Array.isArray(itemsArr) ? itemsArr : []) {
+        const pk = String(it.productKey || "").trim();
+        const fk = String(it.flavorKey || "").trim();
+        if (!pk || !fk) continue;
+        const key = `${pk}__${fk}`;
+        const qty = Math.max(1, Number(it.qty || 1));
+        map.set(key, (map.get(key) || 0) + qty);
+      }
+      return map;
+    };
+
+    const prevSum = sumItems(existing?.items);
+    const nextSum = sumItems(cleanItems);
+
+    const applyReservedDelta = async ({ productKey, flavorKey, pickupPointId, delta }) => {
+      const d = Number(delta || 0);
+      if (!pickupPointId || !productKey || !flavorKey || !Number.isFinite(d) || d === 0) return;
+
+      // 1) try to inc existing stock row
+      const res1 = await Product.updateOne(
+        {
+          productKey,
+          "flavors.flavorKey": flavorKey,
+          "flavors.stockByPickupPoint.pickupPointId": pickupPointId,
+        },
+        {
+          $inc: {
+            "flavors.$[f].stockByPickupPoint.$[s].reservedQty": d,
+          },
+        },
+        {
+          arrayFilters: [
+            { "f.flavorKey": flavorKey },
+            { "s.pickupPointId": pickupPointId },
+          ],
+        }
+      );
+
+      // 2) if stock row missing, push it then inc again
+      if (!res1?.modifiedCount) {
+        await Product.updateOne(
+          { productKey, "flavors.flavorKey": flavorKey },
+          {
+            $push: {
+              "flavors.$[f].stockByPickupPoint": {
+                pickupPointId,
+                totalQty: 0,
+                reservedQty: 0,
+              },
+            },
+          },
+          { arrayFilters: [{ "f.flavorKey": flavorKey }] }
+        );
+
+        await Product.updateOne(
+          {
+            productKey,
+            "flavors.flavorKey": flavorKey,
+            "flavors.stockByPickupPoint.pickupPointId": pickupPointId,
+          },
+          {
+            $inc: {
+              "flavors.$[f].stockByPickupPoint.$[s].reservedQty": d,
+            },
+          },
+          {
+            arrayFilters: [
+              { "f.flavorKey": flavorKey },
+              { "s.pickupPointId": pickupPointId },
+            ],
+          }
+        );
+      }
+
+      // NOTE: We intentionally don't hard-clamp reservedQty here.
+      // The cart is the source of truth; deltas should keep it consistent.
+    };
+
+    // Build reservation deltas
+    const deltas = [];
+
+    if (prevContextId && nextContextId && String(prevContextId) === String(nextContextId)) {
+      // same context: apply only diffs
+      const allKeys = new Set([...prevSum.keys(), ...nextSum.keys()]);
+      for (const k of allKeys) {
+        const [productKey, flavorKey] = k.split("__");
+        const before = prevSum.get(k) || 0;
+        const after = nextSum.get(k) || 0;
+        const delta = after - before;
+        if (delta !== 0) deltas.push({ productKey, flavorKey, pickupPointId: nextContextId, delta });
+      }
+    } else {
+      // context changed (or one is missing): release prev, reserve next
+      if (prevContextId) {
+        for (const [k, qty] of prevSum.entries()) {
+          const [productKey, flavorKey] = k.split("__");
+          deltas.push({ productKey, flavorKey, pickupPointId: prevContextId, delta: -qty });
+        }
+      }
+      if (nextContextId) {
+        for (const [k, qty] of nextSum.entries()) {
+          const [productKey, flavorKey] = k.split("__");
+          deltas.push({ productKey, flavorKey, pickupPointId: nextContextId, delta: qty });
+        }
+      }
+    }
+
+    // Apply deltas sequentially (simple + safe). If you ever need speed, we can batch later.
+    for (const d of deltas) {
+      try {
+        await applyReservedDelta(d);
+      } catch (e) {
+        console.error("reservedQty update failed", d, e);
+      }
+    }
+    // ================= END STOCK RESERVATION =================
+
     const updated = await Cart.findOneAndUpdate(
       { telegramId },
       {
