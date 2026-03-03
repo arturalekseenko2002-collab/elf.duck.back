@@ -4,6 +4,11 @@ const orderItemFlavorSchema = new mongoose.Schema(
   {
     flavorKey: { type: String, required: true },
     qty: { type: Number, required: true, min: 1 },
+
+    // snapshot из корзины
+    unitPrice: { type: Number, default: 0, min: 0 },
+    flavorLabel: { type: String, default: "" },
+    gradient: { type: [String], default: [] },
   },
   { _id: false }
 );
@@ -11,7 +16,14 @@ const orderItemFlavorSchema = new mongoose.Schema(
 const orderItemSchema = new mongoose.Schema(
   {
     productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
-    productKey: { type: String, default: "" }, // удобно для отчетов/логов
+    productKey: { type: String, default: "" },
+
+    // snapshot товара на момент покупки
+    productTitle1: { type: String, default: "" },
+    productTitle2: { type: String, default: "" },
+    orderImgUrl: { type: String, default: "" },
+    cardBgUrl: { type: String, default: "" },
+
     flavors: { type: [orderItemFlavorSchema], default: [] },
   },
   { _id: false }
@@ -20,16 +32,24 @@ const orderItemSchema = new mongoose.Schema(
 const orderSchema = new mongoose.Schema(
   {
     // кто оформил
-    userTelegramId: { type: String, default: "" },
+    userTelegramId: { type: String, required: true, index: true },
 
     // доставка/самовывоз
-    deliveryType: { type: String, enum: ["delivery", "pickup"], default: "delivery" },
+    deliveryType: {
+      type: String,
+      enum: ["delivery", "pickup"],
+      default: null,
+    },
 
     // точка самовывоза (если pickup)
     pickupPointId: { type: mongoose.Schema.Types.ObjectId, ref: "PickupPoint", default: null },
 
     // позиции заказа
-    items: { type: [orderItemSchema], default: [] },
+    items: { 
+      type: [orderItemSchema], 
+      default: [], 
+      required: true 
+    },
 
     // статусы
     status: {
@@ -46,6 +66,38 @@ const orderSchema = new mongoose.Schema(
 
     // кто обработал (менеджер)
     handledByTelegramId: { type: String, default: "" },
+
+    orderNo: { type: String, required: true, unique: true, index: true },
+
+    totalZl: { type: Number, default: 0 },
+    currency: { type: String, default: "PLN" },
+
+    bgUrl: { type: String, default: "" },
+    methodLabel: { type: String, default: "" },
+
+    deliveryMethod: {
+      type: String,
+      enum: ["courier", "inpost"],
+      default: null,
+    },
+
+    courierAddress: { type: String, default: null },
+    inpostData: {
+      fullName: { type: String, default: null },
+      phone: { type: String, default: null },
+      email: { type: String, default: null },
+      city: { type: String, default: null },
+      lockerAddress: { type: String, default: null },
+    },
+
+    payment: {
+      status: { type: String, enum: ["unpaid", "paid", "refunded"], default: "unpaid" },
+      method: { type: String, default: null },
+      paidAt: { type: Date, default: null },
+      amountZl: { type: Number, default: 0 },
+      provider: { type: String, default: null },
+      txId: { type: String, default: null },
+    },
   },
   { timestamps: true }
 );

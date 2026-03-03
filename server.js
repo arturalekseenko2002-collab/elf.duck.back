@@ -11,6 +11,7 @@ import Category from "./models/Category.js";
 import Product from "./models/Product.js";
 import PickupPoint from "./models/PickupPoint.js"; 
 import Cart from "./models/Cart.js";
+import Order from "./models/Order.js";
 
 
 
@@ -39,6 +40,13 @@ mongoose
 
 function genRefCode() {
   return Math.random().toString(36).slice(2, 8); // 6 симолов
+}
+
+function genOrderNo() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let out = "ED-";
+  for (let i = 0; i < 6; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)];
+  return out;
 }
 
 function translitRuToLat(input) {
@@ -850,6 +858,281 @@ app.put("/cart", async (req, res) => {
   } catch (e) {
     console.error("PUT /cart error:", e);
     res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+app.post("/orders/confirm", async (req, res) => {
+  try {
+    const telegramId = String(req.body?.telegramId || "").trim();
+    if (!telegramId) return res.status(400).json({ ok: false, error: "telegramId is required" });
+
+    const cart = await Cart.findOne({ telegramId }).lean();
+    if (!cart || !Array.isArray(cart.items) || cart.items.length === 0) {
+      return res.status(400).json({ ok: false, error: "Cart is empty" });
+    }
+
+    // 1) total
+    const totalZl = cart.items.reduce((sum, it) => {
+      const qty = Math.max(1, Number(it.qty || 1));
+      const price = Number(it.unitPrice || 0);
+      return sum + qty * price;
+    }, 0);
+
+    // 2) delivery mapping (из Cart -> Order)
+    const deliveryType = cart.checkoutDeliveryType === "pickup" ? "pickup" : "delivery";
+    const deliveryMethod =
+      deliveryType === "delivery"
+        ? (cart.checkoutDeliveryMethod === "inpost" ? "inpost" : (cart.checkoutDeliveryMethod === "courier" ? "courier" : null))
+        : null;
+
+    const pickupPointId = deliveryType === "pickup" ? (cart.checkoutPickupPointId || null) : null;
+
+    // 3) methodLabel (готовая строка для UI)
+    let methodLabel = "";
+    if (deliveryType === "pickup") {
+      if (pickupPointId) {
+        const pp = await PickupPoint.findById(pickupPointId).lean();
+        methodLabel = `Самовывоз — ${pp?.title || pp?.address || "Точка"}`;
+      } else {
+        methodLabel = "Самовывоз";
+      }
+    } else {
+      if (deliveryMethod === "inpost") methodLabel = "Доставка — InPost";
+      else if (deliveryMethod === "courier") methodLabel = "Доставка — Курьер";
+      else methodLabel = "Доставка";
+    }
+
+    // 4) bgUrl from FIRST cart item product
+    const first = cart.items[0];
+    let bgUrl = "";
+    if (first?.productKey) {
+      const prod = await Product.findOne(
+        { productKey: String(first.productKey) },
+        { orderImgUrl: 1, cardBgUrl: 1 }
+      ).lean();
+      bgUrl = String(prod?.orderImgUrl || prod?.cardBgUrl || "");
+    }
+
+    // 5) Собрать items snapshot в твою структуру (product -> flavors[])
+    const productKeys = Array.from(new Set(cart.items.map((it) => String(it.productKey || "").trim()).filter(Boolean)));
+
+    const products = await Product.find(
+      { productKey: { $in: productKeys } },
+      { _id: 1, productKey: 1, title1: 1, title2: 1, orderImgUrl: 1, cardBgUrl: 1 }
+    ).lean();
+
+    const prodByKey = new Map(products.map((p) => [String(p.productKey), p]));
+    const byProduct = new Map(); // productKey -> row
+
+    for (const it of cart.items) {
+      const pk = String(it.productKey || "").trim();
+      const fk = String(it.flavorKey || "").trim();
+      if (!pk || !fk) continue;
+
+      const qty = Math.max(1, Number(it.qty || 1));
+      const unitPrice = Number(it.unitPrice || 0);
+      const flavorLabel = String(it.flavorLabel || "");
+      const gradient = Array.isArray(it.gradient) ? it.gradient.slice(0, 2) : [];
+
+      const prod = prodByKey.get(pk);
+      if (!prod?._id) continue; // если товар не найден — пропускаем
+
+      let row = byProduct.get(pk);
+      if (!row) {
+        row = {
+          productId: prod._id,
+          productKey: pk,
+          productTitle1: String(prod.title1 || ""),
+          productTitle2: String(prod.title2 || ""),
+          orderImgUrl: String(prod.orderImgUrl || ""),
+          cardBgUrl: String(prod.cardBgUrl || ""),
+          flavorsMap: new Map(), // fk -> flavor snapshot
+        };
+        byProduct.set(pk, row);
+      }
+
+      const prev = row.flavorsMap.get(fk);
+      if (!prev) {
+        row.flavorsMap.set(fk, { flavorKey: fk, qty, unitPrice, flavorLabel, gradient });
+      } else {
+        prev.qty += qty;
+        if (unitPrice) prev.unitPrice = unitPrice;
+        if (flavorLabel) prev.flavorLabel = flavorLabel;
+        if (gradient.length) prev.gradient = gradient;
+      }
+    }
+
+    const orderItems = Array.from(byProduct.values()).map((row) => ({
+      productId: row.productId,
+      productKey: row.productKey,
+      productTitle1: row.productTitle1,
+      productTitle2: row.productTitle2,
+      orderImgUrl: row.orderImgUrl,
+      cardBgUrl: row.cardBgUrl,
+      flavors: Array.from(row.flavorsMap.values()),
+    }));
+
+    // 6) COMMIT stock: totalQty -= qty AND reservedQty -= qty (ВАЖНО!)
+    const [courierPP, inpostPP] = await Promise.all([
+      PickupPoint.findOne({ key: { $in: ["delivery", "delivery,"] } }, { _id: 1 }).lean(),
+      PickupPoint.findOne({ key: { $in: ["delivery-2", "delivery-2,"] } }, { _id: 1 }).lean(),
+    ]);
+
+    const courierWarehouseId = courierPP?._id || null;
+    const inpostWarehouseId = inpostPP?._id || null;
+
+    const stockContextIdFor = ({ type, method, pickupPointId }) => {
+      if (type === "pickup") return pickupPointId || null;
+      if (type === "delivery") {
+        if (method === "inpost") return inpostWarehouseId;
+        return courierWarehouseId;
+      }
+      return null;
+    };
+
+    const contextId = stockContextIdFor({
+      type: cart.checkoutDeliveryType,
+      method: cart.checkoutDeliveryMethod,
+      pickupPointId: cart.checkoutPickupPointId,
+    });
+
+    const normFlavorKey = (v) => String(v || "").trim().replace(/,+$/, "");
+
+    const applyPurchaseDelta = async ({ productKey, flavorKey, pickupPointId, qty }) => {
+      const q = Math.max(1, Number(qty || 1));
+      if (!pickupPointId || !productKey || !flavorKey || !Number.isFinite(q) || q <= 0) return;
+
+      const ppIdObj = pickupPointId;
+      const ppIdStr = String(pickupPointId);
+
+      const fkNorm = normFlavorKey(flavorKey);
+      const fkCandidates = Array.from(new Set([String(flavorKey || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean)));
+      const ppCandidates = [ppIdObj, ppIdStr].filter(Boolean);
+
+      await Product.updateOne(
+        {
+          productKey,
+          "flavors.flavorKey": { $in: fkCandidates },
+          "flavors.stockByPickupPoint.pickupPointId": { $in: ppCandidates },
+        },
+        {
+          $inc: {
+            "flavors.$[f].stockByPickupPoint.$[s].totalQty": -q,
+            "flavors.$[f].stockByPickupPoint.$[s].reservedQty": -q,
+          },
+        },
+        {
+          arrayFilters: [
+            { "f.flavorKey": { $in: fkCandidates } },
+            { "s.pickupPointId": { $in: ppCandidates } },
+          ],
+        }
+      );
+
+      // clamp
+      await Product.updateOne(
+        {
+          productKey,
+          "flavors.flavorKey": { $in: fkCandidates },
+          "flavors.stockByPickupPoint.pickupPointId": { $in: ppCandidates },
+        },
+        {
+          $max: {
+            "flavors.$[f].stockByPickupPoint.$[s].totalQty": 0,
+            "flavors.$[f].stockByPickupPoint.$[s].reservedQty": 0,
+          },
+        },
+        {
+          arrayFilters: [
+            { "f.flavorKey": { $in: fkCandidates } },
+            { "s.pickupPointId": { $in: ppCandidates } },
+          ],
+        }
+      );
+    };
+
+    if (contextId) {
+      for (const it of cart.items) {
+        const productKey = String(it.productKey || "").trim();
+        const flavorKey = String(it.flavorKey || "").trim();
+        const qty = Math.max(1, Number(it.qty || 1));
+        if (!productKey || !flavorKey) continue;
+        await applyPurchaseDelta({ productKey, flavorKey, pickupPointId: contextId, qty });
+      }
+    }
+
+    // 7) unique orderNo
+    let orderNo = genOrderNo();
+    for (let i = 0; i < 5; i++) {
+      const exists = await Order.findOne({ orderNo }, { _id: 1 }).lean();
+      if (!exists) break;
+      orderNo = genOrderNo();
+    }
+
+    // 8) create order
+    const created = await Order.create({
+      userTelegramId: telegramId,
+
+      orderNo,
+      totalZl: Number(totalZl.toFixed(2)),
+      currency: "PLN",
+
+      bgUrl,
+      methodLabel,
+
+      deliveryType,
+      deliveryMethod,
+      pickupPointId,
+
+      courierAddress: cart.courierAddress ?? null,
+      inpostData: cart.inpostData ?? {},
+
+      items: orderItems,
+
+      payment: { status: "unpaid", amountZl: Number(totalZl.toFixed(2)) },
+
+      status: "created",
+      stockCommittedAt: new Date(),
+    });
+
+    // 9) clear cart
+    await Cart.updateOne(
+      { telegramId },
+      {
+        $set: {
+          items: [],
+          checkoutDeliveryType: null,
+          checkoutDeliveryMethod: null,
+          checkoutPickupPointId: null,
+          courierAddress: null,
+          inpostData: {
+            fullName: null,
+            phone: null,
+            email: null,
+            city: null,
+            lockerAddress: null,
+          },
+        },
+      }
+    );
+
+    return res.json({ ok: true, order: created });
+  } catch (e) {
+    console.error("POST /orders/confirm error:", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+app.get("/orders", async (req, res) => {
+  try {
+    const telegramId = String(req.query.telegramId || "").trim();
+    if (!telegramId) return res.status(400).json({ ok: false, error: "telegramId is required" });
+
+    const orders = await Order.find({ userTelegramId: telegramId }).sort({ createdAt: -1 }).lean();
+    return res.json({ ok: true, orders });
+  } catch (e) {
+    console.error("GET /orders error:", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
   }
 });
 
