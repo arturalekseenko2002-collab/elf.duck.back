@@ -908,9 +908,9 @@ app.post("/orders/confirm", async (req, res) => {
     if (first?.productKey) {
       const prod = await Product.findOne(
         { productKey: String(first.productKey) },
-        { orderImgUrl: 1, cardBgUrl: 1 }
+        { cardBgUrl: 1, cardBgUrl: 1 }
       ).lean();
-      bgUrl = String(prod?.orderImgUrl || prod?.cardBgUrl || "");
+      bgUrl = String(prod?.cardBgUrl || prod?.cardBgUrl || "");cardBgUrl
     }
 
     // 5) Собрать items snapshot в твою структуру (product -> flavors[])
