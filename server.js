@@ -728,14 +728,19 @@ app.put("/cart", async (req, res) => {
       // We handle both cases by matching by $in with both representations.
 
       const ppIdObj = pickupPointId; // could be ObjectId
-      const ppIdStr = String(pickupPointId);
+      const ppIdStrRaw = String(pickupPointId);
+      const ppIdStr = ppIdStrRaw.trim();
+      const ppIdNorm = ppIdStr.replace(/,+$/, "");
 
       const fkNorm = normFlavorKey(flavorKey);
       const fkCandidates = Array.from(
         new Set([String(flavorKey || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean))
       );
 
-      const ppCandidates = [ppIdObj, ppIdStr].filter(Boolean);
+      // pickupPointId can be stored as ObjectId OR string (sometimes with a trailing comma)
+      const ppCandidates = Array.from(
+        new Set([ppIdObj, ppIdStr, ppIdNorm, `${ppIdNorm},`].filter(Boolean))
+      );
 
       // 1) try to inc existing stock row
       const res1 = await Product.updateOne(
@@ -763,9 +768,9 @@ app.put("/cart", async (req, res) => {
           { productKey, "flavors.flavorKey": { $in: fkCandidates } },
           {
             $push: {
-              // store pickupPointId as string for compatibility with existing documents
+              // store pickupPointId as normalized string for compatibility with existing documents
               "flavors.$[f].stockByPickupPoint": {
-                pickupPointId: ppIdStr,
+                pickupPointId: ppIdNorm,
                 totalQty: 0,
                 reservedQty: 0,
               },
