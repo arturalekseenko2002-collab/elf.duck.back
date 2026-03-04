@@ -974,93 +974,95 @@ app.post("/orders/confirm", async (req, res) => {
     }));
 
     // 6) COMMIT stock: totalQty -= qty AND reservedQty -= qty (ВАЖНО!)
-    const [courierPP, inpostPP] = await Promise.all([
-      PickupPoint.findOne({ key: { $in: ["delivery", "delivery,"] } }, { _id: 1 }).lean(),
-      PickupPoint.findOne({ key: { $in: ["delivery-2", "delivery-2,"] } }, { _id: 1 }).lean(),
-    ]);
+    // const [courierPP, inpostPP] = await Promise.all([
+    //   PickupPoint.findOne({ key: { $in: ["delivery", "delivery,"] } }, { _id: 1 }).lean(),
+    //   PickupPoint.findOne({ key: { $in: ["delivery-2", "delivery-2,"] } }, { _id: 1 }).lean(),
+    // ]);
 
-    const courierWarehouseId = courierPP?._id || null;
-    const inpostWarehouseId = inpostPP?._id || null;
+    // const courierWarehouseId = courierPP?._id || null;
+    // const inpostWarehouseId = inpostPP?._id || null;
 
-    const stockContextIdFor = ({ type, method, pickupPointId }) => {
-      if (type === "pickup") return pickupPointId || null;
-      if (type === "delivery") {
-        if (method === "inpost") return inpostWarehouseId;
-        return courierWarehouseId;
-      }
-      return null;
-    };
+    // const stockContextIdFor = ({ type, method, pickupPointId }) => {
+    //   if (type === "pickup") return pickupPointId || null;
+    //   if (type === "delivery") {
+    //     if (method === "inpost") return inpostWarehouseId;
+    //     return courierWarehouseId;
+    //   }
+    //   return null;
+    // };
 
-    const contextId = stockContextIdFor({
-      type: cart.checkoutDeliveryType,
-      method: cart.checkoutDeliveryMethod,
-      pickupPointId: cart.checkoutPickupPointId,
-    });
+    // const contextId = stockContextIdFor({
+    //   type: cart.checkoutDeliveryType,
+    //   method: cart.checkoutDeliveryMethod,
+    //   pickupPointId: cart.checkoutPickupPointId,
+    // });
 
-    const normFlavorKey = (v) => String(v || "").trim().replace(/,+$/, "");
+    // const normFlavorKey = (v) => String(v || "").trim().replace(/,+$/, "");
 
-    const applyPurchaseDelta = async ({ productKey, flavorKey, pickupPointId, qty }) => {
-      const q = Math.max(1, Number(qty || 1));
-      if (!pickupPointId || !productKey || !flavorKey || !Number.isFinite(q) || q <= 0) return;
+    // const applyPurchaseDelta = async ({ productKey, flavorKey, pickupPointId, qty }) => {
+    //   const q = Math.max(1, Number(qty || 1));
+    //   if (!pickupPointId || !productKey || !flavorKey || !Number.isFinite(q) || q <= 0) return;
 
-      const ppIdObj = pickupPointId;
-      const ppIdStr = String(pickupPointId);
+    //   const ppIdObj = pickupPointId;
+    //   const ppIdStr = String(pickupPointId);
 
-      const fkNorm = normFlavorKey(flavorKey);
-      const fkCandidates = Array.from(new Set([String(flavorKey || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean)));
-      const ppCandidates = [ppIdObj, ppIdStr].filter(Boolean);
+    //   const fkNorm = normFlavorKey(flavorKey);
+    //   const fkCandidates = Array.from(new Set([String(flavorKey || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean)));
+    //   const ppCandidates = [ppIdObj, ppIdStr].filter(Boolean);
 
-      await Product.updateOne(
-        {
-          productKey,
-          "flavors.flavorKey": { $in: fkCandidates },
-          "flavors.stockByPickupPoint.pickupPointId": { $in: ppCandidates },
-        },
-        {
-          $inc: {
-            "flavors.$[f].stockByPickupPoint.$[s].totalQty": -q,
-            "flavors.$[f].stockByPickupPoint.$[s].reservedQty": -q,
-          },
-        },
-        {
-          arrayFilters: [
-            { "f.flavorKey": { $in: fkCandidates } },
-            { "s.pickupPointId": { $in: ppCandidates } },
-          ],
-        }
-      );
+    //   await Product.updateOne(
+    //     {
+    //       productKey,
+    //       "flavors.flavorKey": { $in: fkCandidates },
+    //       "flavors.stockByPickupPoint.pickupPointId": { $in: ppCandidates },
+    //     },
+    //     {
+    //       $inc: {
+    //         "flavors.$[f].stockByPickupPoint.$[s].totalQty": -q,
+    //         "flavors.$[f].stockByPickupPoint.$[s].reservedQty": -q,
+    //       },
+    //     },
+    //     {
+    //       arrayFilters: [
+    //         { "f.flavorKey": { $in: fkCandidates } },
+    //         { "s.pickupPointId": { $in: ppCandidates } },
+    //       ],
+    //     }
+    //   );
 
-      // clamp
-      await Product.updateOne(
-        {
-          productKey,
-          "flavors.flavorKey": { $in: fkCandidates },
-          "flavors.stockByPickupPoint.pickupPointId": { $in: ppCandidates },
-        },
-        {
-          $max: {
-            "flavors.$[f].stockByPickupPoint.$[s].totalQty": 0,
-            "flavors.$[f].stockByPickupPoint.$[s].reservedQty": 0,
-          },
-        },
-        {
-          arrayFilters: [
-            { "f.flavorKey": { $in: fkCandidates } },
-            { "s.pickupPointId": { $in: ppCandidates } },
-          ],
-        }
-      );
-    };
+    //   // clamp
+    //   await Product.updateOne(
+    //     {
+    //       productKey,
+    //       "flavors.flavorKey": { $in: fkCandidates },
+    //       "flavors.stockByPickupPoint.pickupPointId": { $in: ppCandidates },
+    //     },
+    //     {
+    //       $max: {
+    //         "flavors.$[f].stockByPickupPoint.$[s].totalQty": 0,
+    //         "flavors.$[f].stockByPickupPoint.$[s].reservedQty": 0,
+    //       },
+    //     },
+    //     {
+    //       arrayFilters: [
+    //         { "f.flavorKey": { $in: fkCandidates } },
+    //         { "s.pickupPointId": { $in: ppCandidates } },
+    //       ],
+    //     }
+    //   );
+    // };
 
-    if (contextId) {
-      for (const it of cart.items) {
-        const productKey = String(it.productKey || "").trim();
-        const flavorKey = String(it.flavorKey || "").trim();
-        const qty = Math.max(1, Number(it.qty || 1));
-        if (!productKey || !flavorKey) continue;
-        await applyPurchaseDelta({ productKey, flavorKey, pickupPointId: contextId, qty });
-      }
-    }
+    // if (contextId) {
+    //   for (const it of cart.items) {
+    //     const productKey = String(it.productKey || "").trim();
+    //     const flavorKey = String(it.flavorKey || "").trim();
+    //     const qty = Math.max(1, Number(it.qty || 1));
+    //     if (!productKey || !flavorKey) continue;
+    //     await applyPurchaseDelta({ productKey, flavorKey, pickupPointId: contextId, qty });
+    //   }
+    // }
+
+    
 
     // 7) unique orderNo
     let orderNo = genOrderNo();

@@ -60,9 +60,10 @@ const orderSchema = new mongoose.Schema(
     },
 
     // чтобы резерв/списание было идемпотентным (1 раз)
-    stockReservedAt: { type: Date, default: null },
-    stockCommittedAt: { type: Date, default: null },
-    stockReleasedAt: { type: Date, default: null },
+    // stockReservedAt: { type: Date, default: null },
+    stockReservedAt: new Date(),
+    stockCommittedAt: null,
+    // stockReleasedAt: { type: Date, default: null },
 
     // кто обработал (менеджер)
     handledByTelegramId: { type: String, default: "" },
