@@ -679,8 +679,14 @@ app.put("/cart", async (req, res) => {
     const courierWarehouseId = courierPP?._id || null;
     const inpostWarehouseId = inpostPP?._id || null;
 
+    const normId = (v) => String(v || "").trim().replace(/,+$/, "");
+    const toObjId = (v) => {
+      const s = normId(v);
+      return mongoose.isValidObjectId(s) ? new mongoose.Types.ObjectId(s) : null;
+    };
+
     const stockContextIdFor = ({ type, method, pickupPointId }) => {
-      if (type === "pickup") return pickupPointId || null;
+      if (type === "pickup") return toObjId(pickupPointId);
       if (type === "delivery") {
         if (method === "inpost") return inpostWarehouseId;
         return courierWarehouseId;
@@ -719,23 +725,22 @@ app.put("/cart", async (req, res) => {
     const normFlavorKey = (v) => String(v || "").trim().replace(/,+$/, "");
 
     const applyReservedDelta = async ({ productKey, flavorKey, pickupPointId, delta }) => {
-      const d = Number(delta || 0);
-      if (!pickupPointId || !productKey || !flavorKey || !Number.isFinite(d) || d === 0) return;
+      const normId = (v) => String(v || "").trim().replace(/,+$/, "");
+      const toObjId = (v) => {
+        const s = normId(v);
+        return mongoose.isValidObjectId(s) ? new mongoose.Types.ObjectId(s) : null;
+      };
 
-      // IMPORTANT:
-      // - In DB some pickupPointId values may be stored as strings (older data) OR as ObjectId.
-      // - Some flavorKey values may accidentally contain a trailing comma (e.g. "apple-pear,").
-      // We handle both cases by matching by $in with both representations.
-
-      const ppIdObj = pickupPointId; // could be ObjectId
-      const ppIdStr = String(pickupPointId);
+      const ppObj = toObjId(pickupPointId);
+      if (!ppObj) return;
 
       const fkNorm = normFlavorKey(flavorKey);
       const fkCandidates = Array.from(
         new Set([String(flavorKey || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean))
       );
 
-      const ppCandidates = [ppIdObj, ppIdStr].filter(Boolean);
+      // IMPORTANT: pickupPointId in Product schema is ObjectId, so we only query with ObjectId
+      const ppCandidates = [ppObj];
 
       // 1) try to inc existing stock row
       const res1 = await Product.updateOne(
@@ -763,9 +768,9 @@ app.put("/cart", async (req, res) => {
           { productKey, "flavors.flavorKey": { $in: fkCandidates } },
           {
             $push: {
-              // store pickupPointId as string for compatibility with existing documents
+              // store pickupPointId as ObjectId (schema type)
               "flavors.$[f].stockByPickupPoint": {
-                pickupPointId: ppIdStr,
+                pickupPointId: ppObj,
                 totalQty: 0,
                 reservedQty: 0,
               },
