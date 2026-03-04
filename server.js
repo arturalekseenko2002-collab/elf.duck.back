@@ -727,14 +727,15 @@ app.put("/cart", async (req, res) => {
       // - Some flavorKey values may accidentally contain a trailing comma (e.g. "apple-pear,").
       // We handle both cases by matching by $in with both representations.
 
-      // pickupPointId в stockByPickupPoint у тебя ObjectId → работаем ТОЛЬКО с ObjectId
-      const ppIdStr = String(pickupPointId || "").trim().replace(/,+$/, "");
-      const isObjectIdHex = (s) => /^[a-fA-F0-9]{24}$/.test(String(s || "").trim());
+      const ppIdObj = pickupPointId; // could be ObjectId
+      const ppIdStr = String(pickupPointId);
 
-      const ppCandidates = [];
-      if (pickupPointId && mongoose.isValidObjectId(pickupPointId)) ppCandidates.push(pickupPointId);
-      if (isObjectIdHex(ppIdStr)) ppCandidates.push(new mongoose.Types.ObjectId(ppIdStr));
-      if (!ppCandidates.length) return;
+      const fkNorm = normFlavorKey(flavorKey);
+      const fkCandidates = Array.from(
+        new Set([String(flavorKey || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean))
+      );
+
+      const ppCandidates = [ppIdObj, ppIdStr].filter(Boolean);
 
       // 1) try to inc existing stock row
       const res1 = await Product.updateOne(
@@ -762,9 +763,9 @@ app.put("/cart", async (req, res) => {
           { productKey, "flavors.flavorKey": { $in: fkCandidates } },
           {
             $push: {
-              // store pickupPointId as normalized string for compatibility with existing documents
+              // store pickupPointId as string for compatibility with existing documents
               "flavors.$[f].stockByPickupPoint": {
-                pickupPointId: ppCandidates[0],
+                pickupPointId: ppIdStr,
                 totalQty: 0,
                 reservedQty: 0,
               },
@@ -971,152 +972,6 @@ app.post("/orders/confirm", async (req, res) => {
       cardBgUrl: row.cardBgUrl,
       flavors: Array.from(row.flavorsMap.values()),
     }));
-
-    // 6) STOCK CONTEXT (куда смотрим наличие)
-    const [courierPP, inpostPP] = await Promise.all([
-      PickupPoint.findOne({ key: { $in: ["delivery", "delivery,"] } }, { _id: 1 }).lean(),
-      PickupPoint.findOne({ key: { $in: ["delivery-2", "delivery-2,"] } }, { _id: 1 }).lean(),
-    ]);
-
-    const courierWarehouseId = courierPP?._id || null;
-    const inpostWarehouseId = inpostPP?._id || null;
-
-    const stockContextIdFor = ({ type, method, pickupPointId }) => {
-      if (type === "pickup") return pickupPointId || null;
-      if (type === "delivery") {
-        if (method === "inpost") return inpostWarehouseId;
-        return courierWarehouseId;
-      }
-      return null;
-    };
-
-    const contextId = stockContextIdFor({
-      type: cart.checkoutDeliveryType,
-      method: cart.checkoutDeliveryMethod,
-      pickupPointId: cart.checkoutPickupPointId,
-    });
-
-    console.log("ORDER CONTEXT", {
-      type: cart.checkoutDeliveryType,
-      method: cart.checkoutDeliveryMethod,
-      pickupPointId: cart.checkoutPickupPointId,
-      contextId: String(contextId),
-    });
-
-    if (!contextId) {
-      return res.status(400).json({ ok: false, error: "Delivery context is not selected" });
-    }
-
-    const normFlavorKey = (v) => String(v || "").trim().replace(/,+$/, "");
-
-    const normId = (v) => String(v || "").trim().replace(/,+$/, "");
-
-    const ppCandidatesFor = (id) => {
-      const a = normId(id);
-      return Array.from(new Set([id, a, String(id), String(a)].filter(Boolean)));
-    };
-
-    const findStockRow = (flavor, ctxId) => {
-      const rows = Array.isArray(flavor?.stockByPickupPoint) ? flavor.stockByPickupPoint : [];
-      const cand = ppCandidatesFor(ctxId).map(String);
-      return rows.find((s) => cand.includes(String(s?.pickupPointId))) || null;
-    };
-
-    // 6.1) aggregate cart qty per productKey+flavorKey (это myQty)
-    const cartSum = new Map(); // pk__fk -> qty
-    for (const it of cart.items) {
-      const pk = String(it.productKey || "").trim();
-      const fk = String(it.flavorKey || "").trim();
-      if (!pk || !fk) continue;
-
-      const q = Math.max(1, Number(it.qty || 1));
-      const k = `${pk}__${fk}`;
-      cartSum.set(k, (cartSum.get(k) || 0) + q);
-    }
-
-    // 6.2) load products for stock check
-    const productKeysForCheck = Array.from(
-      new Set(cart.items.map((x) => String(x.productKey || "").trim()).filter(Boolean))
-    );
-
-    const productsForCheck = await Product.find(
-      { productKey: { $in: productKeysForCheck } },
-      { productKey: 1, title1: 1, title2: 1, flavors: 1 }
-    ).lean();
-
-    const prodByKey2 = new Map(productsForCheck.map((p) => [String(p.productKey), p]));
-    const missing = [];
-
-    for (const [k, myQty] of cartSum.entries()) {
-      const [pk, fkRaw] = k.split("__");
-
-      const p = prodByKey2.get(pk);
-      if (!p) {
-        missing.push({ productKey: pk, flavorKey: fkRaw, need: myQty, have: 0 });
-        continue;
-      }
-
-      const fkNorm = normFlavorKey(fkRaw);
-      const fkCandidates = Array.from(new Set([String(fkRaw || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean)));
-
-      const flavor = (p.flavors || []).find((f) =>
-        fkCandidates.includes(String(f.flavorKey || "").trim())
-      );
-
-      if (!flavor) {
-        missing.push({
-          productKey: pk,
-          title1: String(p.title1 || ""),
-          title2: String(p.title2 || ""),
-          flavorKey: fkRaw,
-          need: myQty,
-          have: 0,
-        });
-        continue;
-      }
-
-      const row = findStockRow(flavor, contextId);
-
-      console.log("CHECK STOCK", {
-        productKey: pk,
-        flavorKey: fkRaw,
-        myQty,
-        contextId: String(contextId),
-        foundRow: row ? { id: String(row.pickupPointId), total: row.totalQty, reserved: row.reservedQty } : null,
-        allRows: (flavor.stockByPickupPoint || []).map((s) => ({
-          id: String(s.pickupPointId),
-          total: s.totalQty,
-          reserved: s.reservedQty,
-        })),
-      });
-
-      const total = Number(row?.totalQty || 0);
-      const reserved = Number(row?.reservedQty || 0);
-
-      // ✅ reservedQty уже включает наш cart reserve.
-      // Поэтому при проверке «хватает ли для этого же пользователя»
-      // добавляем обратно myQty, чтобы не блокировать создание заказа,
-      // когда total === reserved из‑за собственного резерва.
-      const effectiveAvailable = Math.max(0, total - reserved + myQty);
-
-      if (effectiveAvailable < myQty) {
-        missing.push({
-          productKey: pk,
-          title1: String(p.title1 || ""),
-          title2: String(p.title2 || ""),
-          flavorKey: fkRaw,
-          need: myQty,
-          have: effectiveAvailable,
-        });
-      }
-    }
-
-    if (missing.length) {
-      return res.status(409).json({ ok: false, error: "Not enough stock", missing });
-    }
-
-    // Debug (можно убрать позже)
-    // console.log("/orders/confirm stock ok", { telegramId, contextId: String(contextId), items: Array.from(cartSum.entries()) });
 
     // 6) COMMIT stock: totalQty -= qty AND reservedQty -= qty (ВАЖНО!)
     // const [courierPP, inpostPP] = await Promise.all([
@@ -1407,17 +1262,12 @@ app.post("/orders/repeat", async (req, res) => {
       const q = Math.max(1, Number(qty || 1));
       if (!pickupPointId || !productKey || !flavorKey || !Number.isFinite(q) || q <= 0) return;
 
-      const normId = (v) => String(v || "").trim().replace(/,+$/, "");
+      const ppIdObj = pickupPointId; // could be ObjectId
+      const ppIdStr = String(pickupPointId);
 
-      const toObjId = (v) =>
-        mongoose.isValidObjectId(normId(v))
-          ? new mongoose.Types.ObjectId(normId(v))
-          : null;
-
-      const ppObj = toObjId(pickupPointId);
-      if (!ppObj) return;
-
-      const ppCandidates = [ppObj];
+      const fkNorm = normFlavorKey(flavorKey);
+      const fkCandidates = Array.from(new Set([String(flavorKey || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean)));
+      const ppCandidates = [ppIdObj, ppIdStr].filter(Boolean);
 
       // 1) try to inc existing stock row
       const res1 = await Product.updateOne(
@@ -1446,7 +1296,7 @@ app.post("/orders/repeat", async (req, res) => {
           {
             $push: {
               "flavors.$[f].stockByPickupPoint": {
-                pickupPointId: ppCandidates[0],
+                pickupPointId: ppIdStr,
                 totalQty: 0,
                 reservedQty: 0,
               },
