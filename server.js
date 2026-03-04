@@ -727,20 +727,14 @@ app.put("/cart", async (req, res) => {
       // - Some flavorKey values may accidentally contain a trailing comma (e.g. "apple-pear,").
       // We handle both cases by matching by $in with both representations.
 
-      const ppIdObj = pickupPointId; // could be ObjectId
-      const ppIdStrRaw = String(pickupPointId);
-      const ppIdStr = ppIdStrRaw.trim();
-      const ppIdNorm = ppIdStr.replace(/,+$/, "");
+      // pickupPointId в stockByPickupPoint у тебя ObjectId → работаем ТОЛЬКО с ObjectId
+      const ppIdStr = String(pickupPointId || "").trim().replace(/,+$/, "");
+      const isObjectIdHex = (s) => /^[a-fA-F0-9]{24}$/.test(String(s || "").trim());
 
-      const fkNorm = normFlavorKey(flavorKey);
-      const fkCandidates = Array.from(
-        new Set([String(flavorKey || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean))
-      );
-
-      // pickupPointId can be stored as ObjectId OR string (sometimes with a trailing comma)
-      const ppCandidates = Array.from(
-        new Set([ppIdObj, ppIdStr, ppIdNorm, `${ppIdNorm},`].filter(Boolean))
-      );
+      const ppCandidates = [];
+      if (pickupPointId && mongoose.isValidObjectId(pickupPointId)) ppCandidates.push(pickupPointId);
+      if (isObjectIdHex(ppIdStr)) ppCandidates.push(new mongoose.Types.ObjectId(ppIdStr));
+      if (!ppCandidates.length) return;
 
       // 1) try to inc existing stock row
       const res1 = await Product.updateOne(
@@ -770,7 +764,7 @@ app.put("/cart", async (req, res) => {
             $push: {
               // store pickupPointId as normalized string for compatibility with existing documents
               "flavors.$[f].stockByPickupPoint": {
-                pickupPointId: ppIdNorm,
+                pickupPointId: ppCandidates[0],
                 totalQty: 0,
                 reservedQty: 0,
               },
@@ -1413,12 +1407,17 @@ app.post("/orders/repeat", async (req, res) => {
       const q = Math.max(1, Number(qty || 1));
       if (!pickupPointId || !productKey || !flavorKey || !Number.isFinite(q) || q <= 0) return;
 
-      const ppIdObj = pickupPointId; // could be ObjectId
-      const ppIdStr = String(pickupPointId);
+      const normId = (v) => String(v || "").trim().replace(/,+$/, "");
 
-      const fkNorm = normFlavorKey(flavorKey);
-      const fkCandidates = Array.from(new Set([String(flavorKey || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean)));
-      const ppCandidates = [ppIdObj, ppIdStr].filter(Boolean);
+      const toObjId = (v) =>
+        mongoose.isValidObjectId(normId(v))
+          ? new mongoose.Types.ObjectId(normId(v))
+          : null;
+
+      const ppObj = toObjId(pickupPointId);
+      if (!ppObj) return;
+
+      const ppCandidates = [ppObj];
 
       // 1) try to inc existing stock row
       const res1 = await Product.updateOne(
@@ -1447,7 +1446,7 @@ app.post("/orders/repeat", async (req, res) => {
           {
             $push: {
               "flavors.$[f].stockByPickupPoint": {
-                pickupPointId: ppIdStr,
+                pickupPointId: ppCandidates[0],
                 totalQty: 0,
                 reservedQty: 0,
               },
