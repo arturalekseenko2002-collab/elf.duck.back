@@ -1002,6 +1002,13 @@ app.post("/orders/confirm", async (req, res) => {
       pickupPointId: cart.checkoutPickupPointId,
     });
 
+    console.log("ORDER CONTEXT", {
+      type: cart.checkoutDeliveryType,
+      method: cart.checkoutDeliveryMethod,
+      pickupPointId: cart.checkoutPickupPointId,
+      contextId: String(contextId),
+    });
+
     if (!contextId) {
       return res.status(400).json({ ok: false, error: "Delivery context is not selected" });
     }
