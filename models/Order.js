@@ -98,6 +98,9 @@ const orderSchema = new mongoose.Schema(
       provider: { type: String, default: null },
       txId: { type: String, default: null },
     },
+
+    arrivedNotifiedAt: { type: Date, default: null }, // клиент нажал "Я на месте"
+    completedAt: { type: Date, default: null },       // менеджер отметил выполненным (опционально)
   },
   { timestamps: true }
 );
