@@ -1095,7 +1095,10 @@ app.post("/orders/confirm", async (req, res) => {
       payment: { status: "unpaid", amountZl: Number(totalZl.toFixed(2)) },
 
       status: "created",
-      stockCommittedAt: new Date(),
+      // ✅ заказ создан: товар остаётся в reservedQty (как в корзине)
+      stockReservedAt: new Date(),
+      stockCommittedAt: null,
+      stockReleasedAt: null,
     });
 
     // 9) clear cart
@@ -1254,34 +1257,73 @@ app.post("/orders/repeat", async (req, res) => {
 
     if (missing.length) return res.status(409).json({ ok: false, error: "Not enough stock", missing });
 
-    // 5) COMMIT stock: totalQty -= qty (reservedQty НЕ трогаем)
+    // 5) RESERVE stock: reservedQty += qty (totalQty НЕ трогаем)
     const applyDelta = async ({ productKey, flavorKey, pickupPointId, qty }) => {
       const q = Math.max(1, Number(qty || 1));
+      if (!pickupPointId || !productKey || !flavorKey || !Number.isFinite(q) || q <= 0) return;
+
+      const ppIdObj = pickupPointId; // could be ObjectId
       const ppIdStr = String(pickupPointId);
 
       const fkNorm = normFlavorKey(flavorKey);
       const fkCandidates = Array.from(new Set([String(flavorKey || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean)));
-      const ppCandidates = [pickupPointId, ppIdStr].filter(Boolean);
+      const ppCandidates = [ppIdObj, ppIdStr].filter(Boolean);
 
-      await Product.updateOne(
+      // 1) try to inc existing stock row
+      const res1 = await Product.updateOne(
         {
           productKey,
           "flavors.flavorKey": { $in: fkCandidates },
           "flavors.stockByPickupPoint.pickupPointId": { $in: ppCandidates },
         },
-        { $inc: { "flavors.$[f].stockByPickupPoint.$[s].totalQty": -q } },
-        { arrayFilters: [{ "f.flavorKey": { $in: fkCandidates } }, { "s.pickupPointId": { $in: ppCandidates } }] }
+        {
+          $inc: {
+            "flavors.$[f].stockByPickupPoint.$[s].reservedQty": q,
+          },
+        },
+        {
+          arrayFilters: [
+            { "f.flavorKey": { $in: fkCandidates } },
+            { "s.pickupPointId": { $in: ppCandidates } },
+          ],
+        }
       );
 
-      await Product.updateOne(
-        {
-          productKey,
-          "flavors.flavorKey": { $in: fkCandidates },
-          "flavors.stockByPickupPoint.pickupPointId": { $in: ppCandidates },
-        },
-        { $max: { "flavors.$[f].stockByPickupPoint.$[s].totalQty": 0 } },
-        { arrayFilters: [{ "f.flavorKey": { $in: fkCandidates } }, { "s.pickupPointId": { $in: ppCandidates } }] }
-      );
+      // 2) if stock row missing, push it then inc again
+      if (!res1?.modifiedCount) {
+        await Product.updateOne(
+          { productKey, "flavors.flavorKey": { $in: fkCandidates } },
+          {
+            $push: {
+              "flavors.$[f].stockByPickupPoint": {
+                pickupPointId: ppIdStr,
+                totalQty: 0,
+                reservedQty: 0,
+              },
+            },
+          },
+          { arrayFilters: [{ "f.flavorKey": { $in: fkCandidates } }] }
+        );
+
+        await Product.updateOne(
+          {
+            productKey,
+            "flavors.flavorKey": { $in: fkCandidates },
+            "flavors.stockByPickupPoint.pickupPointId": { $in: ppCandidates },
+          },
+          {
+            $inc: {
+              "flavors.$[f].stockByPickupPoint.$[s].reservedQty": q,
+            },
+          },
+          {
+            arrayFilters: [
+              { "f.flavorKey": { $in: fkCandidates } },
+              { "s.pickupPointId": { $in: ppCandidates } },
+            ],
+          }
+        );
+      }
     };
 
     for (const it of flat) {
@@ -1327,7 +1369,10 @@ app.post("/orders/repeat", async (req, res) => {
 
       payment: { status: "unpaid", amountZl: Number(totalZl.toFixed(2)) },
       status: "created",
-      stockCommittedAt: new Date(),
+      // ✅ повтор заказа тоже держит резерв, списание будет только при выполнении
+      stockReservedAt: new Date(),
+      stockCommittedAt: null,
+      stockReleasedAt: null,
     });
 
     return res.json({ ok: true, order: created });
