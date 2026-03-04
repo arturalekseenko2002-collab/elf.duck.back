@@ -973,6 +973,115 @@ app.post("/orders/confirm", async (req, res) => {
       flavors: Array.from(row.flavorsMap.values()),
     }));
 
+    // 6) STOCK CONTEXT (куда смотрим наличие)
+    const [courierPP, inpostPP] = await Promise.all([
+      PickupPoint.findOne({ key: { $in: ["delivery", "delivery,"] } }, { _id: 1 }).lean(),
+      PickupPoint.findOne({ key: { $in: ["delivery-2", "delivery-2,"] } }, { _id: 1 }).lean(),
+    ]);
+
+    const courierWarehouseId = courierPP?._id || null;
+    const inpostWarehouseId = inpostPP?._id || null;
+
+    const stockContextIdFor = ({ type, method, pickupPointId }) => {
+      if (type === "pickup") return pickupPointId || null;
+      if (type === "delivery") {
+        if (method === "inpost") return inpostWarehouseId;
+        return courierWarehouseId;
+      }
+      return null;
+    };
+
+    const contextId = stockContextIdFor({
+      type: cart.checkoutDeliveryType,
+      method: cart.checkoutDeliveryMethod,
+      pickupPointId: cart.checkoutPickupPointId,
+    });
+
+    if (!contextId) {
+      return res.status(400).json({ ok: false, error: "Delivery context is not selected" });
+    }
+
+    const normFlavorKey = (v) => String(v || "").trim().replace(/,+$/, "");
+
+    // 6.1) aggregate cart qty per productKey+flavorKey (это myQty)
+    const cartSum = new Map(); // pk__fk -> qty
+    for (const it of cart.items) {
+      const pk = String(it.productKey || "").trim();
+      const fk = String(it.flavorKey || "").trim();
+      if (!pk || !fk) continue;
+
+      const q = Math.max(1, Number(it.qty || 1));
+      const k = `${pk}__${fk}`;
+      cartSum.set(k, (cartSum.get(k) || 0) + q);
+    }
+
+    // 6.2) load products for stock check
+    const productKeysForCheck = Array.from(
+      new Set(cart.items.map((x) => String(x.productKey || "").trim()).filter(Boolean))
+    );
+
+    const productsForCheck = await Product.find(
+      { productKey: { $in: productKeysForCheck } },
+      { productKey: 1, title1: 1, title2: 1, flavors: 1 }
+    ).lean();
+
+    const prodByKey2 = new Map(productsForCheck.map((p) => [String(p.productKey), p]));
+    const missing = [];
+
+    for (const [k, myQty] of cartSum.entries()) {
+      const [pk, fkRaw] = k.split("__");
+
+      const p = prodByKey2.get(pk);
+      if (!p) {
+        missing.push({ productKey: pk, flavorKey: fkRaw, need: myQty, have: 0 });
+        continue;
+      }
+
+      const fkNorm = normFlavorKey(fkRaw);
+      const fkCandidates = Array.from(new Set([String(fkRaw || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean)));
+
+      const flavor = (p.flavors || []).find((f) =>
+        fkCandidates.includes(String(f.flavorKey || "").trim())
+      );
+
+      if (!flavor) {
+        missing.push({
+          productKey: pk,
+          title1: String(p.title1 || ""),
+          title2: String(p.title2 || ""),
+          flavorKey: fkRaw,
+          need: myQty,
+          have: 0,
+        });
+        continue;
+      }
+
+      const row = (flavor.stockByPickupPoint || []).find(
+        (s) => String(s.pickupPointId) === String(contextId)
+      );
+
+      const total = Number(row?.totalQty || 0);
+      const reserved = Number(row?.reservedQty || 0);
+
+      // ✅ reserved включает наш cart reserve, поэтому добавляем myQty обратно
+      const effectiveAvailable = Math.max(0, total - reserved + myQty);
+
+      if (effectiveAvailable < myQty) {
+        missing.push({
+          productKey: pk,
+          title1: String(p.title1 || ""),
+          title2: String(p.title2 || ""),
+          flavorKey: fkRaw,
+          need: myQty,
+          have: effectiveAvailable,
+        });
+      }
+    }
+
+    if (missing.length) {
+      return res.status(409).json({ ok: false, error: "Not enough stock", missing });
+    }
+
     // 6) COMMIT stock: totalQty -= qty AND reservedQty -= qty (ВАЖНО!)
     // const [courierPP, inpostPP] = await Promise.all([
     //   PickupPoint.findOne({ key: { $in: ["delivery", "delivery,"] } }, { _id: 1 }).lean(),
