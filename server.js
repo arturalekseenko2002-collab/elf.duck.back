@@ -727,12 +727,18 @@ app.put("/cart", async (req, res) => {
     const applyReservedDelta = async ({ productKey, flavorKey, pickupPointId, delta }) => {
       const normId = (v) => String(v || "").trim().replace(/,+$/, "");
       const toObjId = (v) => {
+        if (v instanceof mongoose.Types.ObjectId) return v;
+        // sometimes mongoose gives ObjectId-like objects
+        if (v && typeof v === "object" && mongoose.isValidObjectId(String(v))) {
+          return new mongoose.Types.ObjectId(String(v));
+        }
         const s = normId(v);
         return mongoose.isValidObjectId(s) ? new mongoose.Types.ObjectId(s) : null;
       };
 
       const ppObj = toObjId(pickupPointId);
       if (!ppObj) return;
+      if (!Number.isFinite(delta) || delta === 0) return;
 
       const fkNorm = normFlavorKey(flavorKey);
       const fkCandidates = Array.from(
@@ -751,7 +757,7 @@ app.put("/cart", async (req, res) => {
         },
         {
           $inc: {
-            "flavors.$[f].stockByPickupPoint.$[s].reservedQty": d,
+            "flavors.$[f].stockByPickupPoint.$[s].reservedQty": delta,
           },
         },
         {
@@ -787,7 +793,7 @@ app.put("/cart", async (req, res) => {
           },
           {
             $inc: {
-              "flavors.$[f].stockByPickupPoint.$[s].reservedQty": d,
+              "flavors.$[f].stockByPickupPoint.$[s].reservedQty": delta,
             },
           },
           {
