@@ -1003,6 +1003,19 @@ app.post("/orders/confirm", async (req, res) => {
 
     const normFlavorKey = (v) => String(v || "").trim().replace(/,+$/, "");
 
+    const normId = (v) => String(v || "").trim().replace(/,+$/, "");
+
+    const ppCandidatesFor = (id) => {
+      const a = normId(id);
+      return Array.from(new Set([id, a, String(id), String(a)].filter(Boolean)));
+    };
+
+    const findStockRow = (flavor, ctxId) => {
+      const rows = Array.isArray(flavor?.stockByPickupPoint) ? flavor.stockByPickupPoint : [];
+      const cand = ppCandidatesFor(ctxId).map(String);
+      return rows.find((s) => cand.includes(String(s?.pickupPointId))) || null;
+    };
+
     // 6.1) aggregate cart qty per productKey+flavorKey (это myQty)
     const cartSum = new Map(); // pk__fk -> qty
     for (const it of cart.items) {
@@ -1056,14 +1069,15 @@ app.post("/orders/confirm", async (req, res) => {
         continue;
       }
 
-      const row = (flavor.stockByPickupPoint || []).find(
-        (s) => String(s.pickupPointId) === String(contextId)
-      );
+      const row = findStockRow(flavor, contextId);
 
       const total = Number(row?.totalQty || 0);
       const reserved = Number(row?.reservedQty || 0);
 
-      // ✅ reserved включает наш cart reserve, поэтому добавляем myQty обратно
+      // ✅ reservedQty уже включает наш cart reserve.
+      // Поэтому при проверке «хватает ли для этого же пользователя»
+      // добавляем обратно myQty, чтобы не блокировать создание заказа,
+      // когда total === reserved из‑за собственного резерва.
       const effectiveAvailable = Math.max(0, total - reserved + myQty);
 
       if (effectiveAvailable < myQty) {
@@ -1081,6 +1095,9 @@ app.post("/orders/confirm", async (req, res) => {
     if (missing.length) {
       return res.status(409).json({ ok: false, error: "Not enough stock", missing });
     }
+
+    // Debug (можно убрать позже)
+    // console.log("/orders/confirm stock ok", { telegramId, contextId: String(contextId), items: Array.from(cartSum.entries()) });
 
     // 6) COMMIT stock: totalQty -= qty AND reservedQty -= qty (ВАЖНО!)
     // const [courierPP, inpostPP] = await Promise.all([
