@@ -1083,6 +1083,19 @@ app.post("/orders/confirm", async (req, res) => {
 
       const row = findStockRow(flavor, contextId);
 
+      console.log("CHECK STOCK", {
+        productKey: pk,
+        flavorKey: fkRaw,
+        myQty,
+        contextId: String(contextId),
+        foundRow: row ? { id: String(row.pickupPointId), total: row.totalQty, reserved: row.reservedQty } : null,
+        allRows: (flavor.stockByPickupPoint || []).map((s) => ({
+          id: String(s.pickupPointId),
+          total: s.totalQty,
+          reserved: s.reservedQty,
+        })),
+      });
+
       const total = Number(row?.totalQty || 0);
       const reserved = Number(row?.reservedQty || 0);
 
