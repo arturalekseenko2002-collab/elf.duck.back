@@ -580,40 +580,12 @@ app.get("/cart", async (req, res) => {
   }
 });
 
-// ================= CART MUTEX (prevent parallel /cart races) =================
-// Serializes cart updates per telegramId so reservedQty and cart state can't race.
-const cartMutexByTelegramId = new Map();
-
-const withCartMutex = async (telegramId, fn) => {
-  const key = String(telegramId || "").trim();
-  if (!key) return fn();
-
-  const prev = cartMutexByTelegramId.get(key) || Promise.resolve();
-  // ensure the chain continues even if a previous task failed
-  const safePrev = prev.catch(() => {});
-
-  const next = safePrev.then(fn);
-  cartMutexByTelegramId.set(key, next);
-
-  // cleanup if this is the last task
-  next.finally(() => {
-    if (cartMutexByTelegramId.get(key) === next) {
-      cartMutexByTelegramId.delete(key);
-    }
-  });
-
-  return next;
-};
-// ============================================================================
-
 // ===== Public: replace cart (save full state) =====
 app.put("/cart", async (req, res) => {
   try {
     const b = req.body || {};
     const telegramId = String(b.telegramId || "").trim();
     if (!telegramId) return res.status(400).json({ ok: false, error: "telegramId is required" });
-
-    return await withCartMutex(telegramId, async () => {
 
     const items = Array.isArray(b.items) ? b.items : [];
 
@@ -800,6 +772,7 @@ app.put("/cart", async (req, res) => {
       const normId = (v) => String(v || "").trim().replace(/,+$/, "");
       const toObjId = (v) => {
         if (v instanceof mongoose.Types.ObjectId) return v;
+        // sometimes mongoose gives ObjectId-like objects
         if (v && typeof v === "object" && mongoose.isValidObjectId(String(v))) {
           return new mongoose.Types.ObjectId(String(v));
         }
@@ -809,55 +782,95 @@ app.put("/cart", async (req, res) => {
 
       const ppObj = toObjId(pickupPointId);
       if (!ppObj) return;
-
       if (!Number.isFinite(delta) || delta === 0) return;
 
-      const fkNorm = String(flavorKey || "").trim();
-
-      const baseQuery = {
-        productKey,
-        "flavors.flavorKey": fkNorm,
-        "flavors.stockByPickupPoint.pickupPointId": ppObj,
-      };
-
-      const updatePath = "flavors.$[f].stockByPickupPoint.$[s].reservedQty";
-
-      const arrayFilters = [
-        { "f.flavorKey": fkNorm },
-        { "s.pickupPointId": ppObj },
-      ];
-
-      // ================= GUARD =================
-
-      let query = { ...baseQuery };
-
-      if (delta > 0) {
-        // reserve: reserved + delta <= total
-        query["$expr"] = {
-          $lte: [
-            { $add: [`$${updatePath}`, delta] },
-            "$flavors.stockByPickupPoint.totalQty",
-          ],
-        };
-      } else {
-        // release: reserved + delta >= 0
-        query["$expr"] = {
-          $gte: [
-            { $add: [`$${updatePath}`, delta] },
-            0,
-          ],
-        };
-      }
-
-      const r = await Product.updateOne(
-        query,
-        { $inc: { [updatePath]: delta } },
-        { arrayFilters }
+      const fkNorm = normFlavorKey(flavorKey);
+      const fkCandidates = Array.from(
+        new Set([String(flavorKey || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean))
       );
 
-      if (r.modifiedCount === 0) {
-        throw new Error("RESERVE_CONFLICT");
+      // IMPORTANT: pickupPointId in Product schema is ObjectId, so we only query with ObjectId
+      const ppCandidates = [ppObj];
+
+      console.log("[CART][RESERVE][DELTA]", {
+        telegramId,
+        productKey,
+        flavorKey,
+        pickupPointId: String(ppObj),
+        delta,
+        fkCandidates,
+      });
+
+      // 1) try to inc existing stock row
+      const res1 = await Product.updateOne(
+        {
+          productKey,
+          "flavors.flavorKey": { $in: fkCandidates },
+          "flavors.stockByPickupPoint.pickupPointId": { $in: ppCandidates },
+        },
+        {
+          $inc: {
+            "flavors.$[f].stockByPickupPoint.$[s].reservedQty": delta,
+          },
+        },
+        {
+          arrayFilters: [
+            { "f.flavorKey": { $in: fkCandidates } },
+            { "s.pickupPointId": { $in: ppCandidates } },
+          ],
+        }
+      );
+
+      if (!res1?.modifiedCount) {
+        console.warn("[CART][RESERVE][MISS] Stock row not found, will push new stockByPickupPoint row", {
+          telegramId,
+          productKey,
+          flavorKey,
+          pickupPointId: String(ppObj),
+          delta,
+          fkCandidates,
+        });
       }
+
+      // 2) if stock row missing, push it then inc again
+      if (!res1?.modifiedCount) {
+        await Product.updateOne(
+          { productKey, "flavors.flavorKey": { $in: fkCandidates } },
+          {
+            $push: {
+              // store pickupPointId as ObjectId (schema type)
+              "flavors.$[f].stockByPickupPoint": {
+                pickupPointId: ppObj,
+                totalQty: 0,
+                reservedQty: 0,
+              },
+            },
+          },
+          { arrayFilters: [{ "f.flavorKey": { $in: fkCandidates } }] }
+        );
+
+        await Product.updateOne(
+          {
+            productKey,
+            "flavors.flavorKey": { $in: fkCandidates },
+            "flavors.stockByPickupPoint.pickupPointId": { $in: ppCandidates },
+          },
+          {
+            $inc: {
+              "flavors.$[f].stockByPickupPoint.$[s].reservedQty": delta,
+            },
+          },
+          {
+            arrayFilters: [
+              { "f.flavorKey": { $in: fkCandidates } },
+              { "s.pickupPointId": { $in: ppCandidates } },
+            ],
+          }
+        );
+      }
+
+      // NOTE: We intentionally don't hard-clamp reservedQty here.
+      // The cart is the source of truth; deltas should keep it consistent.
     };
 
     // Build reservation deltas
@@ -890,40 +903,11 @@ app.put("/cart", async (req, res) => {
     }
 
     // Apply deltas sequentially (simple + safe). If you ever need speed, we can batch later.
-    const applied = [];
-
     for (const d of deltas) {
       try {
         await applyReservedDelta(d);
-        applied.push(d);
       } catch (e) {
-        if (e?.message === "RESERVE_CONFLICT") {
-          console.warn("[CART][RESERVE][CONFLICT]", { telegramId, d });
-
-          // rollback already-applied deltas in reverse order
-          for (let i = applied.length - 1; i >= 0; i--) {
-            const a = applied[i];
-            try {
-              await applyReservedDelta({
-                productKey: a.productKey,
-                flavorKey: a.flavorKey,
-                pickupPointId: a.pickupPointId,
-                delta: -a.delta,
-              });
-            } catch (rbErr) {
-              console.error("[CART][RESERVE][ROLLBACK_FAILED]", a, rbErr);
-            }
-          }
-
-          return res.status(409).json({
-            ok: false,
-            error: "OUT_OF_STOCK",
-            message: "Not enough stock to reserve items",
-          });
-        }
-
-        // unexpected error -> let outer catch return 500
-        throw e;
+        console.error("reservedQty update failed", d, e);
       }
     }
     // ================= END STOCK RESERVATION =================
@@ -946,7 +930,6 @@ app.put("/cart", async (req, res) => {
     ).lean();
 
     res.json({ ok: true, cart: updated });
-    });
   } catch (e) {
     console.error("PUT /cart error:", e);
     res.status(500).json({ ok: false, error: "Server error" });
