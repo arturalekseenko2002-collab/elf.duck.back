@@ -664,6 +664,14 @@ app.put("/cart", async (req, res) => {
     const finalCheckoutPickupPointId =
       forceCheckoutSelection ? checkoutPickupPointId : (prevPickup ?? checkoutPickupPointId ?? null);
 
+    // ✅ Guard: pickup requires a pickup point when cart has items
+    if (finalCheckoutDeliveryType === "pickup" && !finalCheckoutPickupPointId && cleanItems.length > 0) {
+      return res.status(400).json({
+        ok: false,
+        error: "pickupPointId is required for pickup when cart has items",
+      });
+    }
+
     // ================= STOCK RESERVATION (reservedQty) =================
     // Goal: when items are in the cart, we reserve their qty on the selected stock context
     // (pickup point OR delivery warehouse), so other users can't over-buy.
