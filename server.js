@@ -580,12 +580,40 @@ app.get("/cart", async (req, res) => {
   }
 });
 
+// ================= CART MUTEX (prevent parallel /cart races) =================
+// Serializes cart updates per telegramId so reservedQty and cart state can't race.
+const cartMutexByTelegramId = new Map();
+
+const withCartMutex = async (telegramId, fn) => {
+  const key = String(telegramId || "").trim();
+  if (!key) return fn();
+
+  const prev = cartMutexByTelegramId.get(key) || Promise.resolve();
+  // ensure the chain continues even if a previous task failed
+  const safePrev = prev.catch(() => {});
+
+  const next = safePrev.then(fn);
+  cartMutexByTelegramId.set(key, next);
+
+  // cleanup if this is the last task
+  next.finally(() => {
+    if (cartMutexByTelegramId.get(key) === next) {
+      cartMutexByTelegramId.delete(key);
+    }
+  });
+
+  return next;
+};
+// ============================================================================
+
 // ===== Public: replace cart (save full state) =====
 app.put("/cart", async (req, res) => {
   try {
     const b = req.body || {};
     const telegramId = String(b.telegramId || "").trim();
     if (!telegramId) return res.status(400).json({ ok: false, error: "telegramId is required" });
+
+    return await withCartMutex(telegramId, async () => {
 
     const items = Array.isArray(b.items) ? b.items : [];
 
@@ -918,6 +946,7 @@ app.put("/cart", async (req, res) => {
     ).lean();
 
     res.json({ ok: true, cart: updated });
+    });
   } catch (e) {
     console.error("PUT /cart error:", e);
     res.status(500).json({ ok: false, error: "Server error" });
