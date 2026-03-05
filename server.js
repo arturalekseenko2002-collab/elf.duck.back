@@ -706,6 +706,42 @@ app.put("/cart", async (req, res) => {
       pickupPointId: finalCheckoutPickupPointId,
     });
 
+    // ===== DEBUG: stock context mismatch catcher =====
+    const dbg = {
+      telegramId,
+      prev: {
+        type: prevType,
+        method: prevMethod,
+        pickupPointId: prevPickup,
+        contextId: prevContextId ? String(prevContextId) : null,
+      },
+      next: {
+        type: finalCheckoutDeliveryType,
+        method: finalCheckoutDeliveryMethod,
+        pickupPointId: finalCheckoutPickupPointId,
+        contextId: nextContextId ? String(nextContextId) : null,
+      },
+      deliveryWarehouses: {
+        courierWarehouseId: courierWarehouseId ? String(courierWarehouseId) : null,
+        inpostWarehouseId: inpostWarehouseId ? String(inpostWarehouseId) : null,
+      },
+      cartCounts: {
+        prevItems: Array.isArray(existing?.items) ? existing.items.length : 0,
+        nextItems: Array.isArray(cleanItems) ? cleanItems.length : 0,
+      },
+    };
+
+    console.log("[CART][CTX]", JSON.stringify(dbg));
+
+    if (cleanItems.length && !nextContextId) {
+      console.warn("[CART][CTX][WARN] Items present but nextContextId is null — reservation will NOT be applied", JSON.stringify(dbg));
+    }
+
+    if (prevContextId && nextContextId && String(prevContextId) !== String(nextContextId)) {
+      console.warn("[CART][CTX][WARN] Context changed — will release prev and reserve next", JSON.stringify(dbg));
+    }
+    // ===== /DEBUG =====
+
     const sumItems = (itemsArr) => {
       const map = new Map();
       for (const it of Array.isArray(itemsArr) ? itemsArr : []) {
@@ -748,6 +784,15 @@ app.put("/cart", async (req, res) => {
       // IMPORTANT: pickupPointId in Product schema is ObjectId, so we only query with ObjectId
       const ppCandidates = [ppObj];
 
+      console.log("[CART][RESERVE][DELTA]", {
+        telegramId,
+        productKey,
+        flavorKey,
+        pickupPointId: String(ppObj),
+        delta,
+        fkCandidates,
+      });
+
       // 1) try to inc existing stock row
       const res1 = await Product.updateOne(
         {
@@ -767,6 +812,17 @@ app.put("/cart", async (req, res) => {
           ],
         }
       );
+
+      if (!res1?.modifiedCount) {
+        console.warn("[CART][RESERVE][MISS] Stock row not found, will push new stockByPickupPoint row", {
+          telegramId,
+          productKey,
+          flavorKey,
+          pickupPointId: String(ppObj),
+          delta,
+          fkCandidates,
+        });
+      }
 
       // 2) if stock row missing, push it then inc again
       if (!res1?.modifiedCount) {
@@ -984,6 +1040,132 @@ app.post("/orders/confirm", async (req, res) => {
       flavors: Array.from(row.flavorsMap.values()),
     }));
 
+    // ================= STOCK CHECK (avoid context mismatch) =================
+    // IMPORTANT: use THE SAME stock context logic as /cart reservations.
+    // Product.flavors.stockByPickupPoint.pickupPointId is ObjectId -> always use ObjectId.
+
+    const normId = (v) => String(v || "").trim().replace(/,+$/, "");
+    const toObjId = (v) => {
+      const s = normId(v);
+      return mongoose.isValidObjectId(s) ? new mongoose.Types.ObjectId(s) : null;
+    };
+
+    // Delivery warehouses are stored as PickupPoints with key "delivery" and "delivery-2"
+    const [courierPP, inpostPP] = await Promise.all([
+      PickupPoint.findOne({ key: { $in: ["delivery", "delivery,"] } }, { _id: 1, key: 1 }).lean(),
+      PickupPoint.findOne({ key: { $in: ["delivery-2", "delivery-2,"] } }, { _id: 1, key: 1 }).lean(),
+    ]);
+
+    const courierWarehouseId = courierPP?._id || null;
+    const inpostWarehouseId = inpostPP?._id || null;
+
+    const stockContextIdFor = ({ type, method, pickupPointId }) => {
+      if (type === "pickup") return toObjId(pickupPointId);
+      if (type === "delivery") {
+        if (method === "inpost") return inpostWarehouseId;
+        return courierWarehouseId;
+      }
+      return null;
+    };
+
+    const contextId = stockContextIdFor({
+      type: cart.checkoutDeliveryType,
+      method: cart.checkoutDeliveryMethod,
+      pickupPointId: cart.checkoutPickupPointId,
+    });
+
+    console.log(
+      "[ORDER][CONFIRM][CTX]",
+      JSON.stringify({
+        telegramId,
+        checkoutDeliveryType: cart.checkoutDeliveryType ?? null,
+        checkoutDeliveryMethod: cart.checkoutDeliveryMethod ?? null,
+        checkoutPickupPointId: cart.checkoutPickupPointId ?? null,
+        contextId: contextId ? String(contextId) : null,
+        deliveryWarehouses: {
+          courierWarehouseId: courierWarehouseId ? String(courierWarehouseId) : null,
+          inpostWarehouseId: inpostWarehouseId ? String(inpostWarehouseId) : null,
+        },
+      })
+    );
+
+    if (!contextId) {
+      return res.status(400).json({ ok: false, error: "Stock context is not set (pickup point / delivery warehouse)" });
+    }
+
+    // Availability check: available = totalQty - reservedQty.
+    // BUT reservedQty already includes THIS cart reservation, so for self-check we add back my qty.
+    const cartSum = new Map(); // key -> qty
+    for (const it of cart.items) {
+      const pk = String(it.productKey || "").trim();
+      const fk = String(it.flavorKey || "").trim();
+      if (!pk || !fk) continue;
+      const key = `${pk}__${fk}`;
+      const q = Math.max(1, Number(it.qty || 1));
+      cartSum.set(key, (cartSum.get(key) || 0) + q);
+    }
+
+    const normFlavorKey = (v) => String(v || "").trim().replace(/,+$/, "");
+
+    const productKeysForCheck = Array.from(
+      new Set(cart.items.map((it) => String(it.productKey || "").trim()).filter(Boolean))
+    );
+
+    const productsForCheck = await Product.find(
+      { productKey: { $in: productKeysForCheck } },
+      { productKey: 1, title1: 1, title2: 1, flavors: 1 }
+    ).lean();
+
+    const prodByKey2 = new Map(productsForCheck.map((p) => [String(p.productKey), p]));
+
+    const missing = [];
+
+    for (const [k, myQty] of cartSum.entries()) {
+      const [productKey, flavorKey] = k.split("__");
+      const p = prodByKey2.get(productKey);
+
+      if (!p) {
+        missing.push({ productKey, flavorKey, need: myQty, have: 0, reason: "product_not_found" });
+        continue;
+      }
+
+      const fkNorm = normFlavorKey(flavorKey);
+      const fkCandidates = Array.from(new Set([String(flavorKey).trim(), fkNorm, `${fkNorm},`].filter(Boolean)));
+      const flavor = (p.flavors || []).find((f) => fkCandidates.includes(String(f.flavorKey || "").trim()));
+
+      if (!flavor) {
+        missing.push({ productKey, flavorKey, need: myQty, have: 0, reason: "flavor_not_found" });
+        continue;
+      }
+
+      const row = (flavor.stockByPickupPoint || []).find((s) => String(s.pickupPointId) === String(contextId));
+      const total = Number(row?.totalQty || 0);
+      const reserved = Number(row?.reservedQty || 0);
+
+      // self-check: add back myQty so we don't block ourselves
+      const effectiveHave = Math.max(0, total - reserved + myQty);
+
+      if (effectiveHave < myQty) {
+        missing.push({
+          productKey,
+          flavorKey,
+          need: myQty,
+          have: effectiveHave,
+          total,
+          reserved,
+          contextId: String(contextId),
+          reason: "not_enough_stock",
+        });
+      }
+    }
+
+    if (missing.length) {
+      console.warn("[ORDER][CONFIRM][STOCK][MISSING]", JSON.stringify({ telegramId, contextId: String(contextId), missing }));
+      return res.status(409).json({ ok: false, error: "Not enough stock", missing });
+    }
+
+    // ================= /STOCK CHECK =================
+
     // 6) COMMIT stock: totalQty -= qty AND reservedQty -= qty (ВАЖНО!)
     // const [courierPP, inpostPP] = await Promise.all([
     //   PickupPoint.findOne({ key: { $in: ["delivery", "delivery,"] } }, { _id: 1 }).lean(),
@@ -1198,8 +1380,14 @@ app.post("/orders/repeat", async (req, res) => {
     const courierWarehouseId = courierPP?._id || null;
     const inpostWarehouseId = inpostPP?._id || null;
 
+    const normId = (v) => String(v || "").trim().replace(/,+$/, "");
+    const toObjId = (v) => {
+      const s = normId(v);
+      return mongoose.isValidObjectId(s) ? new mongoose.Types.ObjectId(s) : null;
+    };
+
     const stockContextIdFor = ({ type, method, pickupPointId }) => {
-      if (type === "pickup") return pickupPointId || null;
+      if (type === "pickup") return toObjId(pickupPointId);
       if (type === "delivery") return method === "inpost" ? inpostWarehouseId : courierWarehouseId;
       return null;
     };
@@ -1273,12 +1461,17 @@ app.post("/orders/repeat", async (req, res) => {
       const q = Math.max(1, Number(qty || 1));
       if (!pickupPointId || !productKey || !flavorKey || !Number.isFinite(q) || q <= 0) return;
 
-      const ppIdObj = pickupPointId; // could be ObjectId
-      const ppIdStr = String(pickupPointId);
+      const ppObj = pickupPointId instanceof mongoose.Types.ObjectId
+        ? pickupPointId
+        : toObjId(pickupPointId);
+
+      if (!ppObj) return;
+
+      const ppCandidates = [ppObj];
 
       const fkNorm = normFlavorKey(flavorKey);
       const fkCandidates = Array.from(new Set([String(flavorKey || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean)));
-      const ppCandidates = [ppIdObj, ppIdStr].filter(Boolean);
+
 
       // 1) try to inc existing stock row
       const res1 = await Product.updateOne(
@@ -1307,7 +1500,7 @@ app.post("/orders/repeat", async (req, res) => {
           {
             $push: {
               "flavors.$[f].stockByPickupPoint": {
-                pickupPointId: ppIdStr,
+                pickupPointId: ppObj,
                 totalQty: 0,
                 reservedQty: 0,
               },
