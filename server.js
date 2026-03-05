@@ -772,7 +772,6 @@ app.put("/cart", async (req, res) => {
       const normId = (v) => String(v || "").trim().replace(/,+$/, "");
       const toObjId = (v) => {
         if (v instanceof mongoose.Types.ObjectId) return v;
-        // sometimes mongoose gives ObjectId-like objects
         if (v && typeof v === "object" && mongoose.isValidObjectId(String(v))) {
           return new mongoose.Types.ObjectId(String(v));
         }
@@ -789,9 +788,6 @@ app.put("/cart", async (req, res) => {
         new Set([String(flavorKey || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean))
       );
 
-      // IMPORTANT: pickupPointId in Product schema is ObjectId, so we only query with ObjectId
-      const ppCandidates = [ppObj];
-
       console.log("[CART][RESERVE][DELTA]", {
         telegramId,
         productKey,
@@ -801,102 +797,173 @@ app.put("/cart", async (req, res) => {
         fkCandidates,
       });
 
-      // ===== STOCK GUARD (prevent over-reserve) =====
-      if (delta > 0) {
-        const prod = await Product.findOne(
-          { productKey, "flavors.flavorKey": { $in: fkCandidates } },
-          { productKey: 1, flavors: 1 }
-        ).lean();
+      const session = await mongoose.startSession();
+      const MAX_RETRIES = 3;
 
-        const fl = (prod?.flavors || []).find((f) =>
-          fkCandidates.includes(String(f?.flavorKey || "").trim())
-        );
-        const row = (fl?.stockByPickupPoint || []).find(
-          (s) => String(s?.pickupPointId) === String(ppObj)
-        );
+      try {
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+          try {
+            await session.withTransaction(async () => {
+              // 1) читаем нужные данные (внутри транзакции)
+              const prod = await Product.findOne(
+                { productKey, "flavors.flavorKey": { $in: fkCandidates } },
+                { flavors: 1 }
+              ).session(session).lean();
 
-        const total = Number(row?.totalQty || 0);
-        const reserved = Number(row?.reservedQty || 0);
-        const available = Math.max(0, total - reserved);
+              const fl = (prod?.flavors || []).find((f) =>
+                fkCandidates.includes(String(f?.flavorKey || "").trim())
+              );
 
-        if (available < delta) {
-          const err = new Error("RESERVE_CONFLICT");
-          err.meta = { productKey, flavorKey: fkCandidates[0], pickupPointId: String(ppObj), total, reserved, delta };
-          throw err;
-        }
-      }
-      // ===== /STOCK GUARD =====
+              if (!fl) return;
 
-      // 1) try to inc existing stock row
-      const res1 = await Product.updateOne(
-        {
-          productKey,
-          "flavors.flavorKey": { $in: fkCandidates },
-          "flavors.stockByPickupPoint.pickupPointId": { $in: ppCandidates },
-        },
-        {
-          $inc: {
-            "flavors.$[f].stockByPickupPoint.$[s].reservedQty": delta,
-          },
-        },
-        {
-          arrayFilters: [
-            { "f.flavorKey": { $in: fkCandidates } },
-            { "s.pickupPointId": { $in: ppCandidates } },
-          ],
-        }
-      );
+              let row = (fl.stockByPickupPoint || []).find(
+                (s) => String(s?.pickupPointId) === String(ppObj)
+              );
 
-      if (!res1?.modifiedCount) {
-        console.warn("[CART][RESERVE][MISS] Stock row not found, will push new stockByPickupPoint row", {
-          telegramId,
-          productKey,
-          flavorKey,
-          pickupPointId: String(ppObj),
-          delta,
-          fkCandidates,
-        });
-      }
+              // 2) если строки склада нет — создаём (важно для delta > 0)
+              if (!row) {
+                await Product.updateOne(
+                  { productKey, "flavors.flavorKey": { $in: fkCandidates } },
+                  {
+                    $push: {
+                      "flavors.$[f].stockByPickupPoint": {
+                        pickupPointId: ppObj,
+                        totalQty: 0,
+                        reservedQty: 0,
+                      },
+                    },
+                  },
+                  {
+                    session,
+                    arrayFilters: [{ "f.flavorKey": { $in: fkCandidates } }],
+                  }
+                );
 
-      // 2) if stock row missing, push it then inc again
-      if (!res1?.modifiedCount) {
-        await Product.updateOne(
-          { productKey, "flavors.flavorKey": { $in: fkCandidates } },
-          {
-            $push: {
-              // store pickupPointId as ObjectId (schema type)
-              "flavors.$[f].stockByPickupPoint": {
-                pickupPointId: ppObj,
-                totalQty: 0,
-                reservedQty: 0,
-              },
-            },
-          },
-          { arrayFilters: [{ "f.flavorKey": { $in: fkCandidates } }] }
-        );
+                // перечитываем строку после push
+                const prod2 = await Product.findOne(
+                  { productKey, "flavors.flavorKey": { $in: fkCandidates } },
+                  { flavors: 1 }
+                ).session(session).lean();
 
-        await Product.updateOne(
-          {
-            productKey,
-            "flavors.flavorKey": { $in: fkCandidates },
-            "flavors.stockByPickupPoint.pickupPointId": { $in: ppCandidates },
-          },
-          {
-            $inc: {
-              "flavors.$[f].stockByPickupPoint.$[s].reservedQty": delta,
-            },
-          },
-          {
-            arrayFilters: [
-              { "f.flavorKey": { $in: fkCandidates } },
-              { "s.pickupPointId": { $in: ppCandidates } },
-            ],
+                const fl2 = (prod2?.flavors || []).find((f) =>
+                  fkCandidates.includes(String(f?.flavorKey || "").trim())
+                );
+
+                row = (fl2?.stockByPickupPoint || []).find(
+                  (s) => String(s?.pickupPointId) === String(ppObj)
+                );
+              }
+
+              const total = Number(row?.totalQty || 0);
+              const reserved = Number(row?.reservedQty || 0);
+
+              // 3) ГАРД: не даём зарезервировать больше доступного
+              if (delta > 0) {
+                const available = Math.max(0, total - reserved);
+                if (available < delta) {
+                  const err = new Error("RESERVE_CONFLICT");
+                  err.meta = {
+                    productKey,
+                    flavorKey: fkCandidates[0],
+                    pickupPointId: String(ppObj),
+                    total,
+                    reserved,
+                    delta,
+                  };
+                  throw err;
+                }
+              }
+
+              // 4) инкремент резерва
+              await Product.updateOne(
+                {
+                  productKey,
+                  "flavors.flavorKey": { $in: fkCandidates },
+                  "flavors.stockByPickupPoint.pickupPointId": ppObj,
+                },
+                {
+                  $inc: {
+                    "flavors.$[f].stockByPickupPoint.$[s].reservedQty": delta,
+                  },
+                },
+                {
+                  session,
+                  arrayFilters: [
+                    { "f.flavorKey": { $in: fkCandidates } },
+                    { "s.pickupPointId": ppObj },
+                  ],
+                }
+              );
+
+              // 5) защита от отрицательного резерва (на всякий случай)
+              await Product.updateOne(
+                { productKey },
+                [
+                  {
+                    $set: {
+                      flavors: {
+                        $map: {
+                          input: "$flavors",
+                          as: "f",
+                          in: {
+                            $cond: [
+                              { $in: ["$$f.flavorKey", fkCandidates] },
+                              {
+                                $mergeObjects: [
+                                  "$$f",
+                                  {
+                                    stockByPickupPoint: {
+                                      $map: {
+                                        input: "$$f.stockByPickupPoint",
+                                        as: "s",
+                                        in: {
+                                          $cond: [
+                                            { $eq: ["$$s.pickupPointId", ppObj] },
+                                            {
+                                              $mergeObjects: [
+                                                "$$s",
+                                                { reservedQty: { $max: [0, "$$s.reservedQty"] } },
+                                              ],
+                                            },
+                                            "$$s",
+                                          ],
+                                        },
+                                      },
+                                    },
+                                  },
+                                ],
+                              },
+                              "$$f",
+                            ],
+                          },
+                        },
+                      },
+                    },
+                  },
+                ],
+                { session }
+              );
+            });
+
+            // успех — выходим из retry loop
+            return;
+          } catch (e) {
+            if (e && String(e.message) === "RESERVE_CONFLICT") throw e;
+
+            const msg = String(e?.message || "");
+            const isTransient =
+              msg.includes("WriteConflict") ||
+              msg.includes("TransientTransactionError") ||
+              msg.includes("write conflict");
+
+            if (isTransient && attempt < MAX_RETRIES) continue;
+
+            throw e;
           }
-        );
+        }
+      } finally {
+        try { session.endSession(); } catch {}
       }
-
-      // NOTE: We intentionally don't hard-clamp reservedQty here.
-      // The cart is the source of truth; deltas should keep it consistent.
     };
 
     // Build reservation deltas
