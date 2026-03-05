@@ -801,6 +801,32 @@ app.put("/cart", async (req, res) => {
         fkCandidates,
       });
 
+      // ===== STOCK GUARD (prevent over-reserve) =====
+      if (delta > 0) {
+        const prod = await Product.findOne(
+          { productKey, "flavors.flavorKey": { $in: fkCandidates } },
+          { productKey: 1, flavors: 1 }
+        ).lean();
+
+        const fl = (prod?.flavors || []).find((f) =>
+          fkCandidates.includes(String(f?.flavorKey || "").trim())
+        );
+        const row = (fl?.stockByPickupPoint || []).find(
+          (s) => String(s?.pickupPointId) === String(ppObj)
+        );
+
+        const total = Number(row?.totalQty || 0);
+        const reserved = Number(row?.reservedQty || 0);
+        const available = Math.max(0, total - reserved);
+
+        if (available < delta) {
+          const err = new Error("RESERVE_CONFLICT");
+          err.meta = { productKey, flavorKey: fkCandidates[0], pickupPointId: String(ppObj), total, reserved, delta };
+          throw err;
+        }
+      }
+      // ===== /STOCK GUARD =====
+
       // 1) try to inc existing stock row
       const res1 = await Product.updateOne(
         {
@@ -907,7 +933,16 @@ app.put("/cart", async (req, res) => {
       try {
         await applyReservedDelta(d);
       } catch (e) {
+        if (e && String(e.message) === "RESERVE_CONFLICT") {
+          return res.status(409).json({
+            ok: false,
+            error: "OUT_OF_STOCK",
+            message: "Not enough stock to reserve items",
+          });
+        }
+
         console.error("reservedQty update failed", d, e);
+        throw e; // всё остальное -> 500
       }
     }
     // ================= END STOCK RESERVATION =================
