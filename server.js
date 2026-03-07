@@ -768,6 +768,72 @@ app.put("/cart", async (req, res) => {
 
     const normFlavorKey = (v) => String(v || "").trim().replace(/,+$/, "");
 
+    const checkReserveAvailable = async ({ productKey, flavorKey, pickupPointId, delta }) => {
+  const normId = (v) => String(v || "").trim().replace(/,+$/, "");
+  const toObjId = (v) => {
+    if (v instanceof mongoose.Types.ObjectId) return v;
+    if (v && typeof v === "object" && mongoose.isValidObjectId(String(v))) {
+      return new mongoose.Types.ObjectId(String(v));
+    }
+    const s = normId(v);
+    return mongoose.isValidObjectId(s) ? new mongoose.Types.ObjectId(s) : null;
+  };
+
+  const ppObj = toObjId(pickupPointId);
+  if (!ppObj) return;
+  if (!Number.isFinite(delta) || delta <= 0) return;
+
+  const fkNorm = normFlavorKey(flavorKey);
+  const fkCandidates = Array.from(
+    new Set([String(flavorKey || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean))
+  );
+
+  const prod = await Product.findOne(
+    { productKey, "flavors.flavorKey": { $in: fkCandidates } },
+    { flavors: 1 }
+  ).lean();
+
+  const fl = (prod?.flavors || []).find((f) =>
+    fkCandidates.includes(String(f?.flavorKey || "").trim())
+  );
+
+  if (!fl) {
+    const err = new Error("RESERVE_CONFLICT");
+    err.meta = {
+      productKey,
+      flavorKey: fkCandidates[0],
+      pickupPointId: String(ppObj),
+      total: 0,
+      reserved: 0,
+      delta,
+      reason: "FLAVOR_NOT_FOUND",
+    };
+    throw err;
+  }
+
+  const row = (fl.stockByPickupPoint || []).find(
+    (s) => String(s?.pickupPointId) === String(ppObj)
+  );
+
+  const total = Number(row?.totalQty || 0);
+  const reserved = Number(row?.reservedQty || 0);
+  const available = Math.max(0, total - reserved);
+
+  if (available < delta) {
+    const err = new Error("RESERVE_CONFLICT");
+    err.meta = {
+      productKey,
+      flavorKey: fkCandidates[0],
+      pickupPointId: String(ppObj),
+      total,
+      reserved,
+      delta,
+      reason: "NOT_ENOUGH_AVAILABLE",
+    };
+    throw err;
+  }
+};
+
     const applyReservedDelta = async ({ productKey, flavorKey, pickupPointId, delta }) => {
       const normId = (v) => String(v || "").trim().replace(/,+$/, "");
       const toObjId = (v) => {
@@ -996,23 +1062,57 @@ app.put("/cart", async (req, res) => {
     }
 
     // Apply deltas sequentially (simple + safe). If you ever need speed, we can batch later.
-    for (const d of deltas) {
-      try {
-        await applyReservedDelta(d);
-      } catch (e) {
-        if (e && String(e.message) === "RESERVE_CONFLICT") {
-          return res.status(409).json({
-            ok: false,
-            error: "OUT_OF_STOCK",
-            message: "Not enough stock to reserve items",
-          });
-        }
+for (const d of deltas) {
+  if (Number(d.delta) <= 0) continue;
 
-        console.error("reservedQty update failed", d, e);
-        throw e; // всё остальное -> 500
-      }
+  try {
+    await checkReserveAvailable(d);
+  } catch (e) {
+    if (e?.message === "RESERVE_CONFLICT") {
+      return res.status(409).json({
+        ok: false,
+        error: "OUT_OF_STOCK",
+        message: "Not enough stock to reserve items",
+        meta: e.meta || null,
+      });
     }
+
+    return res.status(500).json({
+      ok: false,
+      error: "RESERVE_CHECK_FAILED",
+      message: "Failed to check item reserve",
+    });
+  }
+}
+
+for (const d of deltas) {
+  try {
+    await applyReservedDelta(d);
+  } catch (e) {
+    if (e?.message === "RESERVE_CONFLICT") {
+      return res.status(409).json({
+        ok: false,
+        error: "OUT_OF_STOCK",
+        message: "Not enough stock to reserve items",
+        meta: e.meta || null,
+      });
+    }
+
+    console.error("reservedQty update failed", d, e);
+    return res.status(500).json({
+      ok: false,
+      error: "RESERVE_UPDATE_FAILED",
+      message: "Failed to update item reserve",
+    });
+  }
+}
     // ================= END STOCK RESERVATION =================
+
+    console.log("[CART][SAVE][FINAL]", {
+  telegramId,
+  deltas,
+  cleanItems,
+});
 
     const updated = await Cart.findOneAndUpdate(
       { telegramId },
