@@ -1056,13 +1056,118 @@ app.post("/orders/confirm", async (req, res) => {
     }, 0);
 
     // 2) delivery mapping (из Cart -> Order)
-    const deliveryType = cart.checkoutDeliveryType === "pickup" ? "pickup" : "delivery";
+    // const deliveryType = cart.checkoutDeliveryType === "pickup" ? "pickup" : "delivery";
+    // const deliveryMethod =
+    //   deliveryType === "delivery"
+    //     ? (cart.checkoutDeliveryMethod === "inpost" ? "inpost" : (cart.checkoutDeliveryMethod === "courier" ? "courier" : null))
+    //     : null;
+
+    // const pickupPointId = deliveryType === "pickup" ? (cart.checkoutPickupPointId || null) : null;
+
+    // 2) delivery mapping (из Cart -> Order)
+    const deliveryType =
+      cart.checkoutDeliveryType === "pickup"
+        ? "pickup"
+        : (cart.checkoutDeliveryType === "delivery" ? "delivery" : null);
+
     const deliveryMethod =
       deliveryType === "delivery"
-        ? (cart.checkoutDeliveryMethod === "inpost" ? "inpost" : (cart.checkoutDeliveryMethod === "courier" ? "courier" : null))
+        ? (
+            cart.checkoutDeliveryMethod === "inpost"
+              ? "inpost"
+              : (cart.checkoutDeliveryMethod === "courier" ? "courier" : null)
+          )
         : null;
 
     const pickupPointId = deliveryType === "pickup" ? (cart.checkoutPickupPointId || null) : null;
+
+    // 2.1) HARD VALIDATION of checkout fields on backend
+    if (!deliveryType) {
+      return res.status(400).json({
+        ok: false,
+        error: "Delivery type is not selected",
+        field: "checkoutDeliveryType",
+      });
+    }
+
+    if (deliveryType === "pickup") {
+      if (!pickupPointId) {
+        return res.status(400).json({
+          ok: false,
+          error: "Pickup point is required",
+          field: "checkoutPickupPointId",
+        });
+      }
+    }
+
+    if (deliveryType === "delivery") {
+      if (!deliveryMethod) {
+        return res.status(400).json({
+          ok: false,
+          error: "Delivery method is required",
+          field: "checkoutDeliveryMethod",
+        });
+      }
+
+      if (deliveryMethod === "courier") {
+        const addr = String(cart?.courierAddress || "").trim();
+        if (!addr) {
+          return res.status(400).json({
+            ok: false,
+            error: "Courier address is required",
+            field: "courierAddress",
+          });
+        }
+      }
+
+      if (deliveryMethod === "inpost") {
+        const fullName = String(cart?.inpostData?.fullName || "").trim();
+        const phone = String(cart?.inpostData?.phone || "").trim();
+        const email = String(cart?.inpostData?.email || "").trim();
+        const city = String(cart?.inpostData?.city || "").trim();
+        const lockerAddress = String(cart?.inpostData?.lockerAddress || "").trim();
+
+        if (!fullName) {
+          return res.status(400).json({
+            ok: false,
+            error: "InPost full name is required",
+            field: "fullName",
+          });
+        }
+
+        if (!phone) {
+          return res.status(400).json({
+            ok: false,
+            error: "InPost phone is required",
+            field: "phone",
+          });
+        }
+
+        if (!email) {
+          return res.status(400).json({
+            ok: false,
+            error: "InPost email is required",
+            field: "email",
+          });
+        }
+
+        if (!city) {
+          return res.status(400).json({
+            ok: false,
+            error: "InPost city is required",
+            field: "city",
+          });
+        }
+
+        if (!lockerAddress) {
+          return res.status(400).json({
+            ok: false,
+            error: "InPost locker address is required",
+            field: "lockerAddress",
+          });
+        }
+      }
+    }
 
     // 3) methodLabel (готовая строка для UI)
     let methodLabel = "";
