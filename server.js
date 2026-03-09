@@ -224,6 +224,129 @@ async function sendOrderCreatedNotification(order) {
   }
 }
 
+async function resolveOrderReservePickupPointId(order) {
+  if (!order) return null;
+
+  if (order.deliveryType === "pickup" && order.pickupPointId) {
+    return order.pickupPointId;
+  }
+
+  if (order.deliveryType === "delivery") {
+    const deliveryKey = order.deliveryMethod === "inpost" ? "delivery-2" : "delivery";
+    const point = await PickupPoint.findOne(
+      { key: { $in: [deliveryKey, `${deliveryKey},`] } },
+      { _id: 1 }
+    ).lean();
+
+    return point?._id || null;
+  }
+
+  return null;
+}
+
+async function releaseOrderReservedStock(order) {
+  if (!order || order.stockReleasedAt) return false;
+
+  const pickupPointId = await resolveOrderReservePickupPointId(order);
+  if (!pickupPointId) return false;
+
+  const pointObjId =
+    pickupPointId instanceof mongoose.Types.ObjectId
+      ? pickupPointId
+      : new mongoose.Types.ObjectId(String(pickupPointId));
+
+  const normFlavorKey = (v) => String(v || "").trim().replace(/,+$/, "");
+
+  for (const item of order.items || []) {
+    const productKey = String(item.productKey || "").trim();
+    if (!productKey) continue;
+
+    for (const fl of item.flavors || []) {
+      const qty = Math.max(0, Number(fl.qty || 0));
+      if (!qty) continue;
+
+      const fkNorm = normFlavorKey(fl.flavorKey);
+      const fkCandidates = Array.from(
+        new Set([String(fl.flavorKey || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean))
+      );
+
+      // 1) уменьшаем reservedQty
+      await Product.updateOne(
+        {
+          productKey,
+          "flavors.flavorKey": { $in: fkCandidates },
+          "flavors.stockByPickupPoint.pickupPointId": pointObjId,
+        },
+        {
+          $inc: {
+            "flavors.$[f].stockByPickupPoint.$[s].reservedQty": -qty,
+          },
+        },
+        {
+          arrayFilters: [
+            { "f.flavorKey": { $in: fkCandidates } },
+            { "s.pickupPointId": pointObjId },
+          ],
+        }
+      );
+
+      // 2) clamp: reservedQty не должен быть < 0
+      await Product.updateOne(
+        { productKey },
+        [
+          {
+            $set: {
+              flavors: {
+                $map: {
+                  input: "$flavors",
+                  as: "f",
+                  in: {
+                    $cond: [
+                      { $in: ["$$f.flavorKey", fkCandidates] },
+                      {
+                        $mergeObjects: [
+                          "$$f",
+                          {
+                            stockByPickupPoint: {
+                              $map: {
+                                input: "$$f.stockByPickupPoint",
+                                as: "s",
+                                in: {
+                                  $cond: [
+                                    { $eq: ["$$s.pickupPointId", pointObjId] },
+                                    {
+                                      $mergeObjects: [
+                                        "$$s",
+                                        {
+                                          reservedQty: {
+                                            $max: [0, { $ifNull: ["$$s.reservedQty", 0] }],
+                                          },
+                                        },
+                                      ],
+                                    },
+                                    "$$s",
+                                  ],
+                                },
+                              },
+                            },
+                          },
+                        ],
+                      },
+                      "$$f",
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        ]
+      );
+    }
+  }
+
+  return true;
+}
+
 function translitRuToLat(input) {
   const s = String(input || "").trim().toLowerCase();
   const map = {
@@ -2450,6 +2573,12 @@ if (TG_BOT_TOKEN) {
       const order = await Order.findById(orderId);
       if (!order) return ctx.answerCbQuery("Заказ не найден");
 
+      // снимаем резерв только один раз
+      if (!order.stockReleasedAt) {
+        await releaseOrderReservedStock(order);
+        order.stockReleasedAt = new Date();
+      }
+
       order.payment = {
         ...(order.payment?.toObject ? order.payment.toObject() : order.payment || {}),
         status: "unpaid",
@@ -2457,6 +2586,8 @@ if (TG_BOT_TOKEN) {
         checkedAt: new Date(),
         checkedByTelegramId: String(ctx.from?.id || ""),
       };
+
+      order.status = "canceled";
 
       await order.save();
 
@@ -2480,7 +2611,9 @@ if (TG_BOT_TOKEN) {
       }
     } catch (e) {
       console.error("mgr_pay_unpaid error:", e);
-      try { await ctx.answerCbQuery("Ошибка"); } catch {}
+      try {
+        await ctx.answerCbQuery("Ошибка");
+      } catch {}
     }
   });
 
