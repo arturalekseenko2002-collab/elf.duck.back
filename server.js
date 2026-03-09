@@ -134,50 +134,52 @@ async function sendOrderCreatedNotification(order) {
         ? "🟠 Оплата на проверке"
         : "❌ Не оплачено";
 
-    const receiveLabel =
-      order.deliveryType === "pickup"
-        ? `Самовывоз • ${point?.address || point?.title || "Точка"}`
-        : order.deliveryMethod === "inpost"
-        ? "Доставка • InPost"
-        : "Доставка • Курьер";
-
-    const extraLines = [];
-
-    if (order.deliveryType === "pickup" && order.arrivalTime) {
-      extraLines.push(`⏰ <b>Время прибытия:</b> ${escapeHtml(order.arrivalTime)}`);
-    }
-
-    if (order.deliveryType === "delivery" && order.deliveryMethod === "courier" && order.courierAddress) {
-      extraLines.push(`📍 <b>Адрес доставки:</b> ${escapeHtml(order.courierAddress)}`);
-    }
-
-    if (order.deliveryType === "delivery" && order.deliveryMethod === "inpost") {
-      if (order.inpostData?.fullName) extraLines.push(`👤 <b>Получатель:</b> ${escapeHtml(order.inpostData.fullName)}`);
-      if (order.inpostData?.phone) extraLines.push(`📞 <b>Телефон:</b> ${escapeHtml(order.inpostData.phone)}`);
-      if (order.inpostData?.email) extraLines.push(`✉️ <b>Email:</b> ${escapeHtml(order.inpostData.email)}`);
-      if (order.inpostData?.city) extraLines.push(`🏙 <b>Город:</b> ${escapeHtml(order.inpostData.city)}`);
-      if (order.inpostData?.lockerAddress) extraLines.push(`📦 <b>Пачкомат:</b> ${escapeHtml(order.inpostData.lockerAddress)}`);
-    }
-
-    const text = [
+    const lines = [
       `🛒 <b>НОВЫЙ ЗАКАЗ</b>`,
       ``,
       `🔢 <b>Номер:</b> #${escapeHtml(order.orderNo)}`,
-      `🏪 <b>Точка / склад:</b> ${escapeHtml(point?.address || point?.title || order.methodLabel || "—")}`,
+      ``,
       `👤 <b>Клиент:</b> ${escapeHtml(customerName)}`,
-      `🆔 <b>Telegram ID:</b> ${escapeHtml(order.userTelegramId)}`,
       `🕒 <b>Создан:</b> ${escapeHtml(formatOrderDate(order.createdAt))}`,
       ``,
       `📋 <b>Состав заказа:</b>`,
+      ``,
       itemsText || "—",
       ``,
       `💰 <b>Сумма:</b> ${Number(order.totalZl || 0)} ${escapeHtml(order.currency || "PLN")}`,
-      `💳 <b>Оплата:</b> ${paymentLabel}`,
-      `🚚 <b>Способ получения:</b> ${escapeHtml(receiveLabel)}`,
-      ...(extraLines.length ? ["", ...extraLines] : []),
       ``,
-      `📦 <b>Статус заказа:</b> Создан`,
-    ].join("\n");
+    ];
+
+    if (order.deliveryType === "pickup" && order.arrivalTime) {
+      lines.push(`🚚 <b>Клиент будет в ${escapeHtml(order.arrivalTime)}</b>`);
+      lines.push("");
+    }
+
+    if (order.deliveryType === "delivery" && order.deliveryMethod === "courier") {
+      if (order.courierAddress) {
+        lines.push(`📍 <b>Адрес доставки:</b> ${escapeHtml(order.courierAddress)}`);
+        lines.push("");
+      }
+    }
+
+    if (order.deliveryType === "delivery" && order.deliveryMethod === "inpost") {
+      if (order.inpostData?.fullName) lines.push(`👤 <b>Получатель:</b> ${escapeHtml(order.inpostData.fullName)}`);
+      if (order.inpostData?.phone) lines.push(`📞 <b>Телефон:</b> ${escapeHtml(order.inpostData.phone)}`);
+      if (order.inpostData?.email) lines.push(`✉️ <b>Email:</b> ${escapeHtml(order.inpostData.email)}`);
+      if (order.inpostData?.city) lines.push(`🏙 <b>Город:</b> ${escapeHtml(order.inpostData.city)}`);
+      if (order.inpostData?.lockerAddress) lines.push(`📦 <b>Пачкомат:</b> ${escapeHtml(order.inpostData.lockerAddress)}`);
+      if (
+        order.inpostData?.fullName ||
+        order.inpostData?.phone ||
+        order.inpostData?.email ||
+        order.inpostData?.city ||
+        order.inpostData?.lockerAddress
+      ) {
+        lines.push("");
+      }
+    }
+
+    const text = lines.join("\n");
 
     await bot.telegram.sendMessage(point.notificationChatId, text, {
       parse_mode: "HTML",
@@ -818,6 +820,11 @@ app.put("/cart", async (req, res) => {
           ? null
           : String(b.courierAddress || "").trim();
 
+      const arrivalTime =
+        b.arrivalTime === null || b.arrivalTime === undefined
+          ? null
+          : String(b.arrivalTime || "").trim();
+
       const inpostDataRaw = b.inpostData && typeof b.inpostData === "object" ? b.inpostData : {};
 
       const inpostData = {
@@ -1338,6 +1345,7 @@ for (const d of deltas) {
 
           courierAddress,
           inpostData,
+          arrivalTime,
         },
       },
       { upsert: true, new: true }
@@ -1702,6 +1710,7 @@ app.post("/orders/confirm", async (req, res) => {
       deliveryMethod,
       pickupPointId,
 
+      arrivalTime: cart.arrivalTime ?? null,
       courierAddress: cart.courierAddress ?? null,
       inpostData: cart.inpostData ?? {},
 
@@ -1727,6 +1736,7 @@ app.post("/orders/confirm", async (req, res) => {
           checkoutDeliveryType: null,
           checkoutDeliveryMethod: null,
           checkoutPickupPointId: null,
+          arrivalTime: null,
           courierAddress: null,
           inpostData: {
             fullName: null,

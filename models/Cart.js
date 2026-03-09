@@ -51,6 +51,8 @@ const cartSchema = new mongoose.Schema(
       lockerAddress: { type: String, default: null },
     },
 
+    arrivalTime: { type: String, default: null },
+
     // one order = one pickup point (can be changed later in cart/checkout)
     checkoutPickupPointId: {
       type: mongoose.Schema.Types.ObjectId,

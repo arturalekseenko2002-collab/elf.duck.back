@@ -89,6 +89,8 @@ const orderSchema = new mongoose.Schema(
       lockerAddress: { type: String, default: null },
     },
 
+    arrivalTime: { type: String, default: null },
+
     payment: {
       status: { type: String, enum: ["unpaid", "checking", "paid", "refunded"], default: "unpaid" },
       method: { type: String, default: null },
