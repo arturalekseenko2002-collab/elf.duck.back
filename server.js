@@ -1809,6 +1809,64 @@ app.get("/orders", async (req, res) => {
   }
 });
 
+app.post("/orders/:id/payment-check", async (req, res) => {
+  try {
+    const telegramId = String(req.body?.telegramId || "").trim();
+    const { id } = req.params;
+
+    if (!telegramId) {
+      return res.status(400).json({ ok: false, error: "telegramId is required" });
+    }
+
+    const order = await Order.findOne({ _id: id, userTelegramId: telegramId });
+    if (!order) {
+      return res.status(404).json({ ok: false, error: "Order not found" });
+    }
+
+    if (String(order?.payment?.status || "") === "paid") {
+      return res.json({ ok: true, order });
+    }
+
+    order.payment = {
+      ...(order.payment?.toObject ? order.payment.toObject() : order.payment || {}),
+      status: "checking",
+    };
+
+    await order.save();
+    return res.json({ ok: true, order });
+  } catch (e) {
+    console.error("POST /orders/:id/payment-check error:", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+app.patch("/admin/orders/:id/payment-status", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const status = String(req.body?.status || "").trim();
+
+    if (!["paid", "unpaid"].includes(status)) {
+      return res.status(400).json({ ok: false, error: "status must be paid or unpaid" });
+    }
+
+    const order = await Order.findById(id);
+    if (!order) {
+      return res.status(404).json({ ok: false, error: "Order not found" });
+    }
+
+    order.payment = {
+      ...(order.payment?.toObject ? order.payment.toObject() : order.payment || {}),
+      status,
+    };
+
+    await order.save();
+    return res.json({ ok: true, order });
+  } catch (e) {
+    console.error("PATCH /admin/orders/:id/payment-status error:", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
 // ===== Admin: создать товар =====
 
 app.post("/admin/products", requireAdmin, async (req, res) => {
