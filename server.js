@@ -1867,7 +1867,7 @@ app.patch("/admin/orders/:id/payment-status", requireAdmin, async (req, res) => 
   }
 });
 
-// ===== Admin: создать товар =====
+// ===== Admin: создать товар ====
 
 app.post("/admin/products", requireAdmin, async (req, res) => {
   try {
