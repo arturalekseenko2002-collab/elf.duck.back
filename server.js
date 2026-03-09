@@ -248,6 +248,72 @@ app.get("/get-user", async (req, res) => {
   }
 });
 
+// ===== Public: get favorites by telegramId ====
+app.get("/favorites", async (req, res) => {
+  try {
+    const telegramId = String(req.query.telegramId || "").trim();
+    if (!telegramId) {
+      return res.status(400).json({ ok: false, error: "telegramId is required" });
+    }
+
+    const user = await User.findOne({ telegramId }, { favoriteProductKeys: 1 }).lean();
+
+    return res.json({
+      ok: true,
+      favoriteProductKeys: Array.isArray(user?.favoriteProductKeys)
+        ? user.favoriteProductKeys
+        : [],
+    });
+  } catch (e) {
+    console.error("GET /favorites error:", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+// ===== Public: toggle favorite product =====
+app.post("/favorites/toggle", async (req, res) => {
+  try {
+    const telegramId = String(req.body?.telegramId || "").trim();
+    const productKey = String(req.body?.productKey || "").trim();
+
+    if (!telegramId) {
+      return res.status(400).json({ ok: false, error: "telegramId is required" });
+    }
+
+    if (!productKey) {
+      return res.status(400).json({ ok: false, error: "productKey is required" });
+    }
+
+    const user = await User.findOne({ telegramId });
+    if (!user) {
+      return res.status(404).json({ ok: false, error: "User not found" });
+    }
+
+    const current = Array.isArray(user.favoriteProductKeys)
+      ? user.favoriteProductKeys.map((x) => String(x))
+      : [];
+
+    const exists = current.includes(productKey);
+
+    if (exists) {
+      user.favoriteProductKeys = current.filter((x) => x !== productKey);
+    } else {
+      user.favoriteProductKeys = [...current, productKey];
+    }
+
+    await user.save();
+
+    return res.json({
+      ok: true,
+      isFavorite: !exists,
+      favoriteProductKeys: user.favoriteProductKeys || [],
+    });
+  } catch (e) {
+    console.error("POST /favorites/toggle error:", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
 // ===== Telegram prepared share (rich preview like “via @bot”) =====
 app.post("/tg/prepared-referral-message", async (req, res) => {
   try {

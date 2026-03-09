@@ -7,6 +7,8 @@ const userSchema = new mongoose.Schema(
     firstName: String,
     lastName: String,
     photoUrl: String,
+    
+    favoriteProductKeys: { type: [String], default: [] },
 
     referral: {
       code: String,       
