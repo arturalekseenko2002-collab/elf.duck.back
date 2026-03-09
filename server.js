@@ -98,12 +98,13 @@ async function sendOrderCreatedNotification(order) {
 
     const user = await User.findOne(
       { telegramId: String(order.userTelegramId || "") },
-      { telegramId: 1, username: 1, firstName: 1, lastName: 1 }
+      { telegramId: 1, username: 1, firstName: 1 }
     ).lean();
 
     const customerName =
-      [user?.firstName, user?.lastName].filter(Boolean).join(" ").trim() ||
-      (user?.username ? `@${user.username}` : "—");
+      (user?.username ? `@${user.username}` : "") ||
+      String(user?.firstName || "").trim() ||
+      "—";
 
     const itemsText = (order.items || [])
       .map((it) => {
