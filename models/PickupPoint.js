@@ -11,6 +11,9 @@ const PickupPointSchema = new mongoose.Schema(
 
     // telegramId админов/менеджеров, которым разрешено работать с этой точкой
     allowedAdminTelegramIds: { type: [String], default: [] },
+
+    // 🔔 канал или группа для уведомлений
+    notificationChatId: { type: String, default: "" },
   },
   { timestamps: true }
 );

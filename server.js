@@ -49,6 +49,144 @@ function genOrderNo() {
   return out;
 }
 
+function escapeHtml(s) {
+  return String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function formatOrderDate(dt) {
+  try {
+    return new Date(dt).toLocaleString("ru-RU", {
+      timeZone: "Europe/Warsaw",
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return String(dt || "—");
+  }
+}
+
+async function resolveOrderNotificationPoint(order) {
+  if (!order) return null;
+
+  if (order.deliveryType === "pickup" && order.pickupPointId) {
+    return await PickupPoint.findById(order.pickupPointId).lean();
+  }
+
+  if (order.deliveryType === "delivery") {
+    const deliveryKey = order.deliveryMethod === "inpost" ? "delivery-2" : "delivery";
+    return await PickupPoint.findOne({
+      key: { $in: [deliveryKey, `${deliveryKey},`] }
+    }).lean();
+  }
+
+  return null;
+}
+
+async function sendOrderCreatedNotification(order) {
+  try {
+    if (!bot || !order) return;
+
+    const point = await resolveOrderNotificationPoint(order);
+    if (!point?.notificationChatId) return;
+
+    const user = await User.findOne(
+      { telegramId: String(order.userTelegramId || "") },
+      { telegramId: 1, username: 1, firstName: 1, lastName: 1 }
+    ).lean();
+
+    const customerName =
+      [user?.firstName, user?.lastName].filter(Boolean).join(" ").trim() ||
+      (user?.username ? `@${user.username}` : "—");
+
+    const itemsText = (order.items || [])
+      .map((it) => {
+        const productTitle =
+          [it.productTitle1, it.productTitle2].filter(Boolean).join(" ").trim() ||
+          it.productKey ||
+          "Товар";
+
+        const flavorsText = (it.flavors || [])
+          .map((f) => {
+            const flavor = f.flavorLabel || f.flavorKey || "Вкус";
+            const priceText = Number(f.unitPrice || 0) > 0
+              ? ` • ${Number(f.unitPrice || 0)} zł/шт.`
+              : "";
+            return `• ${escapeHtml(flavor)} — ${Number(f.qty || 0)} шт.${priceText}`;
+          })
+          .join("\n");
+
+        return `📦 <b>${escapeHtml(productTitle)}</b>\n${flavorsText}`;
+      })
+      .join("\n\n");
+
+    const paymentLabel =
+      order?.payment?.status === "paid"
+        ? "✅ Оплачено"
+        : order?.payment?.status === "checking"
+        ? "🟠 Оплата на проверке"
+        : "❌ Не оплачено";
+
+    const receiveLabel =
+      order.deliveryType === "pickup"
+        ? `Самовывоз • ${point?.address || point?.title || "Точка"}`
+        : order.deliveryMethod === "inpost"
+        ? "Доставка • InPost"
+        : "Доставка • Курьер";
+
+    const extraLines = [];
+
+    if (order.deliveryType === "pickup" && order.arrivalTime) {
+      extraLines.push(`⏰ <b>Время прибытия:</b> ${escapeHtml(order.arrivalTime)}`);
+    }
+
+    if (order.deliveryType === "delivery" && order.deliveryMethod === "courier" && order.courierAddress) {
+      extraLines.push(`📍 <b>Адрес доставки:</b> ${escapeHtml(order.courierAddress)}`);
+    }
+
+    if (order.deliveryType === "delivery" && order.deliveryMethod === "inpost") {
+      if (order.inpostData?.fullName) extraLines.push(`👤 <b>Получатель:</b> ${escapeHtml(order.inpostData.fullName)}`);
+      if (order.inpostData?.phone) extraLines.push(`📞 <b>Телефон:</b> ${escapeHtml(order.inpostData.phone)}`);
+      if (order.inpostData?.email) extraLines.push(`✉️ <b>Email:</b> ${escapeHtml(order.inpostData.email)}`);
+      if (order.inpostData?.city) extraLines.push(`🏙 <b>Город:</b> ${escapeHtml(order.inpostData.city)}`);
+      if (order.inpostData?.lockerAddress) extraLines.push(`📦 <b>Пачкомат:</b> ${escapeHtml(order.inpostData.lockerAddress)}`);
+    }
+
+    const text = [
+      `🛒 <b>НОВЫЙ ЗАКАЗ</b>`,
+      ``,
+      `🔢 <b>Номер:</b> #${escapeHtml(order.orderNo)}`,
+      `🏪 <b>Точка / склад:</b> ${escapeHtml(point?.address || point?.title || order.methodLabel || "—")}`,
+      `👤 <b>Клиент:</b> ${escapeHtml(customerName)}`,
+      `🆔 <b>Telegram ID:</b> ${escapeHtml(order.userTelegramId)}`,
+      `🕒 <b>Создан:</b> ${escapeHtml(formatOrderDate(order.createdAt))}`,
+      ``,
+      `📋 <b>Состав заказа:</b>`,
+      itemsText || "—",
+      ``,
+      `💰 <b>Сумма:</b> ${Number(order.totalZl || 0)} ${escapeHtml(order.currency || "PLN")}`,
+      `💳 <b>Оплата:</b> ${paymentLabel}`,
+      `🚚 <b>Способ получения:</b> ${escapeHtml(receiveLabel)}`,
+      ...(extraLines.length ? ["", ...extraLines] : []),
+      ``,
+      `📦 <b>Статус заказа:</b> Создан`,
+    ].join("\n");
+
+    await bot.telegram.sendMessage(point.notificationChatId, text, {
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+    });
+  } catch (e) {
+    console.error("sendOrderCreatedNotification error:", e);
+  }
+}
+
 function translitRuToLat(input) {
   const s = String(input || "").trim().toLowerCase();
   const map = {
@@ -422,6 +560,8 @@ app.post("/admin/pickup-points", requireAdmin, async (req, res) => {
       ? b.allowedAdminTelegramIds.map((x) => String(x)).filter(Boolean)
       : [];
 
+    const notificationChatId = String(b.notificationChatId || "").trim();
+
     const created = await PickupPoint.create({
       key: finalKey,
       title: rawTitle,
@@ -429,6 +569,7 @@ app.post("/admin/pickup-points", requireAdmin, async (req, res) => {
       sortOrder: Number(b.sortOrder || 0),
       isActive: b.isActive ?? true,
       allowedAdminTelegramIds: allowed,
+      notificationChatId,
     });
 
     res.json({ ok: true, pickupPoint: created });
@@ -444,7 +585,7 @@ app.patch("/admin/pickup-points/:id", requireAdmin, async (req, res) => {
     const { id } = req.params;
     const b = req.body || {};
 
-    const allow = ["key", "title", "address", "sortOrder", "isActive", "allowedAdminTelegramIds"];
+    const allow = ["key", "title", "address", "sortOrder", "isActive", "allowedAdminTelegramIds", "notificationChatId"];
     const update = {};
     for (const k of allow) if (b[k] !== undefined) update[k] = b[k];
 
@@ -458,6 +599,10 @@ app.patch("/admin/pickup-points/:id", requireAdmin, async (req, res) => {
       update.allowedAdminTelegramIds = Array.isArray(update.allowedAdminTelegramIds)
         ? update.allowedAdminTelegramIds.map((x) => String(x)).filter(Boolean)
         : [];
+    }
+
+    if (update.notificationChatId !== undefined) {
+      update.notificationChatId = String(update.notificationChatId || "").trim();
     }
 
     const updated = await PickupPoint.findByIdAndUpdate(id, update, { new: true });
@@ -1569,6 +1714,8 @@ app.post("/orders/confirm", async (req, res) => {
       stockCommittedAt: null,
       stockReleasedAt: null,
     });
+
+    await sendOrderCreatedNotification(created);
 
     // 9) clear cart
     await Cart.updateOne(
