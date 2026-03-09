@@ -127,15 +127,19 @@ async function sendOrderCreatedNotification(order) {
       })
       .join("\n\n");
 
-    const paymentLabel =
-      order?.payment?.status === "paid"
-        ? "✅ Оплачено"
-        : order?.payment?.status === "checking"
-        ? "🟠 Оплата на проверке"
-        : "❌ Не оплачено";
+    const paymentMethodLabel =
+      order?.payment?.method === "blik"
+        ? "BLIK"
+        : order?.payment?.method === "crypto"
+        ? "Криптовалюта"
+        : order?.payment?.method === "ua_card"
+        ? "Украинская карта"
+        : order?.payment?.method === "cash"
+        ? "Наличные"
+        : "—";
 
     const lines = [
-      `🛒 <b>НОВЫЙ ЗАКАЗ</b>`,
+      `🛒 <b>ОПЛАТА ОТПРАВЛЕНА НА ПРОВЕРКУ</b>`,
       ``,
       `🔢 <b>Номер:</b> #${escapeHtml(order.orderNo)}`,
       ``,
@@ -147,6 +151,8 @@ async function sendOrderCreatedNotification(order) {
       itemsText || "—",
       ``,
       `💰 <b>Сумма:</b> ${Number(order.totalZl || 0)} ${escapeHtml(order.currency || "PLN")}`,
+      `💳 <b>Способ оплаты:</b> ${escapeHtml(paymentMethodLabel)}`,
+      `💳 <b>Статус оплаты:</b> 🟠 Оплата на проверке`,
       ``,
     ];
 
@@ -179,12 +185,40 @@ async function sendOrderCreatedNotification(order) {
       }
     }
 
+    if (order.payment?.method === "cash") {
+      if (order.payment?.cashChangeType === "need_change" && order.payment?.cashAmount) {
+        lines.push(`💵 <b>Сдача:</b> с ${escapeHtml(order.payment.cashAmount)} zł`);
+        lines.push("");
+      } else if (order.payment?.cashChangeType === "no_change") {
+        lines.push(`💵 <b>Сдача:</b> без сдачи`);
+        lines.push("");
+      }
+    }
+
     const text = lines.join("\n");
 
-    await bot.telegram.sendMessage(point.notificationChatId, text, {
+    const sent = await bot.telegram.sendMessage(point.notificationChatId, text, {
       parse_mode: "HTML",
       disable_web_page_preview: true,
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "✅ Оплачено", callback_data: `mgr_pay_paid:${order._id}` },
+            { text: "❌ Отклонить", callback_data: `mgr_pay_unpaid:${order._id}` },
+          ],
+        ],
+      },
     });
+
+    await Order.updateOne(
+      { _id: order._id },
+      {
+        $set: {
+          "payment.managerMessageChatId": String(point.notificationChatId || ""),
+          "payment.managerMessageId": String(sent?.message_id || ""),
+        },
+      }
+    );
   } catch (e) {
     console.error("sendOrderCreatedNotification error:", e);
   }
@@ -1726,7 +1760,7 @@ app.post("/orders/confirm", async (req, res) => {
       stockReleasedAt: null,
     });
 
-    await sendOrderCreatedNotification(created);
+    // await sendOrderCreatedNotification(created);
 
     // 9) clear cart
     await Cart.updateOne(
@@ -2055,9 +2089,15 @@ app.post("/orders/:id/payment-check", async (req, res) => {
     order.payment = {
       ...(order.payment?.toObject ? order.payment.toObject() : order.payment || {}),
       status: "checking",
+      method: req.body?.paymentMethod ? String(req.body.paymentMethod) : (order.payment?.method || null),
+      cashChangeType: req.body?.cashChangeType ? String(req.body.cashChangeType) : null,
+      cashAmount: req.body?.cashAmount ? String(req.body.cashAmount) : null,
+      checkedAt: new Date(),
+      checkedByTelegramId: "",
     };
 
     await order.save();
+    await sendOrderCreatedNotification(order);
     return res.json({ ok: true, order });
   } catch (e) {
     console.error("POST /orders/:id/payment-check error:", e);
@@ -2069,6 +2109,7 @@ app.patch("/admin/orders/:id/payment-status", requireAdmin, async (req, res) => 
   try {
     const { id } = req.params;
     const status = String(req.body?.status || "").trim();
+    const checkedByTelegramId = String(req.body?.checkedByTelegramId || "").trim();
 
     if (!["paid", "unpaid"].includes(status)) {
       return res.status(400).json({ ok: false, error: "status must be paid or unpaid" });
@@ -2082,6 +2123,9 @@ app.patch("/admin/orders/:id/payment-status", requireAdmin, async (req, res) => 
     order.payment = {
       ...(order.payment?.toObject ? order.payment.toObject() : order.payment || {}),
       status,
+      paidAt: status === "paid" ? new Date() : null,
+      checkedAt: new Date(),
+      checkedByTelegramId,
     };
 
     await order.save();
@@ -2354,6 +2398,96 @@ if (TG_BOT_TOKEN) {
     } catch (e) {
       console.error("bot.start error:", e);
     }
+  });
+
+  bot.action(/mgr_pay_paid:(.+)/, async (ctx) => {
+    try {
+      const orderId = String(ctx.match?.[1] || "").trim();
+      if (!orderId) return ctx.answerCbQuery("Order not found");
+
+      const order = await Order.findById(orderId);
+      if (!order) return ctx.answerCbQuery("Заказ не найден");
+
+      order.payment = {
+        ...(order.payment?.toObject ? order.payment.toObject() : order.payment || {}),
+        status: "paid",
+        paidAt: new Date(),
+        checkedAt: new Date(),
+        checkedByTelegramId: String(ctx.from?.id || ""),
+      };
+
+      await order.save();
+
+      await ctx.answerCbQuery("Оплата подтверждена");
+
+      try {
+        const currentText = ctx.callbackQuery?.message?.text || "";
+        const nextText = currentText.replace("🟠 Оплата на проверке", "✅ Оплачено");
+
+        await ctx.editMessageText(nextText, {
+          parse_mode: "HTML",
+          disable_web_page_preview: true,
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "✅ Оплачено", callback_data: `mgr_done:${order._id}` }],
+            ],
+          },
+        });
+      } catch (e) {
+        console.error("mgr_pay_paid editMessageText error:", e);
+      }
+    } catch (e) {
+      console.error("mgr_pay_paid error:", e);
+      try { await ctx.answerCbQuery("Ошибка"); } catch {}
+    }
+  });
+
+  bot.action(/mgr_pay_unpaid:(.+)/, async (ctx) => {
+    try {
+      const orderId = String(ctx.match?.[1] || "").trim();
+      if (!orderId) return ctx.answerCbQuery("Order not found");
+
+      const order = await Order.findById(orderId);
+      if (!order) return ctx.answerCbQuery("Заказ не найден");
+
+      order.payment = {
+        ...(order.payment?.toObject ? order.payment.toObject() : order.payment || {}),
+        status: "unpaid",
+        paidAt: null,
+        checkedAt: new Date(),
+        checkedByTelegramId: String(ctx.from?.id || ""),
+      };
+
+      await order.save();
+
+      await ctx.answerCbQuery("Оплата отклонена");
+
+      try {
+        const currentText = ctx.callbackQuery?.message?.text || "";
+        const nextText = currentText.replace("🟠 Оплата на проверке", "❌ Не оплачено");
+
+        await ctx.editMessageText(nextText, {
+          parse_mode: "HTML",
+          disable_web_page_preview: true,
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "❌ Оплата отклонена", callback_data: `mgr_done:${order._id}` }],
+            ],
+          },
+        });
+      } catch (e) {
+        console.error("mgr_pay_unpaid editMessageText error:", e);
+      }
+    } catch (e) {
+      console.error("mgr_pay_unpaid error:", e);
+      try { await ctx.answerCbQuery("Ошибка"); } catch {}
+    }
+  });
+
+  bot.action(/mgr_done:(.+)/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery("Статус уже обновлён");
+    } catch {}
   });
 } else {
   console.warn("⚠️ TELEGRAM_BOT_TOKEN not set — bot disabled");

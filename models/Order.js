@@ -98,6 +98,15 @@ const orderSchema = new mongoose.Schema(
       amountZl: { type: Number, default: 0 },
       provider: { type: String, default: null },
       txId: { type: String, default: null },
+
+      cashChangeType: { type: String, default: null },
+      cashAmount: { type: String, default: null },
+
+      checkedAt: { type: Date, default: null },
+      checkedByTelegramId: { type: String, default: "" },
+
+      managerMessageChatId: { type: String, default: "" },
+      managerMessageId: { type: String, default: "" },
     },
 
     arrivedNotifiedAt: { type: Date, default: null }, // клиент нажал "Я на месте"
