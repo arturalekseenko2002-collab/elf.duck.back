@@ -187,7 +187,7 @@ async function sendOrderCreatedNotification(order) {
 
     if (order.payment?.method === "cash") {
       if (order.payment?.cashChangeType === "need_change" && order.payment?.cashAmount) {
-        lines.push(`💵 <b>Сдача:</b> с ${escapeHtml(order.payment.cashAmount)} zł`);
+        lines.push(`💵 <b>Сдача:</b> ${escapeHtml(order.payment.cashAmount)} zł`);
         lines.push("");
       } else if (order.payment?.cashChangeType === "no_change") {
         lines.push(`💵 <b>Сдача:</b> без сдачи`);
