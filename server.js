@@ -786,6 +786,7 @@ app.get("/cart", async (req, res) => {
           checkoutDeliveryType: null,
           checkoutDeliveryMethod: null,
           checkoutPickupPointId: null,
+          arrivalTime: null,
         },
     });
   } catch (e) {
