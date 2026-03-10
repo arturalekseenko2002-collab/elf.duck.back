@@ -2039,8 +2039,13 @@ app.post("/orders/repeat", async (req, res) => {
     const orderNo = req.body?.orderNo ? String(req.body.orderNo).trim() : null;
     const orderId = req.body?.orderId ? String(req.body.orderId).trim() : null;
 
-    if (!telegramId) return res.status(400).json({ ok: false, error: "telegramId is required" });
-    if (!orderNo && !orderId) return res.status(400).json({ ok: false, error: "orderNo or orderId is required" });
+    if (!telegramId) {
+      return res.status(400).json({ ok: false, error: "telegramId is required" });
+    }
+
+    if (!orderNo && !orderId) {
+      return res.status(400).json({ ok: false, error: "orderNo or orderId is required" });
+    }
 
     // 1) load original order (only own orders)
     const orig = await Order.findOne(
@@ -2049,247 +2054,65 @@ app.post("/orders/repeat", async (req, res) => {
         deliveryType: 1,
         deliveryMethod: 1,
         pickupPointId: 1,
+        arrivalTime: 1,
         courierAddress: 1,
         inpostData: 1,
         items: 1,
-        bgUrl: 1,
-        methodLabel: 1,
       }
     ).lean();
 
-    if (!orig) return res.status(404).json({ ok: false, error: "Order not found" });
+    if (!orig) {
+      return res.status(404).json({ ok: false, error: "Order not found" });
+    }
 
-    // 2) flatten items: productKey + flavorKey + qty
-    const flat = [];
+    // 2) convert order snapshot -> cart items
+    const repeatedItems = [];
+
     for (const p of Array.isArray(orig.items) ? orig.items : []) {
-      const pk = String(p?.productKey || "").trim();
+      const productKey = String(p?.productKey || "").trim();
+      if (!productKey) continue;
+
       for (const f of Array.isArray(p?.flavors) ? p.flavors : []) {
-        const fk = String(f?.flavorKey || "").trim();
-        const qty = Math.max(1, Number(f?.qty || 1));
-        if (!pk || !fk) continue;
+        const flavorKey = String(f?.flavorKey || "").trim();
+        if (!flavorKey) continue;
 
-        flat.push({
-          productKey: pk,
-          flavorKey: fk,
-          qty,
-          title1: String(p?.productTitle1 || ""),
-          title2: String(p?.productTitle2 || ""),
-          flavorLabel: String(f?.flavorLabel || ""),
-        });
-      }
-    }
-
-    if (!flat.length) return res.status(400).json({ ok: false, error: "Order has no items" });
-
-    // 3) determine stock context (pickup point OR delivery warehouse)
-    const [courierPP, inpostPP] = await Promise.all([
-      PickupPoint.findOne({ key: { $in: ["delivery", "delivery,"] } }, { _id: 1 }).lean(),
-      PickupPoint.findOne({ key: { $in: ["delivery-2", "delivery-2,"] } }, { _id: 1 }).lean(),
-    ]);
-
-    const courierWarehouseId = courierPP?._id || null;
-    const inpostWarehouseId = inpostPP?._id || null;
-
-    const normId = (v) => String(v || "").trim().replace(/,+$/, "");
-    const toObjId = (v) => {
-      const s = normId(v);
-      return mongoose.isValidObjectId(s) ? new mongoose.Types.ObjectId(s) : null;
-    };
-
-    const stockContextIdFor = ({ type, method, pickupPointId }) => {
-      if (type === "pickup") return toObjId(pickupPointId);
-      if (type === "delivery") return method === "inpost" ? inpostWarehouseId : courierWarehouseId;
-      return null;
-    };
-
-    const contextId = stockContextIdFor({
-      type: orig.deliveryType,
-      method: orig.deliveryMethod,
-      pickupPointId: orig.pickupPointId,
-    });
-
-    if (!contextId) return res.status(400).json({ ok: false, error: "Order delivery context is not set" });
-
-    const normFlavorKey = (v) => String(v || "").trim().replace(/,+$/, "");
-
-    // 4) availability check (available = totalQty - reservedQty)
-    const productKeys = Array.from(new Set(flat.map((x) => x.productKey)));
-    const products = await Product.find(
-      { productKey: { $in: productKeys } },
-      { productKey: 1, title1: 1, title2: 1, flavors: 1 }
-    ).lean();
-
-    const prodByKey = new Map(products.map((p) => [String(p.productKey), p]));
-    const missing = [];
-
-    for (const it of flat) {
-      const p = prodByKey.get(it.productKey);
-      if (!p) {
-        missing.push({ ...it, need: it.qty, have: 0 });
-        continue;
-      }
-
-      const fkNorm = normFlavorKey(it.flavorKey);
-      const fkCandidates = Array.from(new Set([String(it.flavorKey).trim(), fkNorm, `${fkNorm},`].filter(Boolean)));
-      const flavor = (p.flavors || []).find((f) => fkCandidates.includes(String(f.flavorKey || "").trim()));
-
-      if (!flavor) {
-        missing.push({
-          productKey: it.productKey,
-          title1: p.title1 || it.title1,
-          title2: p.title2 || it.title2,
-          flavorKey: it.flavorKey,
-          flavorLabel: it.flavorLabel,
-          need: it.qty,
-          have: 0,
-        });
-        continue;
-      }
-
-      const row = (flavor.stockByPickupPoint || []).find((s) => String(s.pickupPointId) === String(contextId));
-      const total = Number(row?.totalQty || 0);
-      const reserved = Number(row?.reservedQty || 0);
-      const have = Math.max(0, total - reserved);
-
-      if (have < it.qty) {
-        missing.push({
-          productKey: it.productKey,
-          title1: p.title1 || it.title1,
-          title2: p.title2 || it.title2,
-          flavorKey: it.flavorKey,
-          flavorLabel: it.flavorLabel,
-          need: it.qty,
-          have,
-        });
-      }
-    }
-
-    if (missing.length) return res.status(409).json({ ok: false, error: "Not enough stock", missing });
-
-    // 5) RESERVE stock: reservedQty += qty (totalQty НЕ трогаем)
-    const applyDelta = async ({ productKey, flavorKey, pickupPointId, qty }) => {
-      const q = Math.max(1, Number(qty || 1));
-      if (!pickupPointId || !productKey || !flavorKey || !Number.isFinite(q) || q <= 0) return;
-
-      const ppObj = pickupPointId instanceof mongoose.Types.ObjectId
-        ? pickupPointId
-        : toObjId(pickupPointId);
-
-      if (!ppObj) return;
-
-      const ppCandidates = [ppObj];
-
-      const fkNorm = normFlavorKey(flavorKey);
-      const fkCandidates = Array.from(new Set([String(flavorKey || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean)));
-
-
-      // 1) try to inc existing stock row
-      const res1 = await Product.updateOne(
-        {
+        repeatedItems.push({
           productKey,
-          "flavors.flavorKey": { $in: fkCandidates },
-          "flavors.stockByPickupPoint.pickupPointId": { $in: ppCandidates },
-        },
-        {
-          $inc: {
-            "flavors.$[f].stockByPickupPoint.$[s].reservedQty": q,
-          },
-        },
-        {
-          arrayFilters: [
-            { "f.flavorKey": { $in: fkCandidates } },
-            { "s.pickupPointId": { $in: ppCandidates } },
-          ],
-        }
-      );
-
-      // 2) if stock row missing, push it then inc again
-      if (!res1?.modifiedCount) {
-        await Product.updateOne(
-          { productKey, "flavors.flavorKey": { $in: fkCandidates } },
-          {
-            $push: {
-              "flavors.$[f].stockByPickupPoint": {
-                pickupPointId: ppObj,
-                totalQty: 0,
-                reservedQty: 0,
-              },
-            },
-          },
-          { arrayFilters: [{ "f.flavorKey": { $in: fkCandidates } }] }
-        );
-
-        await Product.updateOne(
-          {
-            productKey,
-            "flavors.flavorKey": { $in: fkCandidates },
-            "flavors.stockByPickupPoint.pickupPointId": { $in: ppCandidates },
-          },
-          {
-            $inc: {
-              "flavors.$[f].stockByPickupPoint.$[s].reservedQty": q,
-            },
-          },
-          {
-            arrayFilters: [
-              { "f.flavorKey": { $in: fkCandidates } },
-              { "s.pickupPointId": { $in: ppCandidates } },
-            ],
-          }
-        );
+          flavorKey,
+          qty: Math.max(1, Number(f?.qty || 1)),
+          unitPrice: Number(f?.unitPrice || 0),
+          flavorLabel: String(f?.flavorLabel || ""),
+          gradient: Array.isArray(f?.gradient) ? f.gradient.slice(0, 2) : [],
+        });
       }
-    };
-
-    for (const it of flat) {
-      await applyDelta({ productKey: it.productKey, flavorKey: it.flavorKey, pickupPointId: contextId, qty: it.qty });
     }
 
-    // 6) total from snapshot unitPrice in orig.items.flavors
-    const totalZl = (Array.isArray(orig.items) ? orig.items : []).reduce((sum, p) => {
-      for (const f of Array.isArray(p?.flavors) ? p.flavors : []) {
-        const qty = Math.max(1, Number(f?.qty || 1));
-        const unitPrice = Number(f?.unitPrice || 0);
-        sum += qty * unitPrice;
-      }
-      return sum;
-    }, 0);
-
-    // 7) unique orderNo
-    let newOrderNo = genOrderNo();
-    for (let i = 0; i < 5; i++) {
-      const exists = await Order.findOne({ orderNo: newOrderNo }, { _id: 1 }).lean();
-      if (!exists) break;
-      newOrderNo = genOrderNo();
+    if (!repeatedItems.length) {
+      return res.status(400).json({ ok: false, error: "Order has no items" });
     }
 
-    // 8) create new order (copy snapshot)
-    const created = await Order.create({
-      userTelegramId: telegramId,
-      orderNo: newOrderNo,
-      totalZl: Number(totalZl.toFixed(2)),
-      currency: "PLN",
+    // 3) return cart draft, do NOT create order here
+    return res.json({
+      ok: true,
+      cartDraft: {
+        items: repeatedItems,
+        checkoutDeliveryType: orig.deliveryType || null,
+        checkoutDeliveryMethod: orig.deliveryMethod || null,
+        checkoutPickupPointId: orig.pickupPointId || null,
 
-      bgUrl: String(orig.bgUrl || ""),
-      methodLabel: String(orig.methodLabel || ""),
+        // при самовывозе лучше просить выбрать время заново
+        arrivalTime: orig.deliveryType === "pickup" ? null : (orig.arrivalTime ?? null),
 
-      deliveryType: orig.deliveryType || null,
-      deliveryMethod: orig.deliveryMethod || null,
-      pickupPointId: orig.pickupPointId || null,
-
-      courierAddress: orig.courierAddress ?? null,
-      inpostData: orig.inpostData ?? {},
-
-      items: Array.isArray(orig.items) ? orig.items : [],
-
-      payment: { status: "unpaid", amountZl: Number(totalZl.toFixed(2)) },
-      status: "created",
-      // ✅ повтор заказа тоже держит резерв, списание будет только при выполнении
-      stockReservedAt: new Date(),
-      stockCommittedAt: null,
-      stockReleasedAt: null,
+        courierAddress: orig.courierAddress ?? null,
+        inpostData: orig.inpostData ?? {
+          fullName: null,
+          phone: null,
+          email: null,
+          city: null,
+          lockerAddress: null,
+        },
+      },
     });
-
-    return res.json({ ok: true, order: created });
   } catch (e) {
     console.error("POST /orders/repeat error:", e);
     return res.status(500).json({ ok: false, error: "Server error" });
