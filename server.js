@@ -347,6 +347,124 @@ async function releaseOrderReservedStock(order) {
   return true;
 }
 
+async function commitOrderStock(order) {
+  if (!order || order.stockCommittedAt) return false;
+
+  const pickupPointId = await resolveOrderReservePickupPointId(order);
+  if (!pickupPointId) return false;
+
+  const pointObjId =
+    pickupPointId instanceof mongoose.Types.ObjectId
+      ? pickupPointId
+      : new mongoose.Types.ObjectId(String(pickupPointId));
+
+  const normFlavorKey = (v) => String(v || "").trim().replace(/,+$/, "");
+
+  for (const item of order.items || []) {
+    const productKey = String(item.productKey || "").trim();
+    if (!productKey) continue;
+
+    for (const fl of item.flavors || []) {
+      const qty = Math.max(0, Number(fl.qty || 0));
+      if (!qty) continue;
+
+      const fkNorm = normFlavorKey(fl.flavorKey);
+      const fkCandidates = Array.from(
+        new Set([String(fl.flavorKey || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean))
+      );
+
+      // 1) totalQty -= qty, reservedQty -= qty
+      await Product.updateOne(
+        {
+          productKey,
+          "flavors.flavorKey": { $in: fkCandidates },
+          "flavors.stockByPickupPoint.pickupPointId": pointObjId,
+        },
+        {
+          $inc: {
+            "flavors.$[f].stockByPickupPoint.$[s].totalQty": -qty,
+            "flavors.$[f].stockByPickupPoint.$[s].reservedQty": -qty,
+          },
+        },
+        {
+          arrayFilters: [
+            { "f.flavorKey": { $in: fkCandidates } },
+            { "s.pickupPointId": pointObjId },
+          ],
+        }
+      );
+
+      // 2) clamp: totalQty/reservedQty не должны быть < 0,
+      //    reservedQty не должен быть > totalQty
+      await Product.updateOne(
+        { productKey },
+        [
+          {
+            $set: {
+              flavors: {
+                $map: {
+                  input: "$flavors",
+                  as: "f",
+                  in: {
+                    $cond: [
+                      { $in: ["$$f.flavorKey", fkCandidates] },
+                      {
+                        $mergeObjects: [
+                          "$$f",
+                          {
+                            stockByPickupPoint: {
+                              $map: {
+                                input: "$$f.stockByPickupPoint",
+                                as: "s",
+                                in: {
+                                  $cond: [
+                                    { $eq: ["$$s.pickupPointId", pointObjId] },
+                                    {
+                                      $let: {
+                                        vars: {
+                                          safeTotal: {
+                                            $max: [0, { $ifNull: ["$$s.totalQty", 0] }],
+                                          },
+                                          safeReservedRaw: {
+                                            $max: [0, { $ifNull: ["$$s.reservedQty", 0] }],
+                                          },
+                                        },
+                                        in: {
+                                          $mergeObjects: [
+                                            "$$s",
+                                            {
+                                              totalQty: "$$safeTotal",
+                                              reservedQty: {
+                                                $min: ["$$safeReservedRaw", "$$safeTotal"],
+                                              },
+                                            },
+                                          ],
+                                        },
+                                      },
+                                    },
+                                    "$$s",
+                                  ],
+                                },
+                              },
+                            },
+                          },
+                        ],
+                      },
+                      "$$f",
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        ]
+      );
+    }
+  }
+
+  return true;
+}
+
 function translitRuToLat(input) {
   const s = String(input || "").trim().toLowerCase();
   const map = {
@@ -2531,6 +2649,12 @@ if (TG_BOT_TOKEN) {
       const order = await Order.findById(orderId);
       if (!order) return ctx.answerCbQuery("Заказ не найден");
 
+      // списываем склад только один раз
+      if (!order.stockCommittedAt) {
+        await commitOrderStock(order);
+        order.stockCommittedAt = new Date();
+      }
+
       order.payment = {
         ...(order.payment?.toObject ? order.payment.toObject() : order.payment || {}),
         status: "paid",
@@ -2561,7 +2685,9 @@ if (TG_BOT_TOKEN) {
       }
     } catch (e) {
       console.error("mgr_pay_paid error:", e);
-      try { await ctx.answerCbQuery("Ошибка"); } catch {}
+      try {
+        await ctx.answerCbQuery("Ошибка");
+      } catch {}
     }
   });
 
