@@ -277,6 +277,106 @@ async function sendClientOrderCreatedInfo(order) {
   }
 }
 
+const paymentReminderTimers = new Map(); // orderId -> intervalId
+
+function stopPaymentReminder(orderId) {
+  const key = String(orderId || "").trim();
+  const timer = paymentReminderTimers.get(key);
+  if (timer) {
+    clearInterval(timer);
+    paymentReminderTimers.delete(key);
+  }
+}
+
+async function startPaymentReminder(order) {
+  try {
+    if (!bot || !order?._id || !order?.userTelegramId) return;
+
+    const orderId = String(order._id || "").trim();
+    if (!orderId) return;
+
+    // если вдруг уже есть таймер по этому заказу — пересоздаём
+    stopPaymentReminder(orderId);
+
+    const tick = async () => {
+      try {
+        const fresh = await Order.findById(orderId, {
+          _id: 1,
+          orderNo: 1,
+          userTelegramId: 1,
+          totalZl: 1,
+          currency: 1,
+          status: 1,
+          payment: 1,
+        }).lean();
+
+        if (!fresh) {
+          stopPaymentReminder(orderId);
+          return;
+        }
+
+        const paymentStatus = String(fresh?.payment?.status || "unpaid");
+        const orderStatus = String(fresh?.status || "");
+
+        // как только заказ ушёл на проверку / подтверждён / отменён — останавливаем напоминания
+        if (
+          ["checking", "paid", "refunded"].includes(paymentStatus) ||
+          orderStatus === "canceled"
+        ) {
+          stopPaymentReminder(orderId);
+          return;
+        }
+
+        const webAppBaseUrl = String(process.env.WEB_APP_URL || process.env.WEBAPP_URL || "")
+          .trim()
+          .replace(/\/$/, "");
+
+        const orderLink =
+          /^https:\/\/.+/i.test(webAppBaseUrl)
+            ? `${webAppBaseUrl}/orders`
+            : null;
+
+        const lines = [
+          `⏰ <b>НАПОМИНАНИЕ ОБ ОПЛАТЕ</b>`,
+          ``,
+          `🔢 <b>Номер заказа:</b> #${escapeHtml(fresh.orderNo)}`,
+          `💰 <b>Сумма:</b> ${Number(fresh.totalZl || 0)} ${escapeHtml(fresh.currency || "PLN")}`,
+          ``,
+          `Менеджер получит информацию о вашем заказе <b>только после оплаты</b>.`,
+          ``,
+          `💵 Если вам удобнее, выберите способ оплаты <b>Наличные</b> — тогда менеджер тоже получит уведомление и начнёт готовить заказ.`,
+        ];
+
+        const extra = {
+          parse_mode: "HTML",
+          disable_web_page_preview: true,
+        };
+
+        if (orderLink) {
+          extra.reply_markup = {
+            inline_keyboard: [
+              [{ text: "💳 Перейти к оплате", web_app: { url: orderLink } }],
+            ],
+          };
+        }
+
+        await bot.telegram.sendMessage(
+          String(fresh.userTelegramId),
+          lines.join("\n"),
+          extra
+        );
+      } catch (e) {
+        console.error("payment reminder tick error:", e);
+      }
+    };
+
+    const intervalId = setInterval(tick, 20000);
+    paymentReminderTimers.set(orderId, intervalId);
+  } catch (e) {
+    console.error("startPaymentReminder error:", e);
+  }
+}
+
 async function resolveOrderReservePickupPointId(order) {
   if (!order) return null;
 
@@ -2055,6 +2155,7 @@ app.post("/orders/confirm", async (req, res) => {
     });
 
     await sendClientOrderCreatedInfo(created);
+    await startPaymentReminder(created);
 
     // await sendOrderCreatedNotification(created);
 
@@ -2329,6 +2430,7 @@ app.post("/orders/:id/payment-check", async (req, res) => {
     };
 
     await order.save();
+    stopPaymentReminder(order._id);
     await sendOrderCreatedNotification(order);
     return res.json({ ok: true, order });
   } catch (e) {
@@ -2656,6 +2758,8 @@ if (TG_BOT_TOKEN) {
 
       await order.save();
 
+      stopPaymentReminder(order._id);
+
       await ctx.answerCbQuery("Оплата подтверждена");
 
       try {
@@ -2707,6 +2811,8 @@ if (TG_BOT_TOKEN) {
       order.status = "canceled";
 
       await order.save();
+
+      stopPaymentReminder(order._id);
 
       await ctx.answerCbQuery("Оплата отклонена");
 
