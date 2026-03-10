@@ -1033,7 +1033,16 @@ app.patch("/admin/pickup-points/:id", requireAdmin, async (req, res) => {
     const { id } = req.params;
     const b = req.body || {};
 
-    const allow = ["key", "title", "address", "sortOrder", "isActive", "allowedAdminTelegramIds", "notificationChatId"];
+    const allow = [
+      "key",
+      "title",
+      "address",
+      "sortOrder",
+      "isActive",
+      "allowedAdminTelegramIds",
+      "notificationChatId",
+      "paymentConfig",
+    ];
     const update = {};
     for (const k of allow) if (b[k] !== undefined) update[k] = b[k];
 
@@ -1051,6 +1060,24 @@ app.patch("/admin/pickup-points/:id", requireAdmin, async (req, res) => {
 
     if (update.notificationChatId !== undefined) {
       update.notificationChatId = String(update.notificationChatId || "").trim();
+    }
+
+    if (update.paymentConfig !== undefined) {
+      const rawMethods = Array.isArray(update.paymentConfig?.methods)
+        ? update.paymentConfig.methods
+        : [];
+
+      update.paymentConfig = {
+        methods: rawMethods
+          .map((m) => ({
+            key: String(m?.key || "").trim(),
+            label: String(m?.label || "").trim(),
+            detailsValue: String(m?.detailsValue || "").trim(),
+            badge: String(m?.badge || "").trim(),
+            isActive: m?.isActive !== false,
+          }))
+          .filter((m) => m.key),
+      };
     }
 
     const updated = await PickupPoint.findByIdAndUpdate(id, update, { new: true });
