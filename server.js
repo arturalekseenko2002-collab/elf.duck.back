@@ -2047,7 +2047,6 @@ app.post("/orders/repeat", async (req, res) => {
       return res.status(400).json({ ok: false, error: "orderNo or orderId is required" });
     }
 
-    // 1) load original order (only own orders)
     const orig = await Order.findOne(
       { userTelegramId: telegramId, ...(orderId ? { _id: orderId } : { orderNo }) },
       {
@@ -2065,7 +2064,6 @@ app.post("/orders/repeat", async (req, res) => {
       return res.status(404).json({ ok: false, error: "Order not found" });
     }
 
-    // 2) convert order snapshot -> cart items
     const repeatedItems = [];
 
     for (const p of Array.isArray(orig.items) ? orig.items : []) {
@@ -2091,7 +2089,125 @@ app.post("/orders/repeat", async (req, res) => {
       return res.status(400).json({ ok: false, error: "Order has no items" });
     }
 
-    // 3) return cart draft, do NOT create order here
+    const allPoints = await PickupPoint.find({}, { _id: 1, key: 1, title: 1, address: 1 }).lean();
+    const pointById = new Map(allPoints.map((p) => [String(p._id), p]));
+    const pointByKey = new Map(
+      allPoints.map((p) => [String(p.key || "").trim().replace(/,+$/, ""), p])
+    );
+
+    const normFlavorKey = (v) => String(v || "").trim().replace(/,+$/, "");
+
+    const makePointLabel = (point) => {
+      const k = String(point?.key || "").trim().replace(/,+$/, "");
+      if (k === "delivery") return "Доставка — Курьер";
+      if (k === "delivery-2") return "Доставка — InPost";
+      return point?.address || point?.title || "Точка";
+    };
+
+    const targetPoint =
+      orig.deliveryType === "pickup"
+        ? pointById.get(String(orig.pickupPointId || "")) || null
+        : pointByKey.get(orig.deliveryMethod === "inpost" ? "delivery-2" : "delivery") || null;
+
+    const targetContextId = targetPoint?._id ? String(targetPoint._id) : "";
+    const targetLabel = makePointLabel(targetPoint);
+
+    const missing = [];
+
+    for (const it of repeatedItems) {
+      const productKey = String(it.productKey || "").trim();
+      const flavorKey = String(it.flavorKey || "").trim();
+      if (!productKey || !flavorKey) continue;
+
+      const fkNorm = normFlavorKey(flavorKey);
+      const fkCandidates = Array.from(
+        new Set([String(flavorKey || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean))
+      );
+
+      const prod = await Product.findOne(
+        { productKey, "flavors.flavorKey": { $in: fkCandidates } },
+        { productKey: 1, title1: 1, title2: 1, flavors: 1 }
+      ).lean();
+
+      const fl = (prod?.flavors || []).find((f) =>
+        fkCandidates.includes(String(f?.flavorKey || "").trim())
+      );
+
+      const row = (fl?.stockByPickupPoint || []).find(
+        (s) => String(s?.pickupPointId) === String(targetContextId)
+      );
+
+      const total = Number(row?.totalQty || 0);
+      const reserved = Number(row?.reservedQty || 0);
+      const available = Math.max(0, total - reserved);
+      const requested = Math.max(1, Number(it.qty || 1));
+
+      if (available >= requested) continue;
+
+      const productTitle =
+        [prod?.title1, prod?.title2].filter(Boolean).join(" ").trim() || productKey;
+
+      const flavorLabel = String(
+        it.flavorLabel || fl?.label || fl?.flavorKey || flavorKey
+      ).trim();
+
+      const alternatives = (fl?.stockByPickupPoint || [])
+        .map((s) => {
+          const point = pointById.get(String(s?.pickupPointId || ""));
+          const altAvailable = Math.max(
+            0,
+            Number(s?.totalQty || 0) - Number(s?.reservedQty || 0)
+          );
+
+          return {
+            pointId: String(s?.pickupPointId || ""),
+            label: makePointLabel(point),
+            available: altAvailable,
+          };
+        })
+        .filter((x) => x.pointId && x.pointId !== String(targetContextId) && x.available > 0)
+        .sort((a, b) => b.available - a.available)
+        .slice(0, 6);
+
+      missing.push({
+        productTitle,
+        flavorLabel,
+        requested,
+        available,
+        alternatives,
+      });
+    }
+
+    if (missing.length) {
+      const message = [
+        `На «${targetLabel}» сейчас недостаточно наличия для повторного заказа.`,
+        ``,
+        ...missing.flatMap((m) => {
+          const head = `• ${m.productTitle} — ${m.flavorLabel}: нужно ${m.requested} шт., доступно ${m.available} шт.`;
+
+          if (!m.alternatives.length) {
+            return [head, `  Альтернатива: выберите другой вкус, позицию или другой склад.`];
+          }
+
+          return [
+            head,
+            `  Где ещё есть:`,
+            ...m.alternatives.map((a) => `  – ${a.label}: ${a.available} шт.`),
+          ];
+        }),
+        ``,
+        `Попробуйте выбрать другой склад, другой вкус или другую позицию.`,
+      ].join("\n");
+
+      return res.status(409).json({
+        ok: false,
+        error: "OUT_OF_STOCK",
+        message,
+        targetLabel,
+        missing,
+      });
+    }
+
     return res.json({
       ok: true,
       cartDraft: {
@@ -2099,10 +2215,7 @@ app.post("/orders/repeat", async (req, res) => {
         checkoutDeliveryType: orig.deliveryType || null,
         checkoutDeliveryMethod: orig.deliveryMethod || null,
         checkoutPickupPointId: orig.pickupPointId || null,
-
-        // при самовывозе лучше просить выбрать время заново
         arrivalTime: orig.deliveryType === "pickup" ? null : (orig.arrivalTime ?? null),
-
         courierAddress: orig.courierAddress ?? null,
         inpostData: orig.inpostData ?? {
           fullName: null,
