@@ -263,7 +263,7 @@ async function sendClientOrderCreatedInfo(order) {
     if (orderLink) {
       extra.reply_markup = {
         inline_keyboard: [
-          [{ text: "💳 Перейти к оплате", web_app: orderLink }],
+          [{ text: "💳 Перейти к оплате", web_app: { url: orderLink } }],
         ],
       };
     }
