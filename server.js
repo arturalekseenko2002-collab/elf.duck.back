@@ -239,7 +239,7 @@ async function sendClientOrderCreatedInfo(order) {
 
     // картинка: сначала bgUrl заказа, если его нет — fallback
     const photoUrl =
-      String(order.bgUrl || "").trim() ||
+      // String(order.bgUrl || "").trim() ||
       "https://blush-impressive-moth-462.mypinata.cloud/ipfs/bafybeigcn4azeruhrwlkeya2mrwbc7fnoozambasxyckfyqb742khjgfaq";
 
     const lines = [
@@ -263,7 +263,7 @@ async function sendClientOrderCreatedInfo(order) {
     if (orderLink) {
       extra.reply_markup = {
         inline_keyboard: [
-          [{ text: "💳 Перейти к оплате", url: orderLink }],
+          [{ text: "💳 Перейти к оплате", web_app: orderLink }],
         ],
       };
     }
