@@ -224,6 +224,59 @@ async function sendOrderCreatedNotification(order) {
   }
 }
 
+async function sendClientOrderCreatedInfo(order) {
+  try {
+    if (!bot || !order?.userTelegramId) return;
+
+    const webAppBaseUrl = String(process.env.WEBAPP_URL || "")
+      .trim()
+      .replace(/\/$/, "");
+
+    const orderNo = String(order.orderNo || "").trim();
+
+    // ведём на страницу заказов mini app
+    const orderLink = webAppBaseUrl ? `${webAppBaseUrl}/orders` : null;
+
+    // картинка: сначала bgUrl заказа, если его нет — fallback
+    const photoUrl =
+      String(order.bgUrl || "").trim() ||
+      "https://blush-impressive-moth-462.mypinata.cloud/ipfs/bafybeigcn4azeruhrwlkeya2mrwbc7fnoozambasxyckfyqb742khjgfaq";
+
+    const lines = [
+      `🛒 <b>ЗАКАЗ СОЗДАН</b>`,
+      ``,
+      `🔢 <b>Номер заказа:</b> #${escapeHtml(orderNo)}`,
+      `💰 <b>Сумма:</b> ${Number(order.totalZl || 0)} ${escapeHtml(order.currency || "PLN")}`,
+      ``,
+      `ℹ️ <b>Важно:</b> менеджер получит информацию о вашем заказе <b>только после оплаты</b>.`,
+      ``,
+      `💵 Вы также можете выбрать способ оплаты <b>Наличные</b> и оплатить заказ на месте — в этом случае менеджер тоже получит уведомление и начнёт готовить заказ.`,
+      ``,
+      `👉 Откройте страницу заказа, чтобы выбрать способ оплаты и отправить его на проверку менеджеру.`,
+    ];
+
+    const extra = {
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+    };
+
+    if (orderLink) {
+      extra.reply_markup = {
+        inline_keyboard: [
+          [{ text: "💳 Перейти к оплате", url: orderLink }],
+        ],
+      };
+    }
+
+    await bot.telegram.sendPhoto(String(order.userTelegramId), photoUrl, {
+      caption: lines.join("\n"),
+      ...extra,
+    });
+  } catch (e) {
+    console.error("sendClientOrderCreatedInfo error:", e);
+  }
+}
+
 async function resolveOrderReservePickupPointId(order) {
   if (!order) return null;
 
@@ -2000,6 +2053,8 @@ app.post("/orders/confirm", async (req, res) => {
       stockCommittedAt: null,
       stockReleasedAt: null,
     });
+
+    await sendClientOrderCreatedInfo(created);
 
     // await sendOrderCreatedNotification(created);
 
