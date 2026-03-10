@@ -370,7 +370,7 @@ async function startPaymentReminder(order) {
       }
     };
 
-    const intervalId = setInterval(tick, 20000);
+    const intervalId = setInterval(tick, 35000);
     paymentReminderTimers.set(orderId, intervalId);
   } catch (e) {
     console.error("startPaymentReminder error:", e);
