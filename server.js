@@ -89,6 +89,23 @@ async function resolveOrderNotificationPoint(order) {
   return null;
 }
 
+async function resolveOrderPaymentPoint(order) {
+  if (!order) return null;
+
+  if (order.deliveryType === "pickup" && order.pickupPointId) {
+    return await PickupPoint.findById(order.pickupPointId).lean();
+  }
+
+  if (order.deliveryType === "delivery") {
+    const deliveryKey = order.deliveryMethod === "inpost" ? "delivery-2" : "delivery";
+    return await PickupPoint.findOne({
+      key: { $in: [deliveryKey, `${deliveryKey},`] }
+    }).lean();
+  }
+
+  return null;
+}
+
 async function sendOrderCreatedNotification(order) {
   try {
     if (!bot || !order) return;
@@ -2415,6 +2432,30 @@ app.post("/orders/:id/payment-check", async (req, res) => {
       return res.status(404).json({ ok: false, error: "Order not found" });
     }
 
+    const point = await resolveOrderPaymentPoint(order);
+
+    const allowedMethods = Array.isArray(point?.paymentConfig?.methods)
+      ? point.paymentConfig.methods
+          .filter((m) => m && m.isActive !== false)
+          .map((m) => String(m.key || "").trim())
+          .filter(Boolean)
+      : [];
+
+    const requestedMethod = req.body?.paymentMethod
+      ? String(req.body.paymentMethod).trim()
+      : "";
+
+    if (!requestedMethod) {
+      return res.status(400).json({ ok: false, error: "paymentMethod is required" });
+    }
+
+    if (allowedMethods.length && !allowedMethods.includes(requestedMethod)) {
+      return res.status(400).json({
+        ok: false,
+        error: "Payment method is not available for this order",
+      });
+    }
+
     if (String(order?.payment?.status || "") === "paid") {
       return res.json({ ok: true, order });
     }
@@ -2669,6 +2710,66 @@ app.patch("/admin/products/:id/flavors/:flavorId/stock", requireAdmin, async (re
     return res.json({ ok: true, product });
   } catch (e) {
     console.error("PATCH /admin/products/:id/flavors/:flavorId/stock error:", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+app.get("/orders/:id/payment-config", async (req, res) => {
+  try {
+    const telegramId = String(req.query?.telegramId || "").trim();
+    const orderId = String(req.params?.id || "").trim();
+
+    if (!telegramId) {
+      return res.status(400).json({ ok: false, error: "telegramId is required" });
+    }
+
+    if (!orderId) {
+      return res.status(400).json({ ok: false, error: "order id is required" });
+    }
+
+    const order = await Order.findOne(
+      { _id: orderId, userTelegramId: telegramId },
+      {
+        _id: 1,
+        orderNo: 1,
+        totalZl: 1,
+        currency: 1,
+        deliveryType: 1,
+        deliveryMethod: 1,
+        pickupPointId: 1,
+        status: 1,
+        payment: 1,
+      }
+    ).lean();
+
+    if (!order) {
+      return res.status(404).json({ ok: false, error: "Order not found" });
+    }
+
+    const point = await resolveOrderPaymentPoint(order);
+
+    const methods = Array.isArray(point?.paymentConfig?.methods)
+      ? point.paymentConfig.methods
+          .filter((m) => m && m.isActive !== false && String(m.key || "").trim())
+          .map((m) => ({
+            key: String(m.key || "").trim(),
+            label: String(m.label || "").trim(),
+            detailsValue: String(m.detailsValue || "").trim(),
+            badge: String(m.badge || "").trim(),
+          }))
+      : [];
+
+    return res.json({
+      ok: true,
+      paymentConfig: {
+        pointId: point?._id || null,
+        pointTitle: point?.title || "",
+        pointAddress: point?.address || "",
+        methods,
+      },
+    });
+  } catch (e) {
+    console.error("GET /orders/:id/payment-config error:", e);
     return res.status(500).json({ ok: false, error: "Server error" });
   }
 });

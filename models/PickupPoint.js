@@ -9,6 +9,21 @@ const PickupPointSchema = new mongoose.Schema(
     sortOrder: { type: Number, default: 0 },
     isActive: { type: Boolean, default: true },
 
+    paymentConfig: {
+      methods: {
+        type: [
+          {
+            key: { type: String, required: true }, // blik | crypto | ua_card | cash
+            label: { type: String, default: "" },
+            detailsValue: { type: String, default: "" },
+            badge: { type: String, default: "" },
+            isActive: { type: Boolean, default: true },
+          },
+        ],
+        default: [],
+      },
+    },
+
     // telegramId админов/менеджеров, которым разрешено работать с этой точкой
     allowedAdminTelegramIds: { type: [String], default: [] },
 
