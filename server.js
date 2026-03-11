@@ -982,12 +982,16 @@ app.post("/referral/claim", async (req, res) => {
       claimedPairsCount: claimedPairsCount + 1,
     };
 
+    const rewardZl = 25;
+    user.cashbackBalance = Number(user.cashbackBalance || 0) + rewardZl;
+
     await user.save();
 
     return res.json({
       ok: true,
-      rewardZl: 25,
+      rewardZl,
       claimedPairsCount: claimedPairsCount + 1,
+      cashbackBalance: user.cashbackBalance,
     });
   } catch (e) {
     console.error("POST /referral/claim error:", e);
