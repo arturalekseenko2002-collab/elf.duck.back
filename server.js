@@ -2849,7 +2849,7 @@ app.post("/admin/products/:id/flavors", requireAdmin, async (req, res) => {
         gradient,
         stockByPickupPoint: [],
       });
-}
+    }
 
     await product.save();
     return res.json({ ok: true, product });
