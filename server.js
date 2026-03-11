@@ -782,6 +782,7 @@ app.get("/ping", (_, res) => res.json({ ok: true }));
 app.post("/register-user", async (req, res) => {
   try {
     const { telegramId, username, firstName, lastName, photoUrl, ref } = req.body;
+    const normalizedRef = String(ref || "").replace(/^ref_/, "").trim();
     if (!telegramId) {
       return res.status(400).json({ ok: false, error: "telegramId is required" });
     }
@@ -798,7 +799,7 @@ app.post("/register-user", async (req, res) => {
       });
 
       const code = await ensureUserRefCode(newUser);
-      await attachReferralIfAny(newUser, ref);
+      await attachReferralIfAny(newUser, normalizedRef);
 
       const fresh = await User.findById(newUser._id).lean();
       return res.json({ ok: true, user: fresh });
