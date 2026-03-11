@@ -999,7 +999,7 @@ app.post("/referral/claim", async (req, res) => {
   }
 });
 
-// ===== Public: get favorites by telegramId ====
+// ==== Public: get favorites by telegramId ====
 app.get("/favorites", async (req, res) => {
   try {
     const telegramId = String(req.query.telegramId || "").trim();
