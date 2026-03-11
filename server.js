@@ -656,6 +656,45 @@ function translitRuToLat(input) {
   return out;
 }
 
+function slugifyFlavorLabel(input) {
+  const base = translitRuToLat(input)
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32);
+
+  return base || "flavor";
+}
+
+function ensureUniqueFlavorKeyForProduct(product, baseKey) {
+  const existingKeys = new Set(
+    (product?.flavors || [])
+      .map((f) => String(f?.flavorKey || "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+
+  const cleanBase =
+    String(baseKey || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 32) || "flavor";
+
+  if (!existingKeys.has(cleanBase)) return cleanBase;
+
+  for (let i = 2; i <= 999; i++) {
+    const suffix = `-${i}`;
+    const cut = Math.max(1, 32 - suffix.length);
+    const candidate = `${cleanBase.slice(0, cut).replace(/-+$/g, "")}${suffix}`;
+    if (!existingKeys.has(candidate)) return candidate;
+  }
+
+  return `${cleanBase.slice(0, 24).replace(/-+$/g, "")}-${Date.now().toString(36).slice(-6)}`;
+}
+
 async function ensureUniqueCategoryKey(baseKey) {
   let key = String(baseKey || "").trim();
   if (!key) key = "category";
@@ -2770,12 +2809,9 @@ app.post("/admin/products/:id/flavors", requireAdmin, async (req, res) => {
     const { id } = req.params;
     const b = req.body || {};
 
-    const flavorKey = String(b.flavorKey || "").trim().toLowerCase();
+    const rawFlavorKey = String(b.flavorKey || "").trim().toLowerCase();
     const label = String(b.label || "").trim();
 
-    if (!flavorKey) {
-      return res.status(400).json({ ok: false, error: "flavorKey is required" });
-    }
     if (!label) {
       return res.status(400).json({ ok: false, error: "label is required" });
     }
@@ -2788,25 +2824,32 @@ app.post("/admin/products/:id/flavors", requireAdmin, async (req, res) => {
     const product = await Product.findById(id);
     if (!product) return res.status(404).json({ ok: false, error: "Product not found" });
 
+    const requestedFlavorKey = rawFlavorKey || slugifyFlavorLabel(label);
+
     const existing = (product.flavors || []).find(
-      (f) => String(f.flavorKey || "").toLowerCase() === flavorKey
+      (f) => String(f.flavorKey || "").trim().toLowerCase() === requestedFlavorKey
     );
 
-    if (existing) {
-      // update flavor meta
+    const sameFlavorByLabel = (product.flavors || []).find(
+      (f) => String(f.label || "").trim().toLowerCase() === label.toLowerCase()
+    );
+
+    if (existing && sameFlavorByLabel && String(existing._id) === String(sameFlavorByLabel._id)) {
+      // обновляем только если это реально тот же вкус
       existing.label = label;
       existing.gradient = gradient;
       if (b.isActive !== undefined) existing.isActive = !!b.isActive;
     } else {
-      // create new flavor
+      const uniqueFlavorKey = ensureUniqueFlavorKeyForProduct(product, requestedFlavorKey);
+
       product.flavors.push({
-        flavorKey,
+        flavorKey: uniqueFlavorKey,
         label,
         isActive: b.isActive ?? true,
         gradient,
         stockByPickupPoint: [],
       });
-    }
+}
 
     await product.save();
     return res.json({ ok: true, product });
