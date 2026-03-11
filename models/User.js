@@ -7,22 +7,26 @@ const userSchema = new mongoose.Schema(
     firstName: String,
     lastName: String,
     photoUrl: String,
-    
+
     favoriteProductKeys: { type: [String], default: [] },
 
-    referral: {
-      code: String,       
-      referredBy: String,  
-      referredByCode: String,
-      referredAt: Date,
-      referralsCount: { type: Number, default: 0 },
-      referrals: [
+  referral: {
+    code: { type: String, default: "" },
+    referredBy: { type: String, default: null },
+    referredByCode: { type: String, default: null },
+    referredAt: { type: Date, default: null },
+    referralsCount: { type: Number, default: 0 },
+    claimedPairsCount: { type: Number, default: 0 },
+    referrals: {
+      type: [
         {
-          telegramId: String,
-          at: Date,
+          telegramId: { type: String, required: true },
+          at: { type: Date, default: Date.now },
         },
       ],
+      default: [],
     },
+  }
 
   },
   { timestamps: true }
