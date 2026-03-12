@@ -72,6 +72,63 @@ function formatOrderDate(dt) {
   }
 }
 
+function getCashbackPercentByTotal(totalZl) {
+  const total = Number(totalZl || 0);
+
+  if (total >= 501) return 10;
+  if (total >= 301) return 9;
+  if (total >= 101) return 7;
+  return 4;
+}
+
+async function applyOrderCashback(order) {
+  if (!order) return { applied: false, cashbackZl: 0, percent: 0 };
+
+  const orderId = String(order._id || "").trim();
+  if (!orderId) return { applied: false, cashbackZl: 0, percent: 0 };
+
+  const freshOrder = await Order.findById(orderId, {
+    _id: 1,
+    totalZl: 1,
+    cashbackAppliedAt: 1,
+    cashbackZl: 1,
+    userTelegramId: 1,
+  });
+
+  if (!freshOrder) return { applied: false, cashbackZl: 0, percent: 0 };
+
+  // защита от повторного начисления
+  if (freshOrder.cashbackAppliedAt) {
+    return {
+      applied: false,
+      cashbackZl: Number(freshOrder.cashbackZl || 0),
+      percent: getCashbackPercentByTotal(freshOrder.totalZl),
+    };
+  }
+
+  const percent = getCashbackPercentByTotal(freshOrder.totalZl);
+  const cashbackZl = Number(((Number(freshOrder.totalZl || 0) * percent) / 100).toFixed(2));
+
+  const user = await User.findOne({ telegramId: String(freshOrder.userTelegramId || "") });
+  if (!user) return { applied: false, cashbackZl: 0, percent };
+
+  user.cashbackBalance = Number(user.cashbackBalance || 0) + cashbackZl;
+  await user.save();
+
+  await Order.updateOne(
+    { _id: freshOrder._id, cashbackAppliedAt: null },
+    {
+      $set: {
+        cashbackPercent: percent,
+        cashbackZl,
+        cashbackAppliedAt: new Date(),
+      },
+    }
+  );
+
+  return { applied: true, cashbackZl, percent };
+}
+
 async function resolveOrderNotificationPoint(order) {
   if (!order) return null;
 
@@ -3054,6 +3111,8 @@ if (TG_BOT_TOKEN) {
       };
 
       await order.save();
+
+      await applyOrderCashback(order);
 
       stopPaymentReminder(order._id);
 
