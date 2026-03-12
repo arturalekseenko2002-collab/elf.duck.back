@@ -72,6 +72,57 @@ function formatOrderDate(dt) {
   }
 }
 
+const LIQUIDS_CATEGORY_KEYS = new Set(["liquids"]);
+
+function getLiquidSmartDiscountPerItem(liquidUnitsQty) {
+  const qty = Math.max(0, Number(liquidUnitsQty || 0));
+  if (qty >= 5) return 15;
+  if (qty >= 3) return 10;
+  if (qty >= 2) return 5;
+  return 0;
+}
+
+function repriceCartItemsWithLiquidDiscount(items, products) {
+  const prodByKey = new Map(
+    (products || []).map((p) => [String(p?.productKey || "").trim(), p])
+  );
+
+  const liquidUnitsQty = (items || []).reduce((sum, it) => {
+    const product = prodByKey.get(String(it?.productKey || "").trim());
+    const categoryKey = String(product?.categoryKey || "").trim().toLowerCase();
+    if (!LIQUIDS_CATEGORY_KEYS.has(categoryKey)) return sum;
+    return sum + Math.max(1, Number(it?.qty || 1));
+  }, 0);
+
+  const liquidDiscountPerItem = getLiquidSmartDiscountPerItem(liquidUnitsQty);
+
+  const repricedItems = (items || []).map((it) => {
+    const product = prodByKey.get(String(it?.productKey || "").trim());
+    const categoryKey = String(product?.categoryKey || "").trim().toLowerCase();
+    const basePrice = Number(product?.price || it?.unitPrice || 0);
+
+    if (!LIQUIDS_CATEGORY_KEYS.has(categoryKey)) {
+      return {
+        ...it,
+        unitPrice: Number(basePrice.toFixed(2)),
+      };
+    }
+
+    return {
+      ...it,
+      unitPrice: Number(Math.max(0, basePrice - liquidDiscountPerItem).toFixed(2)),
+    };
+  });
+
+  return {
+    repricedItems,
+    smartPricingMeta: {
+      liquidUnitsQty,
+      liquidDiscountPerItem,
+    },
+  };
+}
+
 function getCashbackPercentByTotal(totalZl) {
   const total = Number(totalZl || 0);
 
@@ -1579,13 +1630,13 @@ app.put("/cart", async (req, res) => {
     const forceCheckoutSelection = !!b.forceCheckoutSelection;
 
     // минимальная нормализация
-    const cleanItems = items
+    const cleanItemsBase = items
       .map((it) => ({
         productKey: String(it.productKey || "").trim(),
         flavorKey: String(it.flavorKey || "").trim(),
         qty: Math.max(1, Number(it.qty || 1)),
 
-        // цена фиксируется в корзине (чтобы не прыгала)
+        // цена будет пересчитана ниже по smart-price логике
         unitPrice: Number(it.unitPrice || 0),
 
         // для UI вкуса
@@ -1593,6 +1644,20 @@ app.put("/cart", async (req, res) => {
         gradient: Array.isArray(it.gradient) ? it.gradient.slice(0, 2) : [],
       }))
       .filter((it) => it.productKey && it.flavorKey);
+
+    const pricingProductKeys = Array.from(
+      new Set(cleanItemsBase.map((it) => String(it.productKey || "").trim()).filter(Boolean))
+    );
+
+    const pricingProducts = pricingProductKeys.length
+      ? await Product.find(
+          { productKey: { $in: pricingProductKeys } },
+          { productKey: 1, categoryKey: 1, price: 1, title1: 1, title2: 1 }
+        ).lean()
+      : [];
+
+    const { repricedItems: cleanItems, smartPricingMeta } =
+      repriceCartItemsWithLiquidDiscount(cleanItemsBase, pricingProducts);
 
     const existing = await Cart.findOne({ telegramId }).lean();
 
@@ -2077,7 +2142,7 @@ for (const d of deltas) {
       { upsert: true, new: true }
     ).lean();
 
-    res.json({ ok: true, cart: updated });
+    res.json({ ok: true, cart: updated, smartPricingMeta });
   } catch (e) {
     console.error("PUT /cart error:", e);
     res.status(500).json({ ok: false, error: "Server error" });
