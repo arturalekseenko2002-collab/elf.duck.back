@@ -931,6 +931,37 @@ app.get("/get-user", async (req, res) => {
   }
 });
 
+app.get("/cart/summary", async (req, res) => {
+  try {
+    const telegramId = String(req.query?.telegramId || "").trim();
+    if (!telegramId) {
+      return res.status(400).json({ ok: false, error: "telegramId is required" });
+    }
+
+    const cart = await Cart.findOne({ telegramId }).lean();
+    const items = Array.isArray(cart?.items) ? cart.items : [];
+
+    const totalZl = Number(
+      items
+        .reduce(
+          (sum, item) =>
+            sum + Number(item?.qty || 0) * Number(item?.unitPrice || 0),
+          0
+        )
+        .toFixed(2)
+    );
+
+    return res.json({
+      ok: true,
+      totalZl,
+      itemsCount: items.length,
+    });
+  } catch (e) {
+    console.error("GET /cart/summary error:", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
 app.get("/referral/status", async (req, res) => {
   try {
     const telegramId = String(req.query.telegramId || "").trim();
