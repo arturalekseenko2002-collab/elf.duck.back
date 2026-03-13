@@ -74,6 +74,8 @@ function formatOrderDate(dt) {
 
 const LIQUIDS_CATEGORY_KEYS = new Set(["liquids"]);
 const DISPOSABLES_CATEGORY_KEYS = new Set(["disposables"]);
+const CARTRIDGES_CATEGORY_KEYS = new Set(["cartridges"]);
+
 const DISPOSABLES_NO_SMART_PRICE_PRODUCT_KEYS = new Set([
   "elf-duck-1500",
   "elf-duck-1500-2",
@@ -85,6 +87,14 @@ function getSmartDiscountPerItem(unitsQty) {
   if (qty >= 3) return 10;
   if (qty >= 2) return 5;
   return 0;
+}
+
+function getCartridgeSmartUnitPrice(unitsQty) {
+  const qty = Math.max(0, Number(unitsQty || 0));
+  if (qty >= 5) return 20;
+  if (qty >= 3) return 23;
+  if (qty >= 2) return 25;
+  return 30;
 }
 
 function isLiquidSmartPriceProduct(product) {
@@ -100,6 +110,11 @@ function isDisposableSmartPriceProduct(product) {
     DISPOSABLES_CATEGORY_KEYS.has(categoryKey) &&
     !DISPOSABLES_NO_SMART_PRICE_PRODUCT_KEYS.has(productKey)
   );
+}
+
+function isCartridgeSmartPriceProduct(product) {
+  const categoryKey = String(product?.categoryKey || "").trim().toLowerCase();
+  return CARTRIDGES_CATEGORY_KEYS.has(categoryKey);
 }
 
 function repriceCartItemsWithSmartPricing(items, products) {
@@ -119,8 +134,15 @@ function repriceCartItemsWithSmartPricing(items, products) {
     return sum + Math.max(1, Number(it?.qty || 1));
   }, 0);
 
+  const cartridgeUnitsQty = (items || []).reduce((sum, it) => {
+    const product = prodByKey.get(String(it?.productKey || "").trim());
+    if (!isCartridgeSmartPriceProduct(product)) return sum;
+    return sum + Math.max(1, Number(it?.qty || 1));
+  }, 0);
+
   const liquidDiscountPerItem = getSmartDiscountPerItem(liquidUnitsQty);
   const disposableDiscountPerItem = getSmartDiscountPerItem(disposableUnitsQty);
+  const cartridgeUnitPrice = getCartridgeSmartUnitPrice(cartridgeUnitsQty);
 
   const repricedItems = (items || []).map((it) => {
     const product = prodByKey.get(String(it?.productKey || "").trim());
@@ -144,6 +166,13 @@ function repriceCartItemsWithSmartPricing(items, products) {
       };
     }
 
+    if (isCartridgeSmartPriceProduct(product)) {
+      return {
+        ...it,
+        unitPrice: Number(cartridgeUnitPrice.toFixed(2)),
+      };
+    }
+
     return {
       ...it,
       unitPrice: Number(fallbackBasePrice.toFixed(2)),
@@ -157,6 +186,8 @@ function repriceCartItemsWithSmartPricing(items, products) {
       liquidDiscountPerItem,
       disposableUnitsQty,
       disposableDiscountPerItem,
+      cartridgeUnitsQty,
+      cartridgeUnitPrice,
     },
   };
 }
