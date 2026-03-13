@@ -114,6 +114,10 @@ const orderSchema = new mongoose.Schema(
     cashbackPercent: { type: Number, default: 0 },
     cashbackZl: { type: Number, default: 0 },
     cashbackAppliedAt: { type: Date, default: null },
+
+    cashbackAppliedZl: { type: Number, default: 0 },
+    cashbackRemainingToPayZl: { type: Number, default: 0 },
+    cashbackFullyPaid: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
