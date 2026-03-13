@@ -73,44 +73,80 @@ function formatOrderDate(dt) {
 }
 
 const LIQUIDS_CATEGORY_KEYS = new Set(["liquids"]);
+const DISPOSABLES_CATEGORY_KEYS = new Set(["disposables"]);
+const DISPOSABLES_NO_SMART_PRICE_PRODUCT_KEYS = new Set([
+  "elf-duck-1500",
+  "elf-duck-1500-2",
+]);
 
-function getLiquidSmartDiscountPerItem(liquidUnitsQty) {
-  const qty = Math.max(0, Number(liquidUnitsQty || 0));
+function getSmartDiscountPerItem(unitsQty) {
+  const qty = Math.max(0, Number(unitsQty || 0));
   if (qty >= 5) return 15;
   if (qty >= 3) return 10;
   if (qty >= 2) return 5;
   return 0;
 }
 
-function repriceCartItemsWithLiquidDiscount(items, products) {
+function isLiquidSmartPriceProduct(product) {
+  const categoryKey = String(product?.categoryKey || "").trim().toLowerCase();
+  return LIQUIDS_CATEGORY_KEYS.has(categoryKey);
+}
+
+function isDisposableSmartPriceProduct(product) {
+  const categoryKey = String(product?.categoryKey || "").trim().toLowerCase();
+  const productKey = String(product?.productKey || "").trim().toLowerCase();
+
+  return (
+    DISPOSABLES_CATEGORY_KEYS.has(categoryKey) &&
+    !DISPOSABLES_NO_SMART_PRICE_PRODUCT_KEYS.has(productKey)
+  );
+}
+
+function repriceCartItemsWithSmartPricing(items, products) {
   const prodByKey = new Map(
     (products || []).map((p) => [String(p?.productKey || "").trim(), p])
   );
 
   const liquidUnitsQty = (items || []).reduce((sum, it) => {
     const product = prodByKey.get(String(it?.productKey || "").trim());
-    const categoryKey = String(product?.categoryKey || "").trim().toLowerCase();
-    if (!LIQUIDS_CATEGORY_KEYS.has(categoryKey)) return sum;
+    if (!isLiquidSmartPriceProduct(product)) return sum;
     return sum + Math.max(1, Number(it?.qty || 1));
   }, 0);
 
-  const liquidDiscountPerItem = getLiquidSmartDiscountPerItem(liquidUnitsQty);
+  const disposableUnitsQty = (items || []).reduce((sum, it) => {
+    const product = prodByKey.get(String(it?.productKey || "").trim());
+    if (!isDisposableSmartPriceProduct(product)) return sum;
+    return sum + Math.max(1, Number(it?.qty || 1));
+  }, 0);
+
+  const liquidDiscountPerItem = getSmartDiscountPerItem(liquidUnitsQty);
+  const disposableDiscountPerItem = getSmartDiscountPerItem(disposableUnitsQty);
 
   const repricedItems = (items || []).map((it) => {
     const product = prodByKey.get(String(it?.productKey || "").trim());
-    const categoryKey = String(product?.categoryKey || "").trim().toLowerCase();
-    const basePrice = Number(product?.price || it?.unitPrice || 0);
+    const fallbackBasePrice = Number(product?.price || it?.unitPrice || 0);
 
-    if (!LIQUIDS_CATEGORY_KEYS.has(categoryKey)) {
+    if (isLiquidSmartPriceProduct(product)) {
       return {
         ...it,
-        unitPrice: Number(basePrice.toFixed(2)),
+        unitPrice: Number(
+          Math.max(0, fallbackBasePrice - liquidDiscountPerItem).toFixed(2)
+        ),
+      };
+    }
+
+    if (isDisposableSmartPriceProduct(product)) {
+      return {
+        ...it,
+        unitPrice: Number(
+          Math.max(0, fallbackBasePrice - disposableDiscountPerItem).toFixed(2)
+        ),
       };
     }
 
     return {
       ...it,
-      unitPrice: Number(Math.max(0, basePrice - liquidDiscountPerItem).toFixed(2)),
+      unitPrice: Number(fallbackBasePrice.toFixed(2)),
     };
   });
 
@@ -119,6 +155,8 @@ function repriceCartItemsWithLiquidDiscount(items, products) {
     smartPricingMeta: {
       liquidUnitsQty,
       liquidDiscountPerItem,
+      disposableUnitsQty,
+      disposableDiscountPerItem,
     },
   };
 }
@@ -1657,7 +1695,7 @@ app.put("/cart", async (req, res) => {
       : [];
 
     const { repricedItems: cleanItems, smartPricingMeta } =
-      repriceCartItemsWithLiquidDiscount(cleanItemsBase, pricingProducts);
+      repriceCartItemsWithSmartPricing(cleanItemsBase, pricingProducts);
 
     const existing = await Cart.findOne({ telegramId }).lean();
 
