@@ -89,12 +89,12 @@ function getSmartDiscountPerItem(unitsQty) {
   return 0;
 }
 
-function getCartridgeSmartUnitPrice(unitsQty) {
+function getCartridgeSmartDiscountPerItem(unitsQty) {
   const qty = Math.max(0, Number(unitsQty || 0));
-  if (qty >= 5) return 20;
-  if (qty >= 3) return 23;
-  if (qty >= 2) return 25;
-  return 30;
+  if (qty >= 5) return 10;
+  if (qty >= 3) return 7;
+  if (qty >= 2) return 5;
+  return 0;
 }
 
 function isLiquidSmartPriceProduct(product) {
@@ -142,7 +142,7 @@ function repriceCartItemsWithSmartPricing(items, products) {
 
   const liquidDiscountPerItem = getSmartDiscountPerItem(liquidUnitsQty);
   const disposableDiscountPerItem = getSmartDiscountPerItem(disposableUnitsQty);
-  const cartridgeUnitPrice = getCartridgeSmartUnitPrice(cartridgeUnitsQty);
+  const cartridgeDiscountPerItem = getCartridgeSmartDiscountPerItem(cartridgeUnitsQty);
 
   const repricedItems = (items || []).map((it) => {
     const product = prodByKey.get(String(it?.productKey || "").trim());
@@ -169,7 +169,9 @@ function repriceCartItemsWithSmartPricing(items, products) {
     if (isCartridgeSmartPriceProduct(product)) {
       return {
         ...it,
-        unitPrice: Number(cartridgeUnitPrice.toFixed(2)),
+        unitPrice: Number(
+          Math.max(0, fallbackBasePrice - cartridgeDiscountPerItem).toFixed(2)
+        ),
       };
     }
 
@@ -187,7 +189,7 @@ function repriceCartItemsWithSmartPricing(items, products) {
       disposableUnitsQty,
       disposableDiscountPerItem,
       cartridgeUnitsQty,
-      cartridgeUnitPrice,
+      cartridgeDiscountPerItem,
     },
   };
 }
