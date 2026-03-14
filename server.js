@@ -3554,6 +3554,7 @@ if (TG_BOT_TOKEN) {
         checkedByTelegramId: String(ctx.from?.id || ""),
       };
 
+      order.status = "assembled";
       await order.save();
 
       await applyOrderCashback(order);
