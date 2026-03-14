@@ -3515,10 +3515,16 @@ if (TG_BOT_TOKEN) {
 
       // возвращаем кэшбек, если он был применён
       await refundOrderCashback(order);
-      await order.reload();
+
+      const freshOrderAfterRefund = await Order.findById(order._id);
+      if (!freshOrderAfterRefund) {
+        throw new Error("ORDER_NOT_FOUND_AFTER_REFUND");
+      }
 
       order.payment = {
-        ...(order.payment?.toObject ? order.payment.toObject() : order.payment || {}),
+        ...(freshOrderAfterRefund.payment?.toObject
+          ? freshOrderAfterRefund.payment.toObject()
+          : freshOrderAfterRefund.payment || {}),
         status: "unpaid",
         paidAt: null,
         checkedAt: new Date(),
