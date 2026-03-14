@@ -3053,13 +3053,28 @@ app.post("/orders/:id/payment-check", async (req, res) => {
       status: "checking",
       method: cashbackFullyPaid
         ? "cashback"
-        : (req.body?.paymentMethod ? String(req.body.paymentMethod) : (order.payment?.method || null)),
+        : (req.body?.paymentMethod
+            ? String(req.body.paymentMethod)
+            : (order.payment?.method || null)),
       cashChangeType: cashbackFullyPaid
         ? null
-        : (req.body?.cashChangeType ? String(req.body.cashChangeType) : null),
+        : (req.body?.cashChangeType
+            ? String(req.body.cashChangeType)
+            : null),
       cashAmount: cashbackFullyPaid
         ? null
-        : (req.body?.cashAmount ? String(req.body.cashAmount) : null),
+        : (req.body?.cashAmount
+            ? String(req.body.cashAmount)
+            : null),
+      cashbackAppliedZl:
+        cashbackAppliedZl !== undefined
+          ? Number(Number(cashbackAppliedZl || 0).toFixed(2))
+          : Number(Number(order.payment?.cashbackAppliedZl || 0).toFixed(2)),
+      cashbackRemainingToPayZl:
+        cashbackRemainingToPayZl !== undefined
+          ? Number(Number(cashbackRemainingToPayZl || 0).toFixed(2))
+          : Number(Number(order.payment?.cashbackRemainingToPayZl || 0).toFixed(2)),
+      cashbackFullyPaid,
       checkedAt: new Date(),
       checkedByTelegramId: "",
     };
