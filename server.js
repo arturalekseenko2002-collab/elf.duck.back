@@ -344,9 +344,21 @@ async function sendOrderCreatedNotification(order) {
       ``,
       itemsText || "—",
       ``,
-      `💰 <b>Сумма:</b> ${Number(order.totalZl || 0)} ${escapeHtml(order.currency || "PLN")}`,
-      `💳 <b>Способ оплаты:</b> ${escapeHtml(paymentMethodLabel)}`,
-      `💳 <b>Статус оплаты:</b> 🟠 Оплата на проверке`,
+      `💰 <b>Сумма заказа:</b> ${Number(order.totalZl || 0)} ${escapeHtml(order.currency || "PLN")}`,
+      `💳 <b>Способ оплаты:</b> ${
+        order?.payment?.cashbackFullyPaid
+          ? "Кэшбек"
+          : escapeHtml(paymentMethodLabel)
+      }`,
+      order?.payment?.cashbackAppliedZl > 0
+        ? `🪙 <b>Оплачено кэшбеком:</b> ${Number(order.payment.cashbackAppliedZl || 0)} ${escapeHtml(order.currency || "PLN")}`
+        : null,
+      order?.payment?.cashbackAppliedZl > 0 && Number(order?.payment?.cashbackRemainingToPayZl || 0) > 0
+        ? `💸 <b>Остаток к оплате:</b> ${Number(order.payment.cashbackRemainingToPayZl || 0)} ${escapeHtml(order.currency || "PLN")}`
+        : null,
+      order?.payment?.cashbackFullyPaid
+        ? `💳 <b>Статус оплаты:</b> ✅ Полностью оплачено`
+        : `💳 <b>Статус оплаты:</b> 🟠 Оплата на проверке`,
       ``,
     ];
 
@@ -389,7 +401,7 @@ async function sendOrderCreatedNotification(order) {
       }
     }
 
-    const text = lines.join("\n");
+    const text = lines.filter(Boolean).join("\n");
 
     const sent = await bot.telegram.sendMessage(point.notificationChatId, text, {
       parse_mode: "HTML",
@@ -2832,6 +2844,102 @@ app.get("/orders", async (req, res) => {
   }
 });
 
+app.post("/orders/:id/apply-cashback", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { telegramId, mode } = req.body || {};
+
+    const safeMode = String(mode || "partial").trim().toLowerCase();
+    if (!["partial", "full"].includes(safeMode)) {
+      return res.status(400).json({ ok: false, error: "INVALID_CASHBACK_MODE" });
+    }
+
+    const order = await Order.findById(id);
+    if (!order) {
+      return res.status(404).json({ ok: false, error: "ORDER_NOT_FOUND" });
+    }
+
+    if (String(order.userTelegramId || "") !== String(telegramId || "")) {
+      return res.status(403).json({ ok: false, error: "FORBIDDEN" });
+    }
+
+    if (String(order.status || "") === "canceled") {
+      return res.status(400).json({ ok: false, error: "ORDER_CANCELED" });
+    }
+
+    if (
+      String(order.payment?.status || "") === "checking" ||
+      String(order.payment?.status || "") === "paid"
+    ) {
+      return res.status(400).json({ ok: false, error: "PAYMENT_ALREADY_SUBMITTED" });
+    }
+
+    const user = await User.findOne({ telegramId: String(telegramId || "") });
+    if (!user) {
+      return res.status(404).json({ ok: false, error: "USER_NOT_FOUND" });
+    }
+
+    const orderTotal = Number(order.totalZl || 0);
+    const cashbackBalance = Number(user.cashbackBalance || 0);
+
+    if (cashbackBalance <= 0) {
+      return res.status(400).json({ ok: false, error: "NO_CASHBACK_BALANCE" });
+    }
+
+    let cashbackAppliedZl = 0;
+    let remainingToPayZl = orderTotal;
+    let cashbackFullyPaid = false;
+
+    if (safeMode === "full") {
+      if (cashbackBalance < orderTotal) {
+        return res.status(400).json({ ok: false, error: "INSUFFICIENT_CASHBACK_FOR_FULL_PAYMENT" });
+      }
+
+      cashbackAppliedZl = orderTotal;
+      remainingToPayZl = 0;
+      cashbackFullyPaid = true;
+    } else {
+      cashbackAppliedZl = Math.min(cashbackBalance, orderTotal);
+      remainingToPayZl = Number((orderTotal - cashbackAppliedZl).toFixed(2));
+      cashbackFullyPaid = remainingToPayZl <= 0;
+    }
+
+    user.cashbackBalance = Number((cashbackBalance - cashbackAppliedZl).toFixed(2));
+    await user.save();
+
+    const prevPayment = order.payment?.toObject ? order.payment.toObject() : (order.payment || {});
+    order.payment = {
+      ...prevPayment,
+      method: cashbackFullyPaid ? "cashback" : String(prevPayment?.method || ""),
+      cashbackAppliedZl,
+      cashbackRemainingToPayZl: remainingToPayZl,
+      cashbackFullyPaid,
+      cashbackAppliedAt: new Date(),
+      status: cashbackFullyPaid ? "checking" : "unpaid",
+    };
+
+    await order.save();
+
+    const freshOrder = await Order.findById(order._id).lean();
+
+    if (cashbackFullyPaid) {
+      await sendOrderCreatedNotification(freshOrder);
+    }
+
+    return res.json({
+      ok: true,
+      order: freshOrder,
+      cashbackBalance: Number(user.cashbackBalance || 0),
+      cashbackAppliedZl,
+      cashbackRemainingToPayZl: remainingToPayZl,
+      cashbackFullyPaid,
+    });
+  } catch (e) {
+    console.error("apply cashback error:", e);
+    return res.status(500).json({ ok: false, error: "SERVER_ERROR" });
+  }
+});
+
 app.post("/orders/:id/payment-check", async (req, res) => {
   try {
     const telegramId = String(req.body?.telegramId || "").trim();
@@ -2874,12 +2982,38 @@ app.post("/orders/:id/payment-check", async (req, res) => {
       return res.json({ ok: true, order });
     }
 
+    const prevPayment = order.payment?.toObject
+      ? order.payment.toObject()
+      : (order.payment || {});
+
+    const cashbackAppliedZl = Number(prevPayment.cashbackAppliedZl || 0);
+    const cashbackRemainingToPayZl = Number(prevPayment.cashbackRemainingToPayZl || 0);
+    const cashbackFullyPaid = Boolean(prevPayment.cashbackFullyPaid);
+
     order.payment = {
-      ...(order.payment?.toObject ? order.payment.toObject() : order.payment || {}),
+      ...prevPayment,
+
       status: "checking",
-      method: req.body?.paymentMethod ? String(req.body.paymentMethod) : (order.payment?.method || null),
-      cashChangeType: req.body?.cashChangeType ? String(req.body.cashChangeType) : null,
-      cashAmount: req.body?.cashAmount ? String(req.body.cashAmount) : null,
+
+      // если заказ полностью оплачен кэшбеком — метод cashback
+      method: cashbackFullyPaid
+        ? "cashback"
+        : (req.body?.paymentMethod
+            ? String(req.body.paymentMethod)
+            : (prevPayment?.method || null)),
+
+      cashChangeType: req.body?.cashChangeType
+        ? String(req.body.cashChangeType)
+        : null,
+
+      cashAmount: req.body?.cashAmount
+        ? String(req.body.cashAmount)
+        : null,
+
+      cashbackAppliedZl,
+      cashbackRemainingToPayZl,
+      cashbackFullyPaid,
+
       checkedAt: new Date(),
       checkedByTelegramId: "",
     };

@@ -105,19 +105,22 @@ const orderSchema = new mongoose.Schema(
       checkedAt: { type: Date, default: null },
       checkedByTelegramId: { type: String, default: "" },
 
+      cashbackAppliedZl: { type: Number, default: 0 },
+      cashbackRemainingToPayZl: { type: Number, default: 0 },
+      cashbackFullyPaid: { type: Boolean, default: false },
+      cashbackAppliedAt: { type: Date, default: null },
+
       managerMessageChatId: { type: String, default: "" },
       managerMessageId: { type: String, default: "" },
     },
 
     arrivedNotifiedAt: { type: Date, default: null }, // клиент нажал "Я на месте"
     completedAt: { type: Date, default: null },       // менеджер отметил выполненным (опционально)
+
     cashbackPercent: { type: Number, default: 0 },
     cashbackZl: { type: Number, default: 0 },
-    cashbackAppliedAt: { type: Date, default: null },
 
-    cashbackAppliedZl: { type: Number, default: 0 },
-    cashbackRemainingToPayZl: { type: Number, default: 0 },
-    cashbackFullyPaid: { type: Boolean, default: false },
+
   },
   { timestamps: true }
 );
