@@ -109,6 +109,7 @@ const orderSchema = new mongoose.Schema(
       cashbackRemainingToPayZl: { type: Number, default: 0 },
       cashbackFullyPaid: { type: Boolean, default: false },
       cashbackAppliedAt: { type: Date, default: null },
+      cashbackRefundedAt: { type: Date, default: null },
 
       managerMessageChatId: { type: String, default: "" },
       managerMessageId: { type: String, default: "" },

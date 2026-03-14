@@ -249,6 +249,62 @@ async function applyOrderCashback(order) {
   return { applied: true, cashbackZl, percent };
 }
 
+async function refundOrderCashback(order) {
+  if (!order) return { refunded: false, amount: 0 };
+
+  const orderId = String(order._id || "").trim();
+  if (!orderId) return { refunded: false, amount: 0 };
+
+  const freshOrder = await Order.findById(orderId, {
+    _id: 1,
+    totalZl: 1,
+    userTelegramId: 1,
+    payment: 1,
+  });
+
+  if (!freshOrder) return { refunded: false, amount: 0 };
+
+  const payment = freshOrder.payment?.toObject
+    ? freshOrder.payment.toObject()
+    : (freshOrder.payment || {});
+
+  const cashbackAppliedZl = Number(payment?.cashbackAppliedZl || 0);
+
+  if (cashbackAppliedZl <= 0) {
+    return { refunded: false, amount: 0 };
+  }
+
+  // защита от двойного возврата
+  if (payment?.cashbackRefundedAt) {
+    return { refunded: false, amount: cashbackAppliedZl };
+  }
+
+  const user = await User.findOne({
+    telegramId: String(freshOrder.userTelegramId || ""),
+  });
+
+  if (!user) return { refunded: false, amount: 0 };
+
+  user.cashbackBalance = Number(
+    (Number(user.cashbackBalance || 0) + cashbackAppliedZl).toFixed(2)
+  );
+  await user.save();
+
+  freshOrder.payment = {
+    ...payment,
+    cashbackRefundedAt: new Date(),
+    cashbackAppliedZl: 0,
+    cashbackRemainingToPayZl: Number(freshOrder.totalZl || 0),
+    cashbackFullyPaid: false,
+    cashbackAppliedAt: null,
+    method: payment?.method === "cashback" ? null : payment?.method || null,
+  };
+
+  await freshOrder.save();
+
+  return { refunded: true, amount: cashbackAppliedZl };
+}
+
 async function resolveOrderNotificationPoint(order) {
   if (!order) return null;
 
@@ -3457,6 +3513,10 @@ if (TG_BOT_TOKEN) {
         order.stockReleasedAt = new Date();
       }
 
+      // возвращаем кэшбек, если он был применён
+      await refundOrderCashback(order);
+      await order.reload();
+
       order.payment = {
         ...(order.payment?.toObject ? order.payment.toObject() : order.payment || {}),
         status: "unpaid",
@@ -3471,7 +3531,7 @@ if (TG_BOT_TOKEN) {
 
       stopPaymentReminder(order._id);
 
-      await ctx.answerCbQuery("Оплата отклонена");
+      await ctx.answerCbQuery("Оплата отклонена, кэшбек возвращён");
 
       try {
         const currentText = ctx.callbackQuery?.message?.text || "";
