@@ -322,6 +322,56 @@ async function resolveOrderNotificationPoint(order) {
   return null;
 }
 
+async function notifyManagerClientArrived(order) {
+  try {
+    if (!bot || !order) return { ok: false, reason: "NO_BOT_OR_ORDER" };
+
+    const point = await resolveOrderNotificationPoint(order);
+    const chatId = String(
+      order?.payment?.managerMessageChatId || point?.notificationChatId || ""
+    ).trim();
+
+    const replyToMessageId = Number(order?.payment?.managerMessageId || 0);
+
+    if (!chatId || !replyToMessageId) {
+      return { ok: false, reason: "NO_MANAGER_MESSAGE" };
+    }
+
+    const user = await User.findOne(
+      { telegramId: String(order.userTelegramId || "") },
+      { telegramId: 1, username: 1, firstName: 1 }
+    ).lean();
+
+    const customerName =
+      (user?.username ? `@${user.username}` : "") ||
+      String(user?.firstName || "").trim() ||
+      "—";
+
+    const text = [
+      `📍 <b>КЛИЕНТ ПРИБЫЛ НА ТОЧКУ САМОВЫВОЗА</b>`,
+      ``,
+      `🔢 <b>Номер заказа:</b> #${escapeHtml(order.orderNo)}`,
+      `👤 <b>Клиент:</b> ${escapeHtml(customerName)}`,
+    ].join("\n");
+
+    await bot.telegram.sendMessage(chatId, text, {
+      parse_mode: "HTML",
+      reply_to_message_id: replyToMessageId,
+      allow_sending_without_reply: true,
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "✅ Заказ выполнен", callback_data: `mgr_order_completed:${order._id}` }],
+        ],
+      },
+    });
+
+    return { ok: true };
+  } catch (e) {
+    console.error("notifyManagerClientArrived error:", e);
+    return { ok: false, reason: "SEND_ERROR" };
+  }
+}
+
 async function resolveOrderPaymentPoint(order) {
   if (!order) return null;
 
@@ -2997,6 +3047,44 @@ app.post("/orders/:id/apply-cashback", async (req, res) => {
   }
 });
 
+app.post("/orders/:id/arrived-at-pickup", async (req, res) => {
+  try {
+    const telegramId = String(req.body?.telegramId || "").trim();
+    const { id } = req.params;
+
+    if (!telegramId) {
+      return res.status(400).json({ ok: false, error: "telegramId is required" });
+    }
+
+    const order = await Order.findOne({ _id: id, userTelegramId: telegramId });
+    if (!order) {
+      return res.status(404).json({ ok: false, error: "Order not found" });
+    }
+
+    if (String(order.deliveryType || "") !== "pickup") {
+      return res.status(400).json({ ok: false, error: "Only pickup orders are supported" });
+    }
+
+    if (String(order.status || "") === "completed") {
+      return res.json({ ok: true, order, alreadyCompleted: true });
+    }
+
+    if (order.arrivedNotifiedAt) {
+      return res.json({ ok: true, order, alreadyNotified: true });
+    }
+
+    order.arrivedNotifiedAt = new Date();
+    await order.save();
+
+    await notifyManagerClientArrived(order);
+
+    return res.json({ ok: true, order });
+  } catch (e) {
+    console.error("POST /orders/:id/arrived-at-pickup error:", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
 app.post("/orders/:id/payment-check", async (req, res) => {
   try {
     const telegramId = String(req.body?.telegramId || "").trim();
@@ -3563,6 +3651,44 @@ if (TG_BOT_TOKEN) {
       try {
         await ctx.answerCbQuery("Ошибка");
       } catch {}
+    }
+  });
+
+  bot.action(/mgr_order_completed:(.+)/, async (ctx) => {
+    try {
+      const orderId = String(ctx.match?.[1] || "").trim();
+      if (!orderId) {
+        await ctx.answerCbQuery("Заказ не найден");
+        return;
+      }
+
+      const order = await Order.findById(orderId);
+      if (!order) {
+        await ctx.answerCbQuery("Заказ не найден");
+        return;
+      }
+
+      if (String(order.status || "") === "completed") {
+        await ctx.answerCbQuery("Заказ уже выполнен");
+        return;
+      }
+
+      order.status = "completed";
+      order.completedAt = new Date();
+      await order.save();
+
+      await ctx.answerCbQuery("Заказ отмечен как выполненный");
+
+      try {
+        await ctx.editMessageReplyMarkup({
+          inline_keyboard: [
+            [{ text: "✅ Заказ выполнен", callback_data: `mgr_order_completed_done:${order._id}` }],
+          ],
+        });
+      } catch (_) {}
+    } catch (e) {
+      console.error("mgr_order_completed error:", e);
+      await ctx.answerCbQuery("Не удалось завершить заказ");
     }
   });
 
