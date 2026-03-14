@@ -2953,11 +2953,11 @@ app.post("/orders/:id/apply-cashback", async (req, res) => {
         return res.status(400).json({ ok: false, error: "INSUFFICIENT_CASHBACK_FOR_FULL_PAYMENT" });
       }
 
-      cashbackAppliedZl = orderTotal;
+      cashbackAppliedZl = Number(orderTotal.toFixed(2));
       remainingToPayZl = 0;
       cashbackFullyPaid = true;
     } else {
-      cashbackAppliedZl = Math.min(cashbackBalance, orderTotal);
+      cashbackAppliedZl = Number(Math.min(cashbackBalance, orderTotal).toFixed(2));
       remainingToPayZl = Number((orderTotal - cashbackAppliedZl).toFixed(2));
       cashbackFullyPaid = remainingToPayZl <= 0;
     }
@@ -2973,6 +2973,9 @@ app.post("/orders/:id/apply-cashback", async (req, res) => {
       cashbackRemainingToPayZl: remainingToPayZl,
       cashbackFullyPaid,
       cashbackAppliedAt: new Date(),
+      cashbackRefundedAt: null,
+      checkedAt: null,
+      checkedByTelegramId: "",
       status: "unpaid",
     };
 
