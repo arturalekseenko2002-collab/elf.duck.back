@@ -89,12 +89,12 @@ function getSmartDiscountPerItem(unitsQty) {
   return 0;
 }
 
-function getCartridgeSmartDiscountPerItem(unitsQty) {
+function getCartridgeSmartUnitPrice(unitsQty) {
   const qty = Math.max(0, Number(unitsQty || 0));
-  if (qty >= 5) return 10;
-  if (qty >= 3) return 7;
-  if (qty >= 2) return 5;
-  return 0;
+  if (qty >= 5) return 20;
+  if (qty >= 3) return 23;
+  if (qty >= 2) return 25;
+  return 30;
 }
 
 function isLiquidSmartPriceProduct(product) {
@@ -142,7 +142,7 @@ function repriceCartItemsWithSmartPricing(items, products) {
 
   const liquidDiscountPerItem = getSmartDiscountPerItem(liquidUnitsQty);
   const disposableDiscountPerItem = getSmartDiscountPerItem(disposableUnitsQty);
-  const cartridgeDiscountPerItem = getCartridgeSmartDiscountPerItem(cartridgeUnitsQty);
+  const cartridgeUnitPrice = getCartridgeSmartUnitPrice(cartridgeUnitsQty);
 
   const repricedItems = (items || []).map((it) => {
     const product = prodByKey.get(String(it?.productKey || "").trim());
@@ -169,9 +169,7 @@ function repriceCartItemsWithSmartPricing(items, products) {
     if (isCartridgeSmartPriceProduct(product)) {
       return {
         ...it,
-        unitPrice: Number(
-          Math.max(0, fallbackBasePrice - cartridgeDiscountPerItem).toFixed(2)
-        ),
+        unitPrice: Number(cartridgeUnitPrice.toFixed(2)),
       };
     }
 
@@ -189,7 +187,7 @@ function repriceCartItemsWithSmartPricing(items, products) {
       disposableUnitsQty,
       disposableDiscountPerItem,
       cartridgeUnitsQty,
-      cartridgeDiscountPerItem,
+      cartridgeUnitPrice,
     },
   };
 }
@@ -332,8 +330,6 @@ async function sendOrderCreatedNotification(order) {
         ? "Украинская карта"
         : order?.payment?.method === "cash"
         ? "Наличные"
-        : order?.payment?.method === "cashback"
-        ? "Кэшбек"
         : "—";
 
     const lines = [
@@ -350,16 +346,7 @@ async function sendOrderCreatedNotification(order) {
       ``,
       `💰 <b>Сумма:</b> ${Number(order.totalZl || 0)} ${escapeHtml(order.currency || "PLN")}`,
       `💳 <b>Способ оплаты:</b> ${escapeHtml(paymentMethodLabel)}`,
-      `💳 <b>Способ оплаты:</b> ${escapeHtml(paymentMethodLabel)}`,
-      order?.payment?.cashbackAppliedZl > 0
-        ? `🪙 <b>Оплачено кэшбеком:</b> ${Number(order.payment.cashbackAppliedZl || 0)} ${escapeHtml(order.currency || "PLN")}`
-        : null,
-      order?.payment?.cashbackAppliedZl > 0 && Number(order?.payment?.cashbackRemainingToPayZl || 0) > 0
-        ? `💸 <b>Остаток к оплате:</b> ${Number(order.payment.cashbackRemainingToPayZl || 0)} ${escapeHtml(order.currency || "PLN")}`
-        : null,
-      order?.payment?.cashbackFullyPaid
-        ? `💳 <b>Статус оплаты:</b> ✅ Оплачено кэшбеком`
-        : `💳 <b>Статус оплаты:</b> 🟠 Оплата на проверке`,
+      `💳 <b>Статус оплаты:</b> 🟠 Оплата на проверке`,
       ``,
     ];
 
@@ -402,7 +389,7 @@ async function sendOrderCreatedNotification(order) {
       }
     }
 
-    const text = lines.filter(Boolean).join("\n");
+    const text = lines.join("\n");
 
     const sent = await bot.telegram.sendMessage(point.notificationChatId, text, {
       parse_mode: "HTML",
@@ -2845,119 +2832,9 @@ app.get("/orders", async (req, res) => {
   }
 });
 
-app.post("/orders/:id/apply-cashback", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { telegramId, mode } = req.body || {};
-
-    const safeMode = String(mode || "partial").trim().toLowerCase();
-    if (!["partial", "full"].includes(safeMode)) {
-      return res.status(400).json({ ok: false, error: "INVALID_CASHBACK_MODE" });
-    }
-
-    const order = await Order.findById(id);
-    if (!order) {
-      return res.status(404).json({ ok: false, error: "ORDER_NOT_FOUND" });
-    }
-
-    if (String(order.userTelegramId || "") !== String(telegramId || "")) {
-      return res.status(403).json({ ok: false, error: "FORBIDDEN" });
-    }
-
-    if (String(order.status || "") === "canceled") {
-      return res.status(400).json({ ok: false, error: "ORDER_CANCELED" });
-    }
-
-    if (
-      String(order.payment?.status || "") === "checking" ||
-      String(order.payment?.status || "") === "paid"
-    ) {
-      return res.status(400).json({ ok: false, error: "PAYMENT_ALREADY_SUBMITTED" });
-    }
-
-    const user = await User.findOne({ telegramId: String(telegramId || "") });
-    if (!user) {
-      return res.status(404).json({ ok: false, error: "USER_NOT_FOUND" });
-    }
-
-    const orderTotal = Number(order.totalZl || 0);
-    const cashbackBalance = Number(user.cashbackBalance || 0);
-
-    if (cashbackBalance <= 0) {
-      return res.status(400).json({ ok: false, error: "NO_CASHBACK_BALANCE" });
-    }
-
-    let cashbackAppliedZl = 0;
-    let remainingToPayZl = orderTotal;
-    let cashbackFullyPaid = false;
-
-    if (safeMode === "full") {
-      if (cashbackBalance < orderTotal) {
-        return res.status(400).json({
-          ok: false,
-          error: "INSUFFICIENT_CASHBACK_FOR_FULL_PAYMENT",
-        });
-      }
-
-      cashbackAppliedZl = orderTotal;
-      remainingToPayZl = 0;
-      cashbackFullyPaid = true;
-    } else {
-      cashbackAppliedZl = Math.min(cashbackBalance, orderTotal);
-      remainingToPayZl = Number((orderTotal - cashbackAppliedZl).toFixed(2));
-      cashbackFullyPaid = remainingToPayZl <= 0;
-    }
-
-    user.cashbackBalance = Number((cashbackBalance - cashbackAppliedZl).toFixed(2));
-    await user.save();
-
-    order.payment = order.payment || {};
-    order.payment.method = cashbackFullyPaid ? "cashback" : String(order.payment.method || "");
-    order.payment.cashbackAppliedZl = cashbackAppliedZl;
-    order.payment.cashbackRemainingToPayZl = remainingToPayZl;
-    order.payment.cashbackFullyPaid = cashbackFullyPaid;
-    order.payment.cashbackAppliedAt = new Date();
-
-    // если заказ полностью покрыт кэшбеком — сразу отправляем менеджеру как "оплата на проверке"
-    if (cashbackFullyPaid) {
-      order.payment.status = "checking";
-    } else {
-      order.payment.status = "unpaid";
-    }
-
-    await order.save();
-
-    const freshOrder = await Order.findById(order._id).lean();
-
-    if (cashbackFullyPaid) {
-      await sendOrderCreatedNotification(freshOrder);
-    }
-
-    return res.json({
-      ok: true,
-      order: freshOrder,
-      cashbackBalance: Number(user.cashbackBalance || 0),
-      cashbackAppliedZl,
-      cashbackRemainingToPayZl: remainingToPayZl,
-      cashbackFullyPaid,
-    });
-  } catch (e) {
-    console.error("apply cashback error:", e);
-    return res.status(500).json({ ok: false, error: "SERVER_ERROR" });
-  }
-});
-
 app.post("/orders/:id/payment-check", async (req, res) => {
   try {
-    const {
-      telegramId,
-      paymentMethod,
-      cashChangeType,
-      cashAmount,
-      cashbackAppliedZl,
-      cashbackRemainingToPayZl,
-    } = req.body || {};
-    
+    const telegramId = String(req.body?.telegramId || "").trim();
     const { id } = req.params;
 
     if (!telegramId) {
@@ -2999,20 +2876,10 @@ app.post("/orders/:id/payment-check", async (req, res) => {
 
     order.payment = {
       ...(order.payment?.toObject ? order.payment.toObject() : order.payment || {}),
-
       status: "checking",
       method: req.body?.paymentMethod ? String(req.body.paymentMethod) : (order.payment?.method || null),
       cashChangeType: req.body?.cashChangeType ? String(req.body.cashChangeType) : null,
       cashAmount: req.body?.cashAmount ? String(req.body.cashAmount) : null,
-      cashbackAppliedZl:
-        cashbackAppliedZl !== undefined
-          ? Number(cashbackAppliedZl || 0)
-          : Number(order.payment?.cashbackAppliedZl || 0),
-      cashbackRemainingToPayZl:
-        cashbackRemainingToPayZl !== undefined
-          ? Number(cashbackRemainingToPayZl || 0)
-          : Number(order.payment?.cashbackRemainingToPayZl || 0),
-      cashbackFullyPaid: false,
       checkedAt: new Date(),
       checkedByTelegramId: "",
     };
