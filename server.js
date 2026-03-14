@@ -408,10 +408,10 @@ async function sendOrderCreatedNotification(order) {
       }`,
       ``,
       order?.payment?.cashbackAppliedZl > 0
-        ? `🪙 <b>Оплачено кэшбеком:</b> ${Number(order.payment.cashbackAppliedZl || 0)} ${escapeHtml(order.currency || "PLN")}`
+        ? `🪙 <b>Оплачено кэшбеком:</b> ${Number(order.payment.cashbackAppliedZl || 0).toFixed(2)} ${escapeHtml(order.currency || "PLN")}`
         : null,
       order?.payment?.cashbackAppliedZl > 0 && Number(order?.payment?.cashbackRemainingToPayZl || 0) > 0
-        ? `💸 <b>Остаток к оплате:</b> ${Number(order.payment.cashbackRemainingToPayZl || 0)} ${escapeHtml(order.currency || "PLN")}`
+        ? `💸 <b>Остаток к оплате:</b> ${Number(order.payment.cashbackRemainingToPayZl || 0).toFixed(2)} ${escapeHtml(order.currency || "PLN")}`
         : null,
       ``,
       order?.payment?.cashbackFullyPaid
