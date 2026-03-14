@@ -354,7 +354,7 @@ async function notifyManagerClientArrived(order) {
       `👤 <b>Клиент:</b> ${escapeHtml(customerName)}`,
     ].join("\n");
 
-    await bot.telegram.sendMessage(chatId, text, {
+    const sent = await bot.telegram.sendMessage(chatId, text, {
       parse_mode: "HTML",
       reply_to_message_id: replyToMessageId,
       allow_sending_without_reply: true,
@@ -365,7 +365,17 @@ async function notifyManagerClientArrived(order) {
       },
     });
 
+    await Order.updateOne(
+      { _id: order._id },
+      {
+        $push: {
+          managerArrivalMessageIds: String(sent?.message_id || ""),
+        },
+      }
+    );
+
     return { ok: true };
+
   } catch (e) {
     console.error("notifyManagerClientArrived error:", e);
     return { ok: false, reason: "SEND_ERROR" };
@@ -535,6 +545,172 @@ async function sendOrderCreatedNotification(order) {
     );
   } catch (e) {
     console.error("sendOrderCreatedNotification error:", e);
+  }
+}
+
+async function refreshManagerOrderMessage(order) {
+  try {
+    if (!bot || !order) return { ok: false, reason: "NO_BOT_OR_ORDER" };
+
+    const point = await resolveOrderNotificationPoint(order);
+    const chatId = String(order?.payment?.managerMessageChatId || point?.notificationChatId || "").trim();
+    const messageId = Number(order?.payment?.managerMessageId || 0);
+
+    if (!chatId || !messageId) {
+      return { ok: false, reason: "NO_MANAGER_MESSAGE" };
+    }
+
+    const user = await User.findOne(
+      { telegramId: String(order.userTelegramId || "") },
+      { telegramId: 1, username: 1, firstName: 1 }
+    ).lean();
+
+    const customerName =
+      (user?.username ? `@${user.username}` : "") ||
+      String(user?.firstName || "").trim() ||
+      "—";
+
+    const itemsText = (order.items || [])
+      .map((it) => {
+        const productTitle =
+          [it.productTitle1, it.productTitle2].filter(Boolean).join(" ").trim() ||
+          it.productKey ||
+          "Товар";
+
+        const flavorsText = (it.flavors || [])
+          .map((f) => {
+            const flavor = f.flavorLabel || f.flavorKey || "Вкус";
+            const priceText = Number(f.unitPrice || 0) > 0
+              ? ` • ${Number(f.unitPrice || 0)} zł/шт.`
+              : "";
+            return `• ${escapeHtml(flavor)} — ${Number(f.qty || 0)} шт.${priceText}`;
+          })
+          .join("\n");
+
+        return `📦 <b>${escapeHtml(productTitle)}</b>\n${flavorsText}`;
+      })
+      .join("\n\n");
+
+    const paymentMethodLabel =
+      order?.payment?.method === "blik"
+        ? "BLIK"
+        : order?.payment?.method === "crypto"
+        ? "Криптовалюта"
+        : order?.payment?.method === "ua_card"
+        ? "Украинская карта"
+        : order?.payment?.method === "cash"
+        ? "Наличные"
+        : "—";
+
+    const orderStatusLabel =
+      String(order?.status || "") === "completed"
+        ? "✅ Выполнен"
+        : String(order?.status || "") === "assembled"
+        ? "🟠 Заказ собран"
+        : "⚪️ Создан";
+
+    const lines = [
+      `🛒 <b>ОПЛАТА ОТПРАВЛЕНА НА ПРОВЕРКУ</b>`,
+      ``,
+      `🔢 <b>Номер:</b> #${escapeHtml(order.orderNo)}`,
+      ``,
+      `👤 <b>Клиент:</b> ${escapeHtml(customerName)}`,
+      `🕒 <b>Создан:</b> ${escapeHtml(formatOrderDate(order.createdAt))}`,
+      ``,
+      `📋 <b>Состав заказа:</b>`,
+      ``,
+      itemsText || "—",
+      ``,
+      `💰 <b>Сумма заказа:</b> ${Number(order.totalZl || 0)} ${escapeHtml(order.currency || "PLN")}`,
+      `💳 <b>Способ оплаты:</b> ${
+        order?.payment?.cashbackFullyPaid
+          ? "Кэшбек"
+          : escapeHtml(paymentMethodLabel)
+      }`,
+      ``,
+      order?.payment?.cashbackAppliedZl > 0
+        ? `🪙 <b>Оплачено кэшбеком:</b> ${Number(order.payment.cashbackAppliedZl || 0).toFixed(2)} ${escapeHtml(order.currency || "PLN")}`
+        : null,
+      order?.payment?.cashbackAppliedZl > 0 && Number(order?.payment?.cashbackRemainingToPayZl || 0) > 0
+        ? `💸 <b>Остаток к оплате:</b> ${Number(order.payment.cashbackRemainingToPayZl || 0).toFixed(2)} ${escapeHtml(order.currency || "PLN")}`
+        : null,
+      ``,
+      order?.payment?.cashbackFullyPaid
+        ? `💳 <b>Статус оплаты:</b> ✅ Полностью оплачено`
+        : String(order?.payment?.status || "") === "paid"
+        ? `💳 <b>Статус оплаты:</b> ✅ Оплачено`
+        : `💳 <b>Статус оплаты:</b> 🟠 Оплата на проверке`,
+      `📦 <b>Статус заказа:</b> ${orderStatusLabel}`,
+      ``,
+    ];
+
+    if (order.deliveryType === "pickup" && order.arrivalTime) {
+      lines.push(`🚚 <b>Клиент будет в ${escapeHtml(order.arrivalTime)}</b>`);
+      lines.push("");
+    }
+
+    if (order.deliveryType === "delivery" && order.deliveryMethod === "courier") {
+      if (order.courierAddress) {
+        lines.push(`📍 <b>Адрес доставки:</b> ${escapeHtml(order.courierAddress)}`);
+        lines.push("");
+      }
+    }
+
+    if (order.deliveryType === "delivery" && order.deliveryMethod === "inpost") {
+      if (order.inpostData?.fullName) lines.push(`👤 <b>Получатель:</b> ${escapeHtml(order.inpostData.fullName)}`);
+      if (order.inpostData?.phone) lines.push(`📞 <b>Телефон:</b> ${escapeHtml(order.inpostData.phone)}`);
+      if (order.inpostData?.email) lines.push(`✉️ <b>Email:</b> ${escapeHtml(order.inpostData.email)}`);
+      if (order.inpostData?.city) lines.push(`🏙 <b>Город:</b> ${escapeHtml(order.inpostData.city)}`);
+      if (order.inpostData?.lockerAddress) lines.push(`📦 <b>Пачкомат:</b> ${escapeHtml(order.inpostData.lockerAddress)}`);
+      if (
+        order.inpostData?.fullName ||
+        order.inpostData?.phone ||
+        order.inpostData?.email ||
+        order.inpostData?.city ||
+        order.inpostData?.lockerAddress
+      ) {
+        lines.push("");
+      }
+    }
+
+    if (order.payment?.method === "cash") {
+      if (order.payment?.cashChangeType === "need_change" && order.payment?.cashAmount) {
+        lines.push(`💵 <b>Сдача:</b> ${escapeHtml(order.payment.cashAmount)} zł`);
+        lines.push("");
+      } else if (order.payment?.cashChangeType === "no_change") {
+        lines.push(`💵 <b>Сдача:</b> без сдачи`);
+        lines.push("");
+      }
+    }
+
+    const text = lines.filter((line) => line !== null && line !== undefined).join("\n");
+
+    const replyMarkup =
+      String(order?.status || "") === "completed"
+        ? {
+            inline_keyboard: [
+              [{ text: "✅ Заказ выполнен", callback_data: `mgr_order_completed_done:${order._id}` }],
+            ],
+          }
+        : {
+            inline_keyboard: [
+              [
+                { text: "✅ Оплачено", callback_data: `mgr_pay_paid:${order._id}` },
+                { text: "❌ Отклонить", callback_data: `mgr_pay_unpaid:${order._id}` },
+              ],
+            ],
+          };
+
+    await bot.telegram.editMessageText(chatId, messageId, undefined, text, {
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+      reply_markup: replyMarkup,
+    });
+
+    return { ok: true };
+  } catch (e) {
+    console.error("refreshManagerOrderMessage error:", e);
+    return { ok: false, reason: "EDIT_ERROR" };
   }
 }
 
@@ -3556,6 +3732,7 @@ if (TG_BOT_TOKEN) {
 
       order.status = "assembled";
       await order.save();
+      await refreshManagerOrderMessage(order);
 
       await applyOrderCashback(order);
 
@@ -3674,14 +3851,30 @@ if (TG_BOT_TOKEN) {
       order.completedAt = new Date();
       await order.save();
 
+      const arrivalMessageIds = Array.isArray(order.managerArrivalMessageIds)
+        ? order.managerArrivalMessageIds.filter(Boolean)
+        : [];
+
+      const arrivalChatId = String(order?.payment?.managerMessageChatId || "").trim();
+
+      for (const messageId of arrivalMessageIds) {
+        try {
+          if (arrivalChatId && messageId) {
+            await bot.telegram.deleteMessage(arrivalChatId, Number(messageId));
+          }
+        } catch (_) {}
+      }
+
+      if (arrivalMessageIds.length) {
+        order.managerArrivalMessageIds = [];
+        await order.save();
+      }
+
+      await refreshManagerOrderMessage(order);
       await ctx.answerCbQuery("Заказ отмечен как выполненный");
 
       try {
-        await ctx.editMessageReplyMarkup({
-          inline_keyboard: [
-            [{ text: "✅ Заказ выполнен", callback_data: `mgr_order_completed_done:${order._id}` }],
-          ],
-        });
+        await ctx.deleteMessage();
       } catch (_) {}
     } catch (e) {
       console.error("mgr_order_completed error:", e);

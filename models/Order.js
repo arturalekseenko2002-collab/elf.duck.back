@@ -116,6 +116,7 @@ const orderSchema = new mongoose.Schema(
     },
 
     arrivedNotifiedAt: { type: Date, default: null }, // клиент нажал "Я на месте"
+    managerArrivalMessageIds: { type: [String], default: [] },
     completedAt: { type: Date, default: null },       // менеджер отметил выполненным (опционально)
 
     cashbackPercent: { type: Number, default: 0 },
