@@ -3027,7 +3027,7 @@ app.post("/orders/:id/payment-check", async (req, res) => {
       return res.status(400).json({ ok: false, error: "paymentMethod is required" });
     }
 
-    if (requestedMethod && allowedMethods.length && !allowedMethods.includes(requestedMethod)) {
+    if (requestedMethod && requestedMethod !== "cashback" && allowedMethods.length && !allowedMethods.includes(requestedMethod)) {
       return res.status(400).json({
         ok: false,
         error: "Payment method is not available for this order",
@@ -3057,15 +3057,6 @@ app.post("/orders/:id/payment-check", async (req, res) => {
       cashAmount: cashbackFullyPaid
         ? null
         : (req.body?.cashAmount ? String(req.body.cashAmount) : null),
-      cashbackAppliedZl:
-        cashbackAppliedZl !== undefined
-          ? Number(cashbackAppliedZl || 0)
-          : Number(order.payment?.cashbackAppliedZl || 0),
-      cashbackRemainingToPayZl:
-        cashbackRemainingToPayZl !== undefined
-          ? Number(cashbackRemainingToPayZl || 0)
-          : Number(order.payment?.cashbackRemainingToPayZl || 0),
-      cashbackFullyPaid,
       checkedAt: new Date(),
       checkedByTelegramId: "",
     };
