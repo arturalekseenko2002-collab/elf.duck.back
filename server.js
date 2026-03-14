@@ -401,7 +401,7 @@ async function sendOrderCreatedNotification(order) {
       }
     }
 
-    const text = lines.filter(Boolean).join("\n");
+    const text = lines.filter((line) => line !== null && line !== undefined).join("\n");
 
     const sent = await bot.telegram.sendMessage(point.notificationChatId, text, {
       parse_mode: "HTML",
