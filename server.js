@@ -3069,10 +3069,6 @@ app.post("/orders/:id/arrived-at-pickup", async (req, res) => {
       return res.json({ ok: true, order, alreadyCompleted: true });
     }
 
-    if (order.arrivedNotifiedAt) {
-      return res.json({ ok: true, order, alreadyNotified: true });
-    }
-
     order.arrivedNotifiedAt = new Date();
     await order.save();
 
