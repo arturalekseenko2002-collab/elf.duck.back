@@ -225,6 +225,104 @@ function recalcUserCashbackBalanceFromLedger(user) {
   return user.cashbackBalance;
 }
 
+async function sendCashbackExpiringSoonNotification(user, expiringRows) {
+  try {
+    if (!bot || !user?.telegramId || !Array.isArray(expiringRows) || !expiringRows.length) return;
+
+    const sorted = [...expiringRows].sort(
+      (a, b) => new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime()
+    );
+
+    const first = sorted[0];
+    const firstAmount = Number(first?.remainingZl || 0).toFixed(2);
+    const firstDays = Math.max(0, daysUntilDate(first?.expiresAt));
+
+    const otherActiveRows = (Array.isArray(user?.cashbackLedger) ? user.cashbackLedger : [])
+      .filter((row) => !row?.expiredAt && Number(row?.remainingZl || 0) > 0)
+      .filter((row) => String(row?._id || "") !== String(first?._id || ""))
+      .sort((a, b) => new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime());
+
+    const remainingAfterFirst = Number(
+      otherActiveRows.reduce((sum, row) => sum + Number(row?.remainingZl || 0), 0).toFixed(2)
+    );
+
+    const nextRowsText = otherActiveRows.length
+      ? `\n\nОстаток после сгорания этой части: <b>${remainingAfterFirst.toFixed(2)} zł</b>\n${otherActiveRows
+          .map((row) => {
+            const days = Math.max(0, daysUntilDate(row?.expiresAt));
+            return `• ${Number(row?.remainingZl || 0).toFixed(2)} zł — сгорит через ${days} дн.`;
+          })
+          .join("\n")}`
+      : `\n\nПосле сгорания этой части активного кэшбека не останется.`;
+
+    const text = [
+      `🪙 <b>КЭШБЕК СКОРО СГОРИТ</b>`,
+      ``,
+      `Твой кэшбек <b>${firstAmount} zł</b> сгорает через <b>${firstDays}</b> дн. Успей использовать!`,
+      nextRowsText,
+    ].join("\n");
+
+    await bot.telegram.sendMessage(String(user.telegramId), text, {
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+    });
+  } catch (e) {
+    console.error("sendCashbackExpiringSoonNotification error:", e);
+  }
+}
+
+async function processCashbackLedgerExpirations() {
+  try {
+    const now = new Date();
+
+    const users = await User.find({
+      cashbackLedger: { $exists: true, $ne: [] },
+    });
+
+    for (const user of users) {
+      let changed = false;
+      const ledger = Array.isArray(user.cashbackLedger) ? user.cashbackLedger : [];
+      const rowsToWarn = [];
+
+      for (const row of ledger) {
+        if (!row || row.expiredAt) continue;
+
+        const remaining = Math.max(0, Number(row.remainingZl || 0));
+        if (remaining <= 0) continue;
+
+        const expiresAt = row.expiresAt ? new Date(row.expiresAt) : null;
+        if (!expiresAt) continue;
+
+        if (expiresAt.getTime() <= now.getTime()) {
+          row.expiredAt = now;
+          row.remainingZl = 0;
+          changed = true;
+          continue;
+        }
+
+        const daysLeft = daysUntilDate(expiresAt);
+        if ((daysLeft === 3 || daysLeft === 4 || daysLeft === 5) && !row.warnedAt) {
+          rowsToWarn.push(row);
+          row.warnedAt = now;
+          changed = true;
+        }
+      }
+
+      recalcUserCashbackBalanceFromLedger(user);
+
+      if (changed) {
+        await user.save();
+      }
+
+      if (rowsToWarn.length) {
+        await sendCashbackExpiringSoonNotification(user, rowsToWarn);
+      }
+    }
+  } catch (e) {
+    console.error("processCashbackLedgerExpirations error:", e);
+  }
+}
+
 async function applyOrderCashback(order) {
   if (!order) return { applied: false, cashbackZl: 0, percent: 0 };
 
@@ -4002,6 +4100,10 @@ app.listen(PORT, "0.0.0.0", () => {
 
 setInterval(() => {
   processCashbackLedgerExpirations().catch((e) => {
-    console.error("cashback expiration error:", e);
+    console.error("cashback expiration interval error:", e);
   });
 }, 6 * 60 * 60 * 1000);
+
+processCashbackLedgerExpirations().catch((e) => {
+  console.error("initial cashback expiration run error:", e);
+});
