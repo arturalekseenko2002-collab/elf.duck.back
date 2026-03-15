@@ -10,6 +10,24 @@ const userSchema = new mongoose.Schema(
 
     cashbackBalance: { type: Number, default: 0 },
 
+    cashbackLedger: {
+      type: [
+        new mongoose.Schema(
+          {
+            sourceOrderId: { type: mongoose.Schema.Types.ObjectId, ref: "Order", default: null },
+            amountZl: { type: Number, default: 0 },
+            remainingZl: { type: Number, default: 0 },
+            earnedAt: { type: Date, default: Date.now },
+            expiresAt: { type: Date, default: null },
+            warnedAt: { type: Date, default: null },
+            expiredAt: { type: Date, default: null },
+          },
+          { _id: true }
+        ),
+      ],
+      default: [],
+    },
+
     favoriteProductKeys: { type: [String], default: [] },
 
     referral: {

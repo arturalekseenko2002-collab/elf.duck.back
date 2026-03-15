@@ -201,6 +201,30 @@ function getCashbackPercentByTotal(totalZl) {
   return 4;
 }
 
+function addDays(dateLike, days) {
+  const dt = new Date(dateLike || Date.now());
+  dt.setDate(dt.getDate() + Number(days || 0));
+  return dt;
+}
+
+function daysUntilDate(dateLike) {
+  const now = new Date();
+  const target = new Date(dateLike);
+  const ms = target.getTime() - now.getTime();
+  return Math.ceil(ms / (24 * 60 * 60 * 1000));
+}
+
+function recalcUserCashbackBalanceFromLedger(user) {
+  const ledger = Array.isArray(user?.cashbackLedger) ? user.cashbackLedger : [];
+  const total = ledger.reduce((sum, row) => {
+    if (row?.expiredAt) return sum;
+    return sum + Math.max(0, Number(row?.remainingZl || 0));
+  }, 0);
+
+  user.cashbackBalance = Number(total.toFixed(2));
+  return user.cashbackBalance;
+}
+
 async function applyOrderCashback(order) {
   if (!order) return { applied: false, cashbackZl: 0, percent: 0 };
 
@@ -232,7 +256,20 @@ async function applyOrderCashback(order) {
   const user = await User.findOne({ telegramId: String(freshOrder.userTelegramId || "") });
   if (!user) return { applied: false, cashbackZl: 0, percent };
 
-  user.cashbackBalance = Number(user.cashbackBalance || 0) + cashbackZl;
+  user.cashbackLedger = Array.isArray(user.cashbackLedger) ? user.cashbackLedger : [];
+
+  user.cashbackLedger.push({
+    sourceOrderId: freshOrder._id,
+    amountZl: cashbackZl,
+    remainingZl: cashbackZl,
+    earnedAt: new Date(),
+    expiresAt: addDays(new Date(), 40),
+    warnedAt: null,
+    expiredAt: null,
+  });
+
+  recalcUserCashbackBalanceFromLedger(user);
+
   await user.save();
 
   await Order.updateOne(
@@ -285,9 +322,20 @@ async function refundOrderCashback(order) {
 
   if (!user) return { refunded: false, amount: 0 };
 
-  user.cashbackBalance = Number(
-    (Number(user.cashbackBalance || 0) + cashbackAppliedZl).toFixed(2)
-  );
+  user.cashbackLedger = Array.isArray(user.cashbackLedger) ? user.cashbackLedger : [];
+
+  user.cashbackLedger.push({
+    sourceOrderId: freshOrder._id,
+    amountZl: cashbackAppliedZl,
+    remainingZl: cashbackAppliedZl,
+    earnedAt: new Date(),
+    expiresAt: addDays(new Date(), 40),
+    warnedAt: null,
+    expiredAt: null,
+  });
+
+  recalcUserCashbackBalanceFromLedger(user);
+
   await user.save();
 
   freshOrder.payment = {
@@ -3189,6 +3237,7 @@ app.post("/orders/:id/apply-cashback", async (req, res) => {
     }
 
     const user = await User.findOne({ telegramId: String(telegramId || "") });
+    user.cashbackLedger = Array.isArray(user.cashbackLedger) ? user.cashbackLedger : [];
     if (!user) {
       return res.status(404).json({ ok: false, error: "USER_NOT_FOUND" });
     }
@@ -3219,6 +3268,27 @@ app.post("/orders/:id/apply-cashback", async (req, res) => {
     }
 
     user.cashbackBalance = Number((cashbackBalance - cashbackAppliedZl).toFixed(2));
+
+    let cashbackLeftToDeduct = Number(cashbackAppliedZl || 0);
+
+    const activeRows = [...user.cashbackLedger]
+      .filter((row) => !row?.expiredAt && Number(row?.remainingZl || 0) > 0)
+      .sort((a, b) => new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime());
+
+    for (const row of activeRows) {
+      if (cashbackLeftToDeduct <= 0) break;
+
+      const available = Math.max(0, Number(row.remainingZl || 0));
+      if (available <= 0) continue;
+
+      const used = Math.min(available, cashbackLeftToDeduct);
+
+      row.remainingZl = Number((available - used).toFixed(2));
+      cashbackLeftToDeduct = Number((cashbackLeftToDeduct - used).toFixed(2));
+    }
+
+    recalcUserCashbackBalanceFromLedger(user);
+
     await user.save();
 
     const prevPayment = order.payment?.toObject ? order.payment.toObject() : (order.payment || {});
@@ -3929,3 +3999,9 @@ app.listen(PORT, "0.0.0.0", () => {
     bot.launch().then(() => console.log("✅ Bot launched"));
   }
 });
+
+setInterval(() => {
+  processCashbackLedgerExpirations().catch((e) => {
+    console.error("cashback expiration error:", e);
+  });
+}, 6 * 60 * 60 * 1000);
