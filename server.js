@@ -247,7 +247,7 @@ async function sendCashbackExpiringSoonNotification(user, expiringRows) {
     );
 
     const nextRowsText = otherActiveRows.length
-      ? `\n\nОстаток после сгорания этой части: <b>${remainingAfterFirst.toFixed(2)} zł</b>\n${otherActiveRows
+      ? `\n\nОстаток после сгорания: <b>${remainingAfterFirst.toFixed(2)} zł</b>\n${otherActiveRows
           .map((row) => {
             const days = Math.max(0, daysUntilDate(row?.expiresAt));
             return `• ${Number(row?.remainingZl || 0).toFixed(2)} zł — сгорит через ${days} дн.`;
