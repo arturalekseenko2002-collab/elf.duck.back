@@ -1711,7 +1711,9 @@ app.patch("/admin/pickup-points/:id", requireAdmin, async (req, res) => {
       "allowedAdminTelegramIds",
       "notificationChatId",
       "paymentConfig",
+      "scheduleByDatePatch",
     ];
+    
     const update = {};
     for (const k of allow) if (b[k] !== undefined) update[k] = b[k];
 
@@ -1747,6 +1749,34 @@ app.patch("/admin/pickup-points/:id", requireAdmin, async (req, res) => {
           }))
           .filter((m) => m.key),
       };
+    }
+
+    if (update.scheduleByDatePatch !== undefined) {
+      const patch = update.scheduleByDatePatch && typeof update.scheduleByDatePatch === "object"
+        ? update.scheduleByDatePatch
+        : {};
+
+      const existingPoint = await PickupPoint.findById(id).lean();
+      if (!existingPoint) {
+        return res.status(404).json({ ok: false, error: "Pickup point not found" });
+      }
+
+      const currentSchedule =
+        existingPoint.scheduleByDate && typeof existingPoint.scheduleByDate === "object"
+          ? { ...existingPoint.scheduleByDate }
+          : {};
+
+      Object.entries(patch).forEach(([dateKey, value]) => {
+        currentSchedule[dateKey] = {
+          isOpen: Boolean(value?.isOpen),
+          from: String(value?.from || ""),
+          to: String(value?.to || ""),
+          note: String(value?.note || ""),
+        };
+      });
+
+      update.scheduleByDate = currentSchedule;
+      delete update.scheduleByDatePatch;
     }
 
     const updated = await PickupPoint.findByIdAndUpdate(id, update, { new: true });

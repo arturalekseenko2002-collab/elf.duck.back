@@ -24,6 +24,20 @@ const PickupPointSchema = new mongoose.Schema(
       },
     },
 
+    scheduleByDate: {
+      type: Map,
+      of: new mongoose.Schema(
+        {
+          isOpen: { type: Boolean, default: true },
+          from: { type: String, default: "" }, // "10:00"
+          to: { type: String, default: "" },   // "22:00"
+          note: { type: String, default: "" }, // "выходной"
+        },
+        { _id: false }
+      ),
+      default: {},
+    },
+
     // telegramId админов/менеджеров, которым разрешено работать с этой точкой
     allowedAdminTelegramIds: { type: [String], default: [] },
 
