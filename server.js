@@ -236,6 +236,7 @@ async function sendCashbackExpiringSoonNotification(user, expiringRows) {
     const first = sorted[0];
     const firstAmount = Number(first?.remainingZl || 0).toFixed(2);
     const firstDays = Math.max(0, daysUntilDate(first?.expiresAt));
+    const firstExpireText = formatCashbackExpireDate(first?.expiresAt);
 
     const otherActiveRows = (Array.isArray(user?.cashbackLedger) ? user.cashbackLedger : [])
       .filter((row) => !row?.expiredAt && Number(row?.remainingZl || 0) > 0)
@@ -247,18 +248,22 @@ async function sendCashbackExpiringSoonNotification(user, expiringRows) {
     );
 
     const nextRowsText = otherActiveRows.length
-      ? `\n\nОстаток после сгорания: <b>${remainingAfterFirst.toFixed(2)} zł</b>\n${otherActiveRows
+      ? `\n\nОстаток после сгорания этой части: <b>${remainingAfterFirst.toFixed(2)} zł</b>\n\nДругие части кэшбека:\n${otherActiveRows
           .map((row) => {
-            const days = Math.max(0, daysUntilDate(row?.expiresAt));
-            return `• ${Number(row?.remainingZl || 0).toFixed(2)} zł — сгорит через ${days} дн.`;
+            const expireText = formatCashbackExpireDate(row?.expiresAt);
+            return `• ${Number(row?.remainingZl || 0).toFixed(2)} zł — ${expireText}`;
           })
           .join("\n")}`
       : `\n\nПосле сгорания этой части активного кэшбека не останется.`;
 
     const text = [
-      `🪙 <b>КЭШБЕК СКОРО СГОРИТ</b>`,
+      `💰 <b>КЭШБЕК СКОРО СГОРИТ</b>`,
       ``,
-      `Твой кэшбек <b>${firstAmount} zł</b> сгорает через <b>${firstDays}</b> дн. Успей использовать!`,
+      `Твой кэшбек <b>${firstAmount} zł</b> сгорит:`,
+      `<b>${firstExpireText}</b>`,
+      `(через <b>${firstDays}</b> дн.)`,
+      ``,
+      `Успей использовать!`,
       nextRowsText,
     ].join("\n");
 
@@ -269,6 +274,19 @@ async function sendCashbackExpiringSoonNotification(user, expiringRows) {
   } catch (e) {
     console.error("sendCashbackExpiringSoonNotification error:", e);
   }
+}
+
+function formatCashbackExpireDate(date) {
+  const d = new Date(date);
+
+  const day = String(d.getDate()).padStart(2, "0");
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const year = d.getFullYear();
+
+  const hours = String(d.getHours()).padStart(2, "0");
+  const minutes = String(d.getMinutes()).padStart(2, "0");
+
+  return `${day}.${month}.${year} в ${hours}:${minutes}`;
 }
 
 async function processCashbackLedgerExpirations() {
