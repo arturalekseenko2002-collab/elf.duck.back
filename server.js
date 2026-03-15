@@ -289,6 +289,61 @@ function formatCashbackExpireDate(date) {
   return `${day}.${month}.${year} в ${hours}:${minutes}`;
 }
 
+async function sendCashbackExpiredNotification(user, expiredRows) {
+  try {
+    if (!bot || !user?.telegramId || !Array.isArray(expiredRows) || !expiredRows.length) return;
+
+    const sortedExpired = [...expiredRows].sort(
+      (a, b) => new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime()
+    );
+
+    const expiredSum = Number(
+      sortedExpired.reduce((sum, row) => sum + Number(row?.expiredAmountZl || 0), 0).toFixed(2)
+    );
+
+    const activeRows = (Array.isArray(user?.cashbackLedger) ? user.cashbackLedger : [])
+      .filter((row) => !row?.expiredAt && Number(row?.remainingZl || 0) > 0)
+      .sort((a, b) => new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime());
+
+    const activeBalance = Number(
+      activeRows.reduce((sum, row) => sum + Number(row?.remainingZl || 0), 0).toFixed(2)
+    );
+
+    const expiredRowsText = sortedExpired
+      .map((row) => {
+        const expireText = formatCashbackExpireDate(row?.expiresAt);
+        return `• ${Number(row?.expiredAmountZl || 0).toFixed(2)} zł — сгорело ${expireText}`;
+      })
+      .join("\n");
+
+    const activeRowsText = activeRows.length
+      ? `\n\nОставшиеся части кэшбека:\n${activeRows
+          .map((row) => {
+            const expireText = formatCashbackExpireDate(row?.expiresAt);
+            return `• ${Number(row?.remainingZl || 0).toFixed(2)} zł — ${expireText}`;
+          })
+          .join("\n")}`
+      : `\n\nАктивного кэшбека больше не осталось.`;
+
+    const text = [
+      `🔥 <b>ЧАСТЬ КЭШБЕКА СГОРЕЛА</b>`,
+      ``,
+      `Сгорело: <b>${expiredSum.toFixed(2)} zł</b>`,
+      expiredRowsText,
+      ``,
+      `Текущий активный остаток: <b>${activeBalance.toFixed(2)} zł</b>`,
+      activeRowsText,
+    ].join("\n");
+
+    await bot.telegram.sendMessage(String(user.telegramId), text, {
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+    });
+  } catch (e) {
+    console.error("sendCashbackExpiredNotification error:", e);
+  }
+}
+
 async function processCashbackLedgerExpirations() {
   try {
     const now = new Date();
@@ -301,6 +356,7 @@ async function processCashbackLedgerExpirations() {
       let changed = false;
       const ledger = Array.isArray(user.cashbackLedger) ? user.cashbackLedger : [];
       const rowsToWarn = [];
+      const rowsJustExpired = [];
 
       for (const row of ledger) {
         if (!row || row.expiredAt) continue;
@@ -312,9 +368,20 @@ async function processCashbackLedgerExpirations() {
         if (!expiresAt) continue;
 
         if (expiresAt.getTime() <= now.getTime()) {
+          const expiredAmount = Math.max(0, Number(row.remainingZl || 0));
+
           row.expiredAt = now;
           row.remainingZl = 0;
           changed = true;
+
+          if (expiredAmount > 0) {
+            rowsJustExpired.push({
+              _id: row._id,
+              expiredAmountZl: expiredAmount,
+              expiresAt: expiresAt,
+            });
+          }
+
           continue;
         }
 
@@ -334,6 +401,10 @@ async function processCashbackLedgerExpirations() {
 
       if (rowsToWarn.length) {
         await sendCashbackExpiringSoonNotification(user, rowsToWarn);
+      }
+
+      if (rowsJustExpired.length) {
+        await sendCashbackExpiredNotification(user, rowsJustExpired);
       }
     }
   } catch (e) {
