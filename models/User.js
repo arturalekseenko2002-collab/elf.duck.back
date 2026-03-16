@@ -32,21 +32,26 @@ const userSchema = new mongoose.Schema(
 
     referral: {
       code: { type: String, default: "" },
-      referredBy: { type: String, default: null },
-      referredByCode: { type: String, default: null },
-      referredAt: { type: Date, default: null },
-      referralsCount: { type: Number, default: 0 },
-      claimedPairsCount: { type: Number, default: 0 },
-      referrals: {
+      usedCode: { type: String, default: "" },
+      invitedByTelegramId: { type: String, default: "" },
+      firstOrderDoneAt: { type: Date, default: null },
+
+      rewardGroups: {
         type: [
-          {
-            telegramId: { type: String, required: true },
-            at: { type: Date, default: Date.now },
-          },
+          new mongoose.Schema(
+            {
+              pairIndex: { type: Number, required: true },
+              memberTelegramIds: { type: [String], default: [] },
+              rewardClaimed: { type: Boolean, default: false },
+              rewardClaimedAt: { type: Date, default: null },
+              rewardAmountZl: { type: Number, default: 25 },
+            },
+            { _id: true }
+          ),
         ],
         default: [],
       },
-    }
+    },
 
   },
   { timestamps: true }
