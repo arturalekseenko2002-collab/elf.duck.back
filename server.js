@@ -1694,102 +1694,47 @@ app.get("/referral/status", async (req, res) => {
 
 app.post("/referral/claim", async (req, res) => {
   try {
-    const { telegramId } = req.body;
+    const telegramId = String(req.body?.telegramId || "").trim();
+    if (!telegramId) {
+      return res.status(400).json({ ok: false, error: "telegramId is required" });
+    }
 
     const user = await User.findOne({ telegramId });
     if (!user) {
-      return res.status(404).json({ ok: false, error: "USER_NOT_FOUND" });
+      return res.status(404).json({ ok: false, error: "User not found" });
     }
 
-    const refCode = user?.referral?.code;
+    const totalRefs = Array.isArray(user?.referral?.referrals) ? user.referral.referrals.length : 0;
+    const fullPairs = Math.floor(totalRefs / 2);
+    const claimedPairsCount = Math.max(0, Number(user?.referral?.claimedPairsCount || 0));
 
-    const referrals = await User.find({
-      "referral.usedCode": refCode,
-    }).select("telegramId username firstName");
-
-    if (referrals.length < 2) {
-      return res.json({
+    if (fullPairs <= claimedPairsCount) {
+      return res.status(400).json({
         ok: false,
-        status: "NOT_ENOUGH_REFERRALS",
+        error: "NO_REWARD_AVAILABLE",
+        message: "Для получения награды необходимо пригласить ещё одного реферала.",
       });
     }
 
-    const first = referrals[0];
-    const second = referrals[1];
+    user.referral = {
+      ...(user.referral?.toObject ? user.referral.toObject() : user.referral || {}),
+      claimedPairsCount: claimedPairsCount + 1,
+    };
 
-    const firstOrders = await Order.countDocuments({
-      userTelegramId: String(first.telegramId),
-      status: { $ne: "cancelled" },
-    });
+    const rewardZl = 25;
+    user.cashbackBalance = Number(user.cashbackBalance || 0) + rewardZl;
 
-    const secondOrders = await Order.countDocuments({
-      userTelegramId: String(second.telegramId),
-      status: { $ne: "cancelled" },
-    });
+    await user.save();
 
-    const firstBought = firstOrders > 0;
-    const secondBought = secondOrders > 0;
-
-    const firstName = first.username
-      ? `@${first.username}`
-      : first.firstName || "Пользователь";
-
-    const secondName = second.username
-      ? `@${second.username}`
-      : second.firstName || "Пользователь";
-
-    // оба купили
-    if (firstBought && secondBought) {
-
-      const reward = 25;
-
-      user.cashbackLedger.push({
-        source: "referral",
-        amountZl: reward,
-        remainingZl: reward,
-        earnedAt: new Date(),
-        expiresAt: addDays(new Date(), 40),
-      });
-
-      recalcUserCashbackBalanceFromLedger(user);
-      await user.save();
-
-      return res.json({
-        ok: true,
-        status: "REWARD_GRANTED",
-        amount: reward,
-      });
-    }
-
-    // один купил
-    if (firstBought && !secondBought) {
-      return res.json({
-        ok: false,
-        status: "ONE_COMPLETED",
-        completed: firstName,
-        pending: secondName,
-      });
-    }
-
-    if (!firstBought && secondBought) {
-      return res.json({
-        ok: false,
-        status: "ONE_COMPLETED",
-        completed: secondName,
-        pending: firstName,
-      });
-    }
-
-    // никто не купил
     return res.json({
-      ok: false,
-      status: "NONE_COMPLETED",
-      users: [firstName, secondName],
+      ok: true,
+      rewardZl,
+      claimedPairsCount: claimedPairsCount + 1,
+      cashbackBalance: user.cashbackBalance,
     });
-
   } catch (e) {
-    console.error(e);
-    res.status(500).json({ ok: false, error: "SERVER_ERROR" });
+    console.error("POST /referral/claim error:", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
   }
 });
 
