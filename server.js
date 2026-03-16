@@ -122,6 +122,8 @@ async function buildReferralStatusForUser(ownerUser) {
     return {
       code: "",
       totalReferrals: 0,
+      referralsCount: 0,
+      availableClaims: 0,
       groups: [],
     };
   }
@@ -135,7 +137,7 @@ async function buildReferralStatusForUser(ownerUser) {
   const referredUsers = memberIds.length
     ? await User.find(
         { telegramId: { $in: memberIds } },
-        { telegramId: 1, username: 1, firstName: 1, referral: 1 }
+        { telegramId: 1, username: 1, firstName: 1, photoUrl: 1, createdAt: 1, referral: 1 }
       ).lean()
     : [];
 
@@ -143,28 +145,51 @@ async function buildReferralStatusForUser(ownerUser) {
     referredUsers.map((row) => [String(row.telegramId || ""), row])
   );
 
+  const completedOrderTelegramIds = memberIds.length
+    ? await Order.distinct("userTelegramId", {
+        userTelegramId: { $in: memberIds },
+        status: { $ne: "canceled" },
+      })
+    : [];
+
+  const completedSet = new Set((completedOrderTelegramIds || []).map((x) => String(x || "")));
+
   const mappedGroups = groups.map((group) => {
     const members = (Array.isArray(group?.memberTelegramIds) ? group.memberTelegramIds : []).map((tgId) => {
-      const refUser = referredById.get(String(tgId || ""));
+      const safeTgId = String(tgId || "");
+      const refUser = referredById.get(safeTgId);
+      const hasFirstOrder = Boolean(refUser?.referral?.firstOrderDoneAt) || completedSet.has(safeTgId);
+
       return {
-        telegramId: String(tgId || ""),
-        username: refUser?.username ? `@${String(refUser.username).trim()}` : "",
-        displayName: getReferralDisplayName(refUser || { telegramId: tgId }),
+        telegramId: safeTgId,
+        invitedAt: refUser?.referral?.referredAt || refUser?.createdAt || null,
+        username: String(refUser?.username || ""),
+        firstName: String(refUser?.firstName || ""),
+        photoUrl: String(refUser?.photoUrl || ""),
+        displayName: getReferralDisplayName(refUser || { telegramId: safeTgId }),
         firstOrderDoneAt: refUser?.referral?.firstOrderDoneAt || null,
-        completed: Boolean(refUser?.referral?.firstOrderDoneAt),
+        completed: hasFirstOrder,
       };
     });
 
     const completedCount = members.filter((m) => m.completed).length;
+    const isComplete = members.length === 2;
+    const isClaimed = group?.rewardClaimed === true;
+    const readyToClaim = isComplete && completedCount === 2 && !isClaimed;
 
     return {
       id: String(group?._id || ""),
       pairIndex: Number(group?.pairIndex || 0),
       rewardAmountZl: Number(group?.rewardAmountZl || 25),
-      rewardClaimed: group?.rewardClaimed === true,
+      rewardZl: Number(group?.rewardAmountZl || 25),
+      rewardClaimed: isClaimed,
       rewardClaimedAt: group?.rewardClaimedAt || null,
+      claimedAt: group?.rewardClaimedAt || null,
       completedCount,
-      readyToClaim: members.length === 2 && completedCount === 2 && group?.rewardClaimed !== true,
+      isComplete,
+      isClaimed,
+      isClaimable: readyToClaim,
+      readyToClaim,
       members,
     };
   });
@@ -172,6 +197,8 @@ async function buildReferralStatusForUser(ownerUser) {
   return {
     code: String(ownerUser?.referral?.code || ""),
     totalReferrals: referredUsers.length,
+    referralsCount: referredUsers.length,
+    availableClaims: mappedGroups.filter((g) => g.isClaimable).length,
     groups: mappedGroups,
   };
 }
