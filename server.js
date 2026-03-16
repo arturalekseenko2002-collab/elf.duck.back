@@ -1817,26 +1817,20 @@ app.post("/referral/claim", async (req, res) => {
     }
 
     const referralStatus = await buildReferralStatusForUser(user);
+    const groups = Array.isArray(referralStatus?.groups) ? referralStatus.groups : [];
 
-    const unclaimedGroup = (referralStatus.groups || []).find(
-      (group) => group.rewardClaimed !== true
+    const claimableGroup = groups.find(
+      (group) =>
+        group?.rewardClaimed !== true &&
+        Array.isArray(group?.members) &&
+        group.members.length === 2 &&
+        group.members.every((m) => m?.completed)
     );
 
-    if (!unclaimedGroup) {
-      return res.json({ ok: false, status: "NOT_ENOUGH_REFERRALS" });
-    }
-
-    if (!Array.isArray(unclaimedGroup.members) || unclaimedGroup.members.length < 2) {
-      return res.json({ ok: false, status: "NOT_ENOUGH_REFERRALS" });
-    }
-
-    const completedMembers = unclaimedGroup.members.filter((m) => m.completed);
-    const pendingMembers = unclaimedGroup.members.filter((m) => !m.completed);
-
-    if (completedMembers.length === 2) {
+    if (claimableGroup) {
       const realGroups = ensureReferralGroupsArray(user);
       const targetGroup = realGroups.find(
-        (group) => String(group?._id || "") === String(unclaimedGroup.id || "")
+        (group) => String(group?._id || "") === String(claimableGroup.id || "")
       );
 
       if (!targetGroup) {
@@ -1871,20 +1865,34 @@ app.post("/referral/claim", async (req, res) => {
       });
     }
 
-    if (completedMembers.length === 1 && pendingMembers.length === 1) {
+    const progressGroup = groups.find(
+      (group) =>
+        group?.rewardClaimed !== true &&
+        Array.isArray(group?.members) &&
+        group.members.length === 2
+    );
+
+    if (progressGroup) {
+      const completedMembers = progressGroup.members.filter((m) => m.completed);
+      const pendingMembers = progressGroup.members.filter((m) => !m.completed);
+
+      if (completedMembers.length === 1 && pendingMembers.length === 1) {
+        return res.json({
+          ok: false,
+          status: "ONE_COMPLETED",
+          completed: completedMembers[0].displayName,
+          pending: pendingMembers[0].displayName,
+        });
+      }
+
       return res.json({
         ok: false,
-        status: "ONE_COMPLETED",
-        completed: completedMembers[0].displayName,
-        pending: pendingMembers[0].displayName,
+        status: "NONE_COMPLETED",
+        users: progressGroup.members.map((m) => m.displayName),
       });
     }
 
-    return res.json({
-      ok: false,
-      status: "NONE_COMPLETED",
-      users: unclaimedGroup.members.map((m) => m.displayName),
-    });
+    return res.json({ ok: false, status: "NOT_ENOUGH_REFERRALS" });
   } catch (e) {
     console.error("POST /referral/claim error:", e);
     res.status(500).json({ ok: false, error: "SERVER_ERROR" });
