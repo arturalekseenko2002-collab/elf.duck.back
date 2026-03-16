@@ -1636,7 +1636,7 @@ async function ensureUserRefCode(user) {
 }
 
 async function attachReferralIfAny(user, normalizedRef) {
-  const safeRef = String(normalizedRef || "").trim();
+  const safeRef = String(normalizedRef || "").replace(/^ref_/, "").trim();
   if (!user || !safeRef) return false;
 
   user.referral = user.referral || {};
@@ -1646,7 +1646,10 @@ async function attachReferralIfAny(user, normalizedRef) {
     return false;
   }
 
-  const inviter = await User.findOne({ "referral.code": safeRef });
+  let inviter = await User.findOne({ "referral.code": safeRef });
+  if (!inviter && /^\d+$/.test(safeRef)) {
+    inviter = await User.findOne({ telegramId: safeRef });
+  }
   if (!inviter) return false;
 
   // защита от саморефералки
@@ -1656,6 +1659,7 @@ async function attachReferralIfAny(user, normalizedRef) {
 
   user.referral.usedCode = safeRef;
   user.referral.invitedByTelegramId = String(inviter.telegramId || "");
+  user.referral.referredAt = user.referral.referredAt || new Date();
 
   const addedToGroup = attachReferralToRewardGroup(inviter, user.telegramId);
   if (addedToGroup) {
@@ -1684,31 +1688,31 @@ app.get("/ping", (_, res) => res.json({ ok: true }));
 // регистрируем юзера из mini-app
 app.post("/register-user", async (req, res) => {
   try {
-    const { telegramId, username, firstName, lastName, photoUrl, ref } = req.body;
+    const { telegramId, username, firstName, lastName, photoUrl, ref } = req.body || {};
     const normalizedRef = String(ref || "").replace(/^ref_/, "").trim();
+
     if (!telegramId) {
       return res.status(400).json({ ok: false, error: "telegramId is required" });
     }
 
-    let user = await User.findOne({ telegramId });
+    let user = await User.findOne({ telegramId: String(telegramId) });
 
     if (!user) {
       const newUser = await User.create({
-        telegramId,
+        telegramId: String(telegramId),
         username: username || null,
         firstName: firstName || null,
         lastName: lastName || null,
         photoUrl: photoUrl || null,
       });
 
-      const code = await ensureUserRefCode(newUser);
+      await ensureUserRefCode(newUser);
       await attachReferralIfAny(newUser, normalizedRef);
 
       const fresh = await User.findById(newUser._id).lean();
       return res.json({ ok: true, user: fresh });
     }
 
-    // update существующего
     user.username = username || user.username;
     user.firstName = firstName || user.firstName;
     user.lastName = lastName || user.lastName;
@@ -1720,7 +1724,9 @@ app.post("/register-user", async (req, res) => {
       user = await User.findById(user._id);
     }
 
-    res.json({ ok: true, user });
+    await ensureUserRefCode(user);
+
+    return res.json({ ok: true, user });
   } catch (e) {
     console.error("/register-user error:", e);
     res.status(500).json({ ok: false, error: "Server error" });
