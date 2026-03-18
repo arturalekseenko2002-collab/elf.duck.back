@@ -880,8 +880,12 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
   const referredFirstOrderUsers =
     extra?.referredFirstOrderUsers instanceof Set ? extra.referredFirstOrderUsers : new Set();
 
+  const userDisplayMap =
+    extra?.userDisplayMap instanceof Map ? extra.userDisplayMap : new Map();
+
   const productMap = new Map();
   const paymentMap = new Map();
+  const orderBlocks = [];
 
   let soldPositionsQty = 0;
   let grossTurnoverZl = 0;
@@ -889,286 +893,230 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
   let smartDiscountZl = 0;
   let cashbackEarnedZl = 0;
 
-    for (const order of orders) {
-      const orderCashbackSpent = Number(order?.payment?.cashbackAppliedZl || 0);
-      const orderTotalPaidByClient = Number(order?.totalZl || 0);
-      const orderCashbackEarned = Number(order?.cashbackZl || 0);
+  for (const order of orders) {
+    const orderCashbackSpent = Number(order?.payment?.cashbackAppliedZl || 0);
+    const orderTotalPaidByClient = Number(order?.totalZl || 0);
+    const orderCashbackEarned = Number(order?.cashbackZl || 0);
+    const paymentMethod = getOrderDisplayedPaymentMethod(order);
+    const paymentMethodLabel = formatPaymentMethodLabel(paymentMethod);
 
-      cashbackSpentZl += orderCashbackSpent;
-      cashbackEarnedZl += orderCashbackEarned;
+    cashbackSpentZl += orderCashbackSpent;
+    cashbackEarnedZl += orderCashbackEarned;
 
-      let orderUnits = 0;
+    let orderItemsQty = 0;
+    let orderSmartDiscountZl = 0;
+    const orderLines = [];
 
-      for (const row of Array.isArray(order?.items) ? order.items : []) {
-        const productKey = String(row?.productKey || "").trim();
-        const productTitle =
-          [row?.productTitle1, row?.productTitle2].filter(Boolean).join(" ").trim() ||
-          productKey ||
-          "Товар";
+    for (const row of Array.isArray(order?.items) ? order.items : []) {
+      const productKey = String(row?.productKey || "").trim();
+      const productTitle =
+        [row?.productTitle1, row?.productTitle2].filter(Boolean).join(" ").trim() ||
+        productKey ||
+        "Товар";
 
-        const flavors = Array.isArray(row?.flavors) ? row.flavors : [];
-        const baseUnitPrice = getOrderRowUnitBasePrice(row, productBasePriceMap);
+      const flavors = Array.isArray(row?.flavors) ? row.flavors : [];
+      const baseUnitPrice = getOrderRowUnitBasePrice(row, productBasePriceMap);
 
-        let productAgg = productMap.get(productKey || productTitle);
-        if (!productAgg) {
-          productAgg = {
-            key: productKey || productTitle,
-            title: productTitle,
-            qty: 0,
-            grossZl: 0,
-            smartDiscountZl: 0,
-            cashbackSpentZl: 0,
-            cashbackEarnedZl: 0,
-            netRevenueZl: 0,
-            paymentBreakdown: new Map(),
-            flavors: new Map(),
-          };
-          productMap.set(productKey || productTitle, productAgg);
-        }
-
-        for (const f of flavors) {
-          const flavorKey = String(f?.flavorKey || "").trim();
-          const flavorLabel = String(f?.flavorLabel || f?.flavorKey || "Вкус").trim();
-
-          const qty = Number(f?.qty || 0);
-          const unitPrice = Number(f?.unitPrice || 0);
-
-          const gross = qty * baseUnitPrice;
-          const net = qty * unitPrice;
-          const flavorSmartDiscount = Math.max(0, gross - net);
-          const flavorCashbackSpent = allocateCashbackBySubtotal(
-            orderTotalPaidByClient,
-            orderCashbackSpent,
-            net
-          );
-          const flavorCashbackEarned = allocateCashbackBySubtotal(
-            orderTotalPaidByClient,
-            orderCashbackEarned,
-            net
-          );
-          const flavorNetRevenue = Math.max(0, net - flavorCashbackSpent);
-
-          soldPositionsQty += qty;
-          orderUnits += qty;
-          grossTurnoverZl += gross;
-          smartDiscountZl += flavorSmartDiscount;
-
-          productAgg.qty += qty;
-          productAgg.grossZl += gross;
-          productAgg.smartDiscountZl += flavorSmartDiscount;
-          productAgg.cashbackSpentZl += flavorCashbackSpent;
-          productAgg.cashbackEarnedZl += flavorCashbackEarned;
-          productAgg.netRevenueZl += flavorNetRevenue;
-
-          let flavorAgg = productAgg.flavors.get(flavorKey || flavorLabel);
-          if (!flavorAgg) {
-            flavorAgg = {
-              key: flavorKey || flavorLabel,
-              label: flavorLabel,
-              qty: 0,
-              grossZl: 0,
-              netZl: 0,
-              smartDiscountZl: 0,
-              cashbackSpentZl: 0,
-              cashbackEarnedZl: 0,
-              netRevenueZl: 0,
-              paymentBreakdown: new Map(),
-            };
-            productAgg.flavors.set(flavorKey || flavorLabel, flavorAgg);
-          }
-
-          flavorAgg.qty += qty;
-          flavorAgg.grossZl += gross;
-          flavorAgg.netZl += net;
-          flavorAgg.smartDiscountZl += flavorSmartDiscount;
-          flavorAgg.cashbackSpentZl += flavorCashbackSpent;
-          flavorAgg.cashbackEarnedZl += flavorCashbackEarned;
-          flavorAgg.netRevenueZl += flavorNetRevenue;
-        }
+      let productAgg = productMap.get(productKey || productTitle);
+      if (!productAgg) {
+        productAgg = {
+          key: productKey || productTitle,
+          title: productTitle,
+          qty: 0,
+          netRevenueZl: 0,
+          flavors: new Map(),
+        };
+        productMap.set(productKey || productTitle, productAgg);
       }
 
-      const paymentMethod = getOrderDisplayedPaymentMethod(order);
-      const paymentAmount = Math.max(0, orderTotalPaidByClient - orderCashbackSpent);
+      for (const f of flavors) {
+        const flavorKey = String(f?.flavorKey || "").trim();
+        const flavorLabel = String(f?.flavorLabel || f?.flavorKey || "Вкус").trim();
+        const qty = Number(f?.qty || 0);
+        const unitPrice = Number(f?.unitPrice || 0);
 
-      if (paymentAmount > 0) {
-        const currentPayment = paymentMap.get(paymentMethod) || {
-          amountZl: 0,
-          orders: 0,
-          qty: 0,
-        };
+        const gross = qty * baseUnitPrice;
+        const net = qty * unitPrice;
+        const flavorSmartDiscount = Math.max(0, gross - net);
+        const flavorCashbackSpent = allocateCashbackBySubtotal(
+          orderTotalPaidByClient,
+          orderCashbackSpent,
+          net
+        );
+        const flavorCashbackEarned = allocateCashbackBySubtotal(
+          orderTotalPaidByClient,
+          orderCashbackEarned,
+          net
+        );
+        const flavorNetRevenue = Math.max(0, net - flavorCashbackSpent);
 
-        currentPayment.amountZl += paymentAmount;
-        currentPayment.orders += 1;
-        currentPayment.qty += orderUnits;
+        soldPositionsQty += qty;
+        orderItemsQty += qty;
+        grossTurnoverZl += gross;
+        orderSmartDiscountZl += flavorSmartDiscount;
+        smartDiscountZl += flavorSmartDiscount;
 
-        paymentMap.set(paymentMethod, currentPayment);
+        productAgg.qty += qty;
+        productAgg.netRevenueZl += flavorNetRevenue;
 
-        for (const row of Array.isArray(order?.items) ? order.items : []) {
-          const productKey = String(row?.productKey || "").trim();
-          const productTitle =
-            [row?.productTitle1, row?.productTitle2].filter(Boolean).join(" ").trim() ||
-            productKey ||
-            "Товар";
-
-          const productAgg = productMap.get(productKey || productTitle);
-          if (!productAgg) continue;
-
-          const rowFlavors = Array.isArray(row?.flavors) ? row.flavors : [];
-          const rowNet = rowFlavors.reduce(
-            (sum, f) => sum + Number(f?.qty || 0) * Number(f?.unitPrice || 0),
-            0
-          );
-          const rowCashbackSpent = allocateCashbackBySubtotal(
-            orderTotalPaidByClient,
-            orderCashbackSpent,
-            rowNet
-          );
-          const rowPaymentAmount = Math.max(0, rowNet - rowCashbackSpent);
-          const rowQty = rowFlavors.reduce((sum, f) => sum + Number(f?.qty || 0), 0);
-
-          if (rowPaymentAmount > 0 && rowQty > 0) {
-            const productPayment = productAgg.paymentBreakdown.get(paymentMethod) || {
-              qty: 0,
-              amountZl: 0,
-            };
-
-            productPayment.qty += rowQty;
-            productPayment.amountZl += rowPaymentAmount;
-            productAgg.paymentBreakdown.set(paymentMethod, productPayment);
-          }
-
-          for (const f of rowFlavors) {
-            const flavorKey = String(f?.flavorKey || "").trim();
-            const flavorLabel = String(f?.flavorLabel || f?.flavorKey || "Вкус").trim();
-            const flavorAgg = productAgg.flavors.get(flavorKey || flavorLabel);
-            if (!flavorAgg) continue;
-
-            const flavorQty = Number(f?.qty || 0);
-            const flavorNet = flavorQty * Number(f?.unitPrice || 0);
-            const flavorCashbackSpent = allocateCashbackBySubtotal(
-              orderTotalPaidByClient,
-              orderCashbackSpent,
-              flavorNet
-            );
-            const flavorPaymentAmount = Math.max(0, flavorNet - flavorCashbackSpent);
-
-            if (flavorPaymentAmount > 0 && flavorQty > 0) {
-              const flavorPayment = flavorAgg.paymentBreakdown?.get(paymentMethod) || {
-                qty: 0,
-                amountZl: 0,
-              };
-
-              flavorPayment.qty += flavorQty;
-              flavorPayment.amountZl += flavorPaymentAmount;
-
-              if (!flavorAgg.paymentBreakdown) {
-                flavorAgg.paymentBreakdown = new Map();
-              }
-              flavorAgg.paymentBreakdown.set(paymentMethod, flavorPayment);
-            }
-          }
+        let flavorAgg = productAgg.flavors.get(flavorKey || flavorLabel);
+        if (!flavorAgg) {
+          flavorAgg = {
+            key: flavorKey || flavorLabel,
+            label: flavorLabel,
+            qty: 0,
+          };
+          productAgg.flavors.set(flavorKey || flavorLabel, flavorAgg);
         }
+
+        flavorAgg.qty += qty;
+
+        orderLines.push(`• ${productTitle} — ${flavorLabel} ×${qty}`);
       }
     }
 
+    const paymentAmount = Math.max(0, orderTotalPaidByClient - orderCashbackSpent);
+    if (paymentAmount > 0) {
+      const currentPayment = paymentMap.get(paymentMethod) || {
+        amountZl: 0,
+        orders: 0,
+        qty: 0,
+      };
+
+      currentPayment.amountZl += paymentAmount;
+      currentPayment.orders += 1;
+      currentPayment.qty += orderItemsQty;
+
+      paymentMap.set(paymentMethod, currentPayment);
+    }
+
+    const orderClientName =
+      userDisplayMap.get(String(order?.userTelegramId || "").trim()) ||
+      String(order?.userTelegramId || "Клиент");
+
+    orderBlocks.push({
+      orderNo: String(order?.orderNo || "—"),
+      clientName: orderClientName,
+      itemsQty: orderItemsQty,
+      paymentMethodLabel,
+      smartDiscountZl: Number(orderSmartDiscountZl.toFixed(2)),
+      cashbackSpentZl: Number(orderCashbackSpent.toFixed(2)),
+      cashbackEarnedZl: Number(orderCashbackEarned.toFixed(2)),
+      totalZl: Number(orderTotalPaidByClient.toFixed(2)),
+      lines: orderLines,
+      createdAt: order?.createdAt || null,
+    });
+  }
+
   const revenueZl = Math.max(
     0,
-    grossTurnoverZl - cashbackSpentZl - smartDiscountZl - cashbackEarnedZl
+    Number((grossTurnoverZl - cashbackSpentZl - smartDiscountZl - cashbackEarnedZl).toFixed(2))
   );
 
-  const revenueAfterSalaryZl = Math.max(0, revenueZl * 0.84);
+  const managerSalaryPercent = Number(point?.managerSalaryPercent || 16);
+  const managerSalaryZl = Math.max(
+    0,
+    Number(((revenueZl * managerSalaryPercent) / 100).toFixed(2))
+  );
+
+  const revenueAfterSalaryZl = Math.max(
+    0,
+    Number((revenueZl - managerSalaryZl).toFixed(2))
+  );
 
   const pointTitle = point?.title || point?.address || point?.key || "Склад";
-  const products = Array.from(productMap.values()).sort(
-    (a, b) => b.netRevenueZl - a.netRevenueZl
-  );
-  const payments = Array.from(paymentMap.entries()).sort(
-    (a, b) => b[1].amountZl - a[1].amountZl
+  const products = Array.from(productMap.values()).sort((a, b) => b.netRevenueZl - a.netRevenueZl);
+  const payments = Array.from(paymentMap.entries()).sort((a, b) => b[1].amountZl - a[1].amountZl);
+  const sortedOrders = [...orderBlocks].sort(
+    (a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime()
   );
 
   const lines = [
-    `📊 <b>СТАТИСТИКА</b>`,
+    `📊 <b>СТАТИСТИКА ДНЯ</b>`,
     `🏪 <b>Склад:</b> ${escapeHtml(pointTitle)}`,
     `📅 <b>Дата:</b> ${escapeHtml(dayKey)}`,
     ``,
     `🫂 <b>Новых рефералов:</b> ${referredFirstOrderUsers.size}`,
     ``,
     `🧾 <b>Продано позиций:</b> ${soldPositionsQty}`,
-    `💰 <b>Оборот:</b> ${grossTurnoverZl.toFixed(2)} PLN`,
-    `🪙 <b>Сумма скидок/оплат за счёт кэшбека:</b> ${cashbackSpentZl.toFixed(2)} PLN`,
-    `🏷 <b>Сумма скидок за счёт смарт-цены:</b> ${smartDiscountZl.toFixed(2)} PLN`,
-    `🎁 <b>Сумма кэшбека (полученного клиентами):</b> ${cashbackEarnedZl.toFixed(2)} PLN`,
+    `💰 <b>Оборот:</b> ${Number(grossTurnoverZl || 0).toFixed(2)} PLN`,
+    `🪙 <b>Оплачено / списано кэшбеком:</b> ${Number(cashbackSpentZl || 0).toFixed(2)} PLN`,
+    `🏷 <b>Скидка по смарт-цене:</b> ${Number(smartDiscountZl || 0).toFixed(2)} PLN`,
+    `🎁 <b>Начислено кэшбека клиентам:</b> ${Number(cashbackEarnedZl || 0).toFixed(2)} PLN`,
     `📈 <b>Выручка:</b> ${revenueZl.toFixed(2)} PLN`,
+    `👨‍💼 <b>Зарплата менеджеру:</b> ${managerSalaryZl.toFixed(2)} PLN (${managerSalaryPercent}%)`,
     `💼 <b>Выручка после вычета зп:</b> ${revenueAfterSalaryZl.toFixed(2)} PLN`,
     ``,
+    `💳 <b>По способам оплаты:</b>`,
   ];
 
   if (payments.length) {
     for (const [method, data] of payments) {
       lines.push(
-        `💳 <b>Оплачено (${escapeHtml(formatPaymentMethodLabel(method))}):</b> ${data.amountZl.toFixed(2)} PLN`
+        `• ${escapeHtml(formatPaymentMethodLabel(method))} — ${Number(data.amountZl || 0).toFixed(2)} PLN`
       );
     }
-    lines.push(``);
+  } else {
+    lines.push(`• Нет оплаченных заказов`);
   }
 
-  lines.push(`🧺 <b>Проданный ассортимент:</b>`);
+  lines.push(``);
+  lines.push(`━━━━━━━━━━━━━━`);
+  lines.push(`🧾 <b>ЗАКАЗЫ ЗА ДЕНЬ</b>`);
+  lines.push(`━━━━━━━━━━━━━━`);
+  lines.push(``);
+
+  if (!sortedOrders.length) {
+    lines.push(`Заказов за день не было.`);
+  } else {
+    for (const order of sortedOrders) {
+      lines.push(`#${escapeHtml(order.orderNo)}`);
+      lines.push(`👤 <b>Клиент:</b> ${escapeHtml(order.clientName)}`);
+      lines.push(`🛍 <b>Товары:</b> ${order.itemsQty} шт.`);
+      lines.push(`💳 <b>Оплата:</b> ${escapeHtml(order.paymentMethodLabel)}`);
+      lines.push(`🏷 <b>Скидка по смарт-цене:</b> ${order.smartDiscountZl.toFixed(2)} PLN`);
+      lines.push(`🪙 <b>Кэшбеком оплачено:</b> ${order.cashbackSpentZl.toFixed(2)} PLN`);
+      lines.push(`🎁 <b>Начислено кэшбека:</b> ${order.cashbackEarnedZl.toFixed(2)} PLN`);
+      lines.push(`💵 <b>Итого:</b> ${order.totalZl.toFixed(2)} PLN`);
+      lines.push(``);
+
+      if (order.lines.length) {
+        for (const rowLine of order.lines) {
+          lines.push(rowLine);
+        }
+      } else {
+        lines.push(`• Без товаров`);
+      }
+
+      lines.push(``);
+    }
+  }
+
+  lines.push(`━━━━━━━━━━━━━━`);
+  lines.push(`🧺 <b>ПРОДАННЫЙ АССОРТИМЕНТ</b>`);
+  lines.push(`━━━━━━━━━━━━━━`);
+  lines.push(``);
 
   if (!products.length) {
     lines.push(`Продаж за день не было.`);
-    return lines.join("\n");
-  }
-
-  for (const product of products) {
-    lines.push(``);
-    lines.push(
-      `• <b>${escapeHtml(product.title)}</b> — ${product.qty} шт. 💰${product.netRevenueZl.toFixed(2)} PLN`
-    );
-
-    const flavors = Array.from(product.flavors.values()).sort(
-      (a, b) => b.netRevenueZl - a.netRevenueZl
-    );
-
-    flavors.forEach((flavor, idx) => {
-      lines.push(`${idx + 1}) ${escapeHtml(flavor.label)} — ${flavor.qty} шт.`);
-
-      const summaryParts = [`💰 ${flavor.grossZl.toFixed(2)} PLN`];
-
-      if (flavor.cashbackSpentZl > 0) {
-        summaryParts.push(`кэшбек ${flavor.cashbackSpentZl.toFixed(2)} PLN`);
-      }
-
-      if (flavor.smartDiscountZl > 0) {
-        summaryParts.push(`смарт-цена ${flavor.smartDiscountZl.toFixed(2)} PLN`);
-      }
-
-      summaryParts.push(`= ${flavor.netRevenueZl.toFixed(2)} PLN`);
-
-      lines.push(summaryParts.join(" — "));
-
-      const flavorPayments = Array.from(
-        (flavor.paymentBreakdown instanceof Map ? flavor.paymentBreakdown : new Map()).entries()
-      ).sort((a, b) => b[1].amountZl - a[1].amountZl);
-
-      for (const [method, data] of flavorPayments) {
-        lines.push(
-          `Оплачено (${escapeHtml(formatPaymentMethodLabel(method))}) - ${data.qty} шт. 💰${Number(data.amountZl || 0).toFixed(2)} PLN`
-        );
-      }
-    });
-
-    const productPayments = Array.from(
-      (product.paymentBreakdown instanceof Map ? product.paymentBreakdown : new Map()).entries()
-    ).sort((a, b) => b[1].amountZl - a[1].amountZl);
-
-    for (const [method, data] of productPayments) {
+  } else {
+    for (const product of products) {
       lines.push(
-        `Оплачено (${escapeHtml(formatPaymentMethodLabel(method))}) - ${data.qty} шт. 💰${Number(data.amountZl || 0).toFixed(2)} PLN`
+        `• <b>${escapeHtml(product.title)}</b> — ${product.qty} шт. — ${Number(product.netRevenueZl || 0).toFixed(2)} PLN`
       );
+
+      const flavors = Array.from(product.flavors.values()).sort((a, b) => b.qty - a.qty);
+      flavors.forEach((flavor, idx) => {
+        lines.push(`  ${idx + 1}) ${escapeHtml(flavor.label)} — ${flavor.qty} шт.`);
+      });
+
+      lines.push(``);
     }
   }
 
-  return lines.join("\n");
+  lines.push(`🦆 ELF DUCK <> СТАТИСТИКА`);
+
+  return lines.join("\\n");
 }
 
 async function sendDailyPointStats(point, orders, dayKey, extra = {}) {
@@ -1287,27 +1235,41 @@ async function processDailyPointStats() {
         new Set(dayOrders.map((order) => String(order?.userTelegramId || "").trim()).filter(Boolean))
       );
 
-      const referredUsers = orderUserIds.length
+      const statsUsers = orderUserIds.length
         ? await User.find(
             {
               telegramId: { $in: orderUserIds },
-              "referral.usedCode": { $exists: true, $ne: "" },
-              "referral.firstOrderDoneAt": { $exists: true, $ne: null },
             },
-            { telegramId: 1, referral: 1 }
+            { telegramId: 1, username: 1, firstName: 1, referral: 1 }
           ).lean()
         : [];
 
       const referredFirstOrderUsers = new Set(
-        referredUsers
-          .filter((u) => getWarsawDayKey(u?.referral?.firstOrderDoneAt) === dayKey)
+        statsUsers
+          .filter(
+            (u) =>
+              String(u?.referral?.usedCode || "").trim() &&
+              u?.referral?.firstOrderDoneAt &&
+              getWarsawDayKey(u?.referral?.firstOrderDoneAt) === dayKey
+          )
           .map((u) => String(u?.telegramId || "").trim())
           .filter(Boolean)
+      );
+
+      const userDisplayMap = new Map(
+        statsUsers.map((u) => {
+          const name = String(u?.username || "").trim()
+            ? `@${String(u.username).trim()}`
+            : String(u?.firstName || "").trim() || String(u?.telegramId || "Клиент");
+
+          return [String(u?.telegramId || "").trim(), name];
+        })
       );
 
       const sent = await sendDailyPointStats(point, dayOrders, dayKey, {
         productBasePriceMap,
         referredFirstOrderUsers,
+        userDisplayMap,
       });
 
       if (sent?.ok) {
