@@ -7,6 +7,7 @@ const orderItemFlavorSchema = new mongoose.Schema(
 
     // snapshot из корзины
     unitPrice: { type: Number, default: 0, min: 0 },
+    baseUnitPrice: { type: Number, default: 0, min: 0 },
     flavorLabel: { type: String, default: "" },
     gradient: { type: [String], default: [] },
   },
