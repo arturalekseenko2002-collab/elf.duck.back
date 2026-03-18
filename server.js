@@ -1825,11 +1825,16 @@ app.get("/referral/status", async (req, res) => {
 
 app.post("/referral/claim", async (req, res) => {
   try {
-    const { telegramId } = req.body || {};
+    const { telegramId, groupId } = req.body || {};
     const safeTelegramId = String(telegramId || "").trim();
+    const safeGroupId = String(groupId || "").trim();
 
     if (!safeTelegramId) {
       return res.status(400).json({ ok: false, error: "TELEGRAM_ID_REQUIRED" });
+    }
+
+    if (!safeGroupId) {
+      return res.status(400).json({ ok: false, error: "GROUP_ID_REQUIRED" });
     }
 
     const user = await User.findOne({ telegramId: safeTelegramId });
@@ -1840,80 +1845,89 @@ app.post("/referral/claim", async (req, res) => {
     const referralStatus = await buildReferralStatusForUser(user);
     const groups = Array.isArray(referralStatus?.groups) ? referralStatus.groups : [];
 
-    const claimableGroup = groups.find(
-      (group) =>
-        group?.rewardClaimed !== true &&
-        Array.isArray(group?.members) &&
-        group.members.length === 2 &&
-        group.members.every((m) => m?.completed === true)
+    const selectedGroup = groups.find(
+      (group) => String(group?.id || "") === safeGroupId
     );
 
-    if (claimableGroup) {
-      const realGroups = ensureReferralGroupsArray(user);
-      const targetGroup = realGroups.find(
-        (group) => String(group?._id || "") === String(claimableGroup.id || "")
-      );
+    if (!selectedGroup) {
+      return res.status(404).json({ ok: false, error: "REFERRAL_GROUP_NOT_FOUND" });
+    }
 
-      if (!targetGroup) {
-        return res.status(400).json({ ok: false, error: "REFERRAL_GROUP_NOT_FOUND" });
-      }
+    if (selectedGroup.rewardClaimed === true || selectedGroup.isClaimed === true) {
+      return res.json({ ok: false, status: "ALREADY_CLAIMED" });
+    }
 
-      if (targetGroup.rewardClaimed === true) {
-        return res.json({ ok: false, status: "ALREADY_CLAIMED" });
-      }
+    const members = Array.isArray(selectedGroup.members) ? selectedGroup.members : [];
 
-      targetGroup.rewardClaimed = true;
-      targetGroup.rewardClaimedAt = new Date();
+    if (members.length < 2) {
+      return res.json({ ok: false, status: "NOT_ENOUGH_REFERRALS" });
+    }
 
-      user.cashbackLedger = Array.isArray(user.cashbackLedger) ? user.cashbackLedger : [];
-      user.cashbackLedger.push({
-        sourceOrderId: null,
-        amountZl: 25,
-        remainingZl: 25,
-        earnedAt: new Date(),
-        expiresAt: addDays(new Date(), 40),
-        warnedAt: null,
-        expiredAt: null,
-      });
+    const completedMembers = members.filter((m) => m?.completed === true);
+    const pendingMembers = members.filter((m) => m?.completed !== true);
 
-      recalcUserCashbackBalanceFromLedger(user);
-      await user.save();
-
+    if (completedMembers.length === 1 && pendingMembers.length === 1) {
       return res.json({
-        ok: true,
-        status: "REWARD_GRANTED",
-        amount: 25,
+        ok: false,
+        status: "ONE_COMPLETED",
+        completed: completedMembers[0].displayName,
+        pending: pendingMembers[0].displayName,
       });
     }
 
-    const progressGroup = groups.find(
-      (group) =>
-        group?.rewardClaimed !== true &&
-        Array.isArray(group?.members) &&
-        group.members.length === 2
-    );
-
-    if (progressGroup) {
-      const completedMembers = progressGroup.members.filter((m) => m.completed === true);
-      const pendingMembers = progressGroup.members.filter((m) => m.completed !== true);
-
-      if (completedMembers.length === 1 && pendingMembers.length === 1) {
-        return res.json({
-          ok: false,
-          status: "ONE_COMPLETED",
-          completed: completedMembers[0].displayName,
-          pending: pendingMembers[0].displayName,
-        });
-      }
-
+    if (completedMembers.length === 0) {
       return res.json({
         ok: false,
         status: "NONE_COMPLETED",
-        users: progressGroup.members.map((m) => m.displayName),
+        users: members.map((m) => m.displayName),
       });
     }
 
-    return res.json({ ok: false, status: "NOT_ENOUGH_REFERRALS" });
+    if (completedMembers.length !== 2) {
+      return res.json({ ok: false, status: "GROUP_NOT_READY" });
+    }
+
+    const realGroups = ensureReferralGroupsArray(user);
+    const targetGroup = realGroups.find(
+      (group) => String(group?._id || "") === safeGroupId
+    );
+
+    if (!targetGroup) {
+      return res.status(404).json({ ok: false, error: "REFERRAL_GROUP_NOT_FOUND" });
+    }
+
+    if (targetGroup.rewardClaimed === true) {
+      return res.json({ ok: false, status: "ALREADY_CLAIMED" });
+    }
+
+    targetGroup.rewardClaimed = true;
+    targetGroup.rewardClaimedAt = new Date();
+
+    user.cashbackLedger = Array.isArray(user.cashbackLedger) ? user.cashbackLedger : [];
+    user.cashbackLedger.push({
+      sourceOrderId: null,
+      amountZl: 25,
+      remainingZl: 25,
+      earnedAt: new Date(),
+      expiresAt: addDays(new Date(), 40),
+      warnedAt: null,
+      expiredAt: null,
+    });
+
+    if (typeof user.markModified === "function") {
+      user.markModified("referral.rewardGroups");
+      user.markModified("cashbackLedger");
+    }
+
+    recalcUserCashbackBalanceFromLedger(user);
+    await user.save();
+
+    return res.json({
+      ok: true,
+      status: "REWARD_GRANTED",
+      amount: 25,
+      groupId: safeGroupId,
+    });
   } catch (e) {
     console.error("POST /referral/claim error:", e);
     res.status(500).json({ ok: false, error: "SERVER_ERROR" });
