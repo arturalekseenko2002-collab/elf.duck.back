@@ -70,14 +70,19 @@ function attachReferralToRewardGroup(ownerUser, referredTelegramId) {
   );
 
   if (!targetGroup) {
-    targetGroup = {
+    groups.push({
       pairIndex: groups.length + 1,
-      memberTelegramIds: [],
+      memberTelegramIds: [referralId],
       rewardClaimed: false,
       rewardClaimedAt: null,
       rewardAmountZl: 25,
-    };
-    groups.push(targetGroup);
+    });
+
+    if (typeof ownerUser.markModified === "function") {
+      ownerUser.markModified("referral.rewardGroups");
+    }
+
+    return true;
   }
 
   const currentIds = Array.isArray(targetGroup.memberTelegramIds)
