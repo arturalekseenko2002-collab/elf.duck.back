@@ -1114,7 +1114,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
     }
   }
 
-  lines.push(`🦆 ELF DUCK <> СТАТИСТИКА`);
+  lines.push(`🦆 ELF DUCK &lt;&gt; СТАТИСТИКА`);
 
   return lines.join("\n");
 }
