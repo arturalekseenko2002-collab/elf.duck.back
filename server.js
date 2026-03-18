@@ -1116,7 +1116,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
 
   lines.push(`🦆 ELF DUCK <> СТАТИСТИКА`);
 
-  return lines.join("\\n");
+  return lines.join("\n");
 }
 
 async function sendDailyPointStats(point, orders, dayKey, extra = {}) {
