@@ -1857,11 +1857,46 @@ app.post("/referral/claim", async (req, res) => {
       return res.json({ ok: false, status: "ALREADY_CLAIMED" });
     }
 
-    const members = Array.isArray(selectedGroup.members) ? selectedGroup.members : [];
+    const memberIds = Array.isArray(selectedGroup?.members)
+      ? selectedGroup.members.map((m) => String(m?.telegramId || "").trim()).filter(Boolean)
+      : [];
 
-    if (members.length < 2) {
+    if (memberIds.length < 2) {
       return res.json({ ok: false, status: "NOT_ENOUGH_REFERRALS" });
     }
+
+    const referredUsers = await User.find(
+      { telegramId: { $in: memberIds } },
+      { telegramId: 1, username: 1, firstName: 1, referral: 1 }
+    ).lean();
+
+    const referredById = new Map(
+      referredUsers.map((row) => [String(row.telegramId || ""), row])
+    );
+
+    const paidOrderTelegramIds = await Order.distinct("userTelegramId", {
+      userTelegramId: { $in: memberIds },
+      $or: [
+        { "payment.status": "paid" },
+        { status: { $in: ["processing", "done"] } },
+      ],
+    });
+
+    const paidSet = new Set(
+      (paidOrderTelegramIds || []).map((x) => String(x || "").trim())
+    );
+
+    const members = memberIds.map((tgId) => {
+      const refUser = referredById.get(tgId);
+      const completed =
+        Boolean(refUser?.referral?.firstOrderDoneAt) || paidSet.has(tgId);
+
+      return {
+        telegramId: tgId,
+        displayName: getReferralDisplayName(refUser || { telegramId: tgId }),
+        completed,
+      };
+    });
 
     const completedMembers = members.filter((m) => m?.completed === true);
     const pendingMembers = members.filter((m) => m?.completed !== true);
