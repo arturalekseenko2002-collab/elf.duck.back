@@ -736,6 +736,297 @@ async function resolveOrderNotificationPoint(order) {
   return null;
 }
 
+const DAILY_STATS_RUNTIME_SENT = new Set();
+
+function getPointStatsChatId(point) {
+  return String(point?.statsChatId || point?.notificationChatId || "").trim();
+}
+
+function getWarsawDayKey(dateLike = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Warsaw",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(dateLike));
+
+  const year = parts.find((p) => p.type === "year")?.value || "0000";
+  const month = parts.find((p) => p.type === "month")?.value || "00";
+  const day = parts.find((p) => p.type === "day")?.value || "00";
+
+  return `${year}-${month}-${day}`;
+}
+
+function getWarsawTimeHHMM(dateLike = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Warsaw",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(dateLike));
+
+  const hour = parts.find((p) => p.type === "hour")?.value || "00";
+  const minute = parts.find((p) => p.type === "minute")?.value || "00";
+
+  return `${hour}:${minute}`;
+}
+
+function getPointStatsSendTime(point, dateLike = new Date()) {
+  const todayKey = getWarsawDayKey(dateLike);
+
+  const rawSchedule =
+    point?.scheduleByDate?.[todayKey] ||
+    point?.scheduleByDate?.get?.(todayKey) ||
+    null;
+
+  if (rawSchedule?.isOpen === false) {
+    return null;
+  }
+
+  const raw = String(
+    rawSchedule?.to ||
+      point?.statsSendTime ||
+      point?.workEnd ||
+      point?.closeTime ||
+      point?.workingHours?.to ||
+      point?.schedule?.endTime ||
+      "23:59"
+  ).trim();
+
+  return /^([01]\d|2[0-3]):([0-5]\d)$/.test(raw) ? raw : "23:59";
+}
+
+function getOrderPointMatch(point) {
+  const pointKey = String(point?.key || "").trim().replace(/,+$/, "");
+
+  if (pointKey === "delivery") {
+    return { deliveryType: "delivery", deliveryMethod: "courier" };
+  }
+
+  if (pointKey === "delivery-2") {
+    return { deliveryType: "delivery", deliveryMethod: "inpost" };
+  }
+
+  return {
+    deliveryType: "pickup",
+    pickupPointId: point?._id,
+  };
+}
+
+function shouldCountOrderInDailyStats(order) {
+  if (!order) return false;
+  if (String(order?.status || "") === "canceled") return false;
+  if (order?.payment?.cashbackFullyPaid === true) return true;
+  if (String(order?.payment?.status || "") === "paid") return true;
+  if (["processing", "done"].includes(String(order?.status || ""))) return true;
+  return false;
+}
+
+function allocateCashbackBySubtotal(orderTotal, orderCashback, itemSubtotal) {
+  const total = Number(orderTotal || 0);
+  const cashback = Number(orderCashback || 0);
+  const subtotal = Number(itemSubtotal || 0);
+
+  if (total <= 0 || cashback <= 0 || subtotal <= 0) return 0;
+  return Number(((cashback * subtotal) / total).toFixed(2));
+}
+
+function buildDailyStatsMessage(point, orders, dayKey) {
+  const productMap = new Map();
+  let turnoverZl = 0;
+  let cashbackPaidZl = 0;
+
+  for (const order of orders) {
+    const orderTotal = Number(order?.totalZl || 0);
+    const orderCashback = Number(order?.payment?.cashbackAppliedZl || 0);
+    turnoverZl += orderTotal;
+    cashbackPaidZl += orderCashback;
+
+    for (const row of Array.isArray(order?.items) ? order.items : []) {
+      const productKey = String(row?.productKey || "").trim();
+      const productTitle =
+        [row?.productTitle1, row?.productTitle2].filter(Boolean).join(" ").trim() ||
+        productKey ||
+        "Товар";
+
+      const flavorRows = Array.isArray(row?.flavors) ? row.flavors : [];
+      const productSubtotal = flavorRows.reduce(
+        (sum, f) => sum + Number(f?.qty || 0) * Number(f?.unitPrice || 0),
+        0
+      );
+      const productCashback = allocateCashbackBySubtotal(orderTotal, orderCashback, productSubtotal);
+
+      let productAgg = productMap.get(productKey || productTitle);
+      if (!productAgg) {
+        productAgg = {
+          key: productKey || productTitle,
+          title: productTitle,
+          qty: 0,
+          subtotalZl: 0,
+          cashbackZl: 0,
+          flavors: new Map(),
+        };
+        productMap.set(productKey || productTitle, productAgg);
+      }
+
+      productAgg.subtotalZl += productSubtotal;
+      productAgg.cashbackZl += productCashback;
+
+      for (const f of flavorRows) {
+        const flavorKey = String(f?.flavorKey || "").trim();
+        const flavorLabel = String(f?.flavorLabel || f?.flavorKey || "Вкус").trim();
+        const flavorQty = Number(f?.qty || 0);
+        const flavorSubtotal = flavorQty * Number(f?.unitPrice || 0);
+        const flavorCashback = allocateCashbackBySubtotal(orderTotal, orderCashback, flavorSubtotal);
+
+        productAgg.qty += flavorQty;
+
+        let flavorAgg = productAgg.flavors.get(flavorKey || flavorLabel);
+        if (!flavorAgg) {
+          flavorAgg = {
+            key: flavorKey || flavorLabel,
+            label: flavorLabel,
+            qty: 0,
+            subtotalZl: 0,
+            cashbackZl: 0,
+          };
+          productAgg.flavors.set(flavorKey || flavorLabel, flavorAgg);
+        }
+
+        flavorAgg.qty += flavorQty;
+        flavorAgg.subtotalZl += flavorSubtotal;
+        flavorAgg.cashbackZl += flavorCashback;
+      }
+    }
+  }
+
+  const products = Array.from(productMap.values()).sort((a, b) => b.subtotalZl - a.subtotalZl);
+  const salesCount = orders.length;
+  const pointTitle = point?.title || point?.address || point?.key || "Склад";
+
+  const lines = [
+    `📊 <b>СТАТИСТИКА ЗА ДЕНЬ</b>`,
+    ``,
+    `🏪 <b>Склад:</b> ${escapeHtml(pointTitle)}`,
+    `📅 <b>Дата:</b> ${escapeHtml(dayKey)}`,
+    `🧾 <b>Продаж:</b> ${salesCount}`,
+    `💰 <b>Оборот:</b> ${Number(turnoverZl || 0).toFixed(2)} PLN`,
+    `🪙 <b>Оплачено кэшбеком:</b> ${Number(cashbackPaidZl || 0).toFixed(2)} PLN`,
+    ``,
+    `<b>Товары:</b>`,
+  ];
+
+  if (!products.length) {
+    lines.push(`Продаж за день не было.`);
+  } else {
+    for (const product of products) {
+      lines.push(
+        ``,
+        `• <b>${escapeHtml(product.title)}</b> — ${product.qty} шт. — ${product.subtotalZl.toFixed(2)} PLN${product.cashbackZl > 0 ? ` — кэшбек ${product.cashbackZl.toFixed(2)} PLN` : ""}`
+      );
+
+      const flavors = Array.from(product.flavors.values()).sort((a, b) => b.subtotalZl - a.subtotalZl);
+      for (const flavor of flavors) {
+        lines.push(
+          `   - ${escapeHtml(flavor.label)} — ${flavor.qty} шт. — ${flavor.subtotalZl.toFixed(2)} PLN${flavor.cashbackZl > 0 ? ` — кэшбек ${flavor.cashbackZl.toFixed(2)} PLN` : ""}`
+        );
+      }
+    }
+  }
+
+  return lines.join("\n");
+}
+
+async function sendDailyPointStats(point, orders, dayKey) {
+  try {
+    if (!bot || !point) return { ok: false, reason: "NO_BOT_OR_POINT" };
+
+    const chatId = getPointStatsChatId(point);
+    if (!chatId) return { ok: false, reason: "NO_STATS_CHAT" };
+
+    const text = buildDailyStatsMessage(point, orders, dayKey);
+
+    await bot.telegram.sendMessage(chatId, text, {
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+    });
+
+    return { ok: true };
+  } catch (e) {
+    console.error("sendDailyPointStats error:", e);
+    return { ok: false, reason: "SEND_ERROR" };
+  }
+}
+
+async function processDailyPointStats() {
+  try {
+    const now = new Date();
+    const nowTime = getWarsawTimeHHMM(now);
+    const dayKey = getWarsawDayKey(now);
+    const ordersSince = new Date(Date.now() - 48 * 60 * 60 * 1000);
+
+    const points = await PickupPoint.find(
+      {
+        $or: [
+          { statsChatId: { $exists: true, $ne: "" } },
+          { notificationChatId: { $exists: true, $ne: "" } },
+        ],
+      },
+      {
+        _id: 1,
+        key: 1,
+        title: 1,
+        address: 1,
+        notificationChatId: 1,
+        statsChatId: 1,
+        statsSendTime: 1,
+        scheduleByDate: 1,
+        workEnd: 1,
+        closeTime: 1,
+        workingHours: 1,
+        schedule: 1,
+      }
+    ).lean();
+
+    for (const point of points) {
+      const sendTime = getPointStatsSendTime(point, now);
+      if (!sendTime) continue;
+      if (nowTime < sendTime) continue;
+
+      const dedupeKey = `${String(point?._id || "")}:${dayKey}`;
+      if (DAILY_STATS_RUNTIME_SENT.has(dedupeKey)) continue;
+
+      const match = getOrderPointMatch(point);
+      const orders = await Order.find(
+        {
+          ...match,
+          createdAt: { $gte: ordersSince },
+          status: { $ne: "canceled" },
+        },
+        {
+          totalZl: 1,
+          status: 1,
+          payment: 1,
+          items: 1,
+          createdAt: 1,
+        }
+      ).lean();
+
+      const dayOrders = orders.filter((order) => {
+        if (getWarsawDayKey(order?.createdAt) !== dayKey) return false;
+        return shouldCountOrderInDailyStats(order);
+      });
+
+      const sent = await sendDailyPointStats(point, dayOrders, dayKey);
+      if (sent?.ok) {
+        DAILY_STATS_RUNTIME_SENT.add(dedupeKey);
+      }
+    }
+  } catch (e) {
+    console.error("processDailyPointStats error:", e);
+  }
+}
+
 async function notifyManagerClientArrived(order) {
   try {
     if (!bot || !order) return { ok: false, reason: "NO_BOT_OR_ORDER" };
@@ -961,6 +1252,16 @@ async function sendOrderCreatedNotification(order) {
     console.error("sendOrderCreatedNotification error:", e);
   }
 }
+
+setInterval(() => {
+  processDailyPointStats().catch((e) => {
+    console.error("daily point stats interval error:", e);
+  });
+}, 60 * 1000);
+
+processDailyPointStats().catch((e) => {
+  console.error("daily point stats initial run error:", e);
+});
 
 async function refreshManagerOrderMessage(order) {
   try {

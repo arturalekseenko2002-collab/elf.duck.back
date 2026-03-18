@@ -43,6 +43,8 @@ const PickupPointSchema = new mongoose.Schema(
 
     // 🔔 канал или группа для уведомлений
     notificationChatId: { type: String, default: "" },
+    statsChatId: { type: String, default: "" },
+    statsSendTime: { type: String, default: "23:59" },
   },
   { timestamps: true }
 );
