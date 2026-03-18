@@ -1202,7 +1202,7 @@ async function sendDailyPointStats(point, orders, dayKey, extra = {}) {
 async function processDailyPointStats() {
   try {
     const now = new Date();
-    const nowTime = getWarsawTimeHHMM(now);
+    const nowHHMM = getWarsawTimeHHMM(now);
     const dayKey = getWarsawDayKey(now);
     const ordersSince = new Date(Date.now() - 48 * 60 * 60 * 1000);
 
@@ -1221,6 +1221,7 @@ async function processDailyPointStats() {
         notificationChatId: 1,
         statsChatId: 1,
         statsSendTime: 1,
+        managerSalaryPercent: 1,
         scheduleByDate: 1,
         workEnd: 1,
         closeTime: 1,
@@ -1232,7 +1233,7 @@ async function processDailyPointStats() {
     for (const point of points) {
       const sendTime = getPointStatsSendTime(point, now);
       if (!sendTime) continue;
-      if (nowTime < sendTime) continue;
+      if (nowHHMM < sendTime) continue;
 
       const dedupeKey = `${String(point?._id || "")}:${dayKey}`;
       if (DAILY_STATS_RUNTIME_SENT.has(dedupeKey)) continue;
@@ -1246,6 +1247,7 @@ async function processDailyPointStats() {
         },
         {
           userTelegramId: 1,
+          orderNo: 1,
           totalZl: 1,
           status: 1,
           payment: 1,
