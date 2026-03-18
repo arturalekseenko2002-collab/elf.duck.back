@@ -2738,6 +2738,13 @@ app.post("/admin/pickup-points", requireAdmin, async (req, res) => {
 
     const notificationChatId = String(b.notificationChatId || "").trim();
 
+    const statsChatId = String(b.statsChatId || "").trim();
+    const statsSendTime = String(b.statsSendTime || "23:59").trim();
+    const scheduleByDate =
+      b.scheduleByDate && typeof b.scheduleByDate === "object"
+        ? b.scheduleByDate
+        : {};
+
     const created = await PickupPoint.create({
       key: finalKey,
       title: rawTitle,
@@ -2746,6 +2753,9 @@ app.post("/admin/pickup-points", requireAdmin, async (req, res) => {
       isActive: b.isActive ?? true,
       allowedAdminTelegramIds: allowed,
       notificationChatId,
+      statsChatId,
+      statsSendTime,
+      scheduleByDate,
     });
 
     res.json({ ok: true, pickupPoint: created });
@@ -2769,8 +2779,11 @@ app.patch("/admin/pickup-points/:id", requireAdmin, async (req, res) => {
       "isActive",
       "allowedAdminTelegramIds",
       "notificationChatId",
+      "statsChatId",
+      "statsSendTime",
       "paymentConfig",
       "scheduleByDatePatch",
+      "scheduleByDate",
     ];
     
     const update = {};
@@ -2790,6 +2803,21 @@ app.patch("/admin/pickup-points/:id", requireAdmin, async (req, res) => {
 
     if (update.notificationChatId !== undefined) {
       update.notificationChatId = String(update.notificationChatId || "").trim();
+    }
+
+    if (update.statsChatId !== undefined) {
+      update.statsChatId = String(update.statsChatId || "").trim();
+    }
+
+    if (update.statsSendTime !== undefined) {
+      update.statsSendTime = String(update.statsSendTime || "23:59").trim();
+    }
+
+    if (update.scheduleByDate !== undefined) {
+      update.scheduleByDate =
+        update.scheduleByDate && typeof update.scheduleByDate === "object"
+          ? update.scheduleByDate
+          : {};
     }
 
     if (update.paymentConfig !== undefined) {
