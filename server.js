@@ -42,167 +42,6 @@ function genRefCode() {
   return Math.random().toString(36).slice(2, 8); // 6 симолов
 }
 
-function ensureReferralGroupsArray(user) {
-  if (!user.referral) user.referral = {};
-  user.referral.rewardGroups = Array.isArray(user.referral.rewardGroups)
-    ? user.referral.rewardGroups
-    : [];
-  return user.referral.rewardGroups;
-}
-
-function attachReferralToRewardGroup(ownerUser, referredTelegramId) {
-  const referralId = String(referredTelegramId || "").trim();
-  if (!ownerUser || !referralId) return false;
-
-  const groups = ensureReferralGroupsArray(ownerUser);
-
-  const alreadyAdded = groups.some((group) =>
-    Array.isArray(group?.memberTelegramIds) &&
-    group.memberTelegramIds.map((x) => String(x)).includes(referralId)
-  );
-  if (alreadyAdded) return false;
-
-  let targetGroup = groups.find(
-    (group) =>
-      group?.rewardClaimed !== true &&
-      Array.isArray(group?.memberTelegramIds) &&
-      group.memberTelegramIds.length < 2
-  );
-
-  if (!targetGroup) {
-    targetGroup = {
-      pairIndex: groups.length + 1,
-      memberTelegramIds: [],
-      rewardClaimed: false,
-      rewardClaimedAt: null,
-      rewardAmountZl: 25,
-    };
-    groups.push(targetGroup);
-  }
-
-  targetGroup.memberTelegramIds = Array.isArray(targetGroup.memberTelegramIds)
-    ? targetGroup.memberTelegramIds.map((x) => String(x))
-    : [];
-
-  if (!targetGroup.memberTelegramIds.includes(referralId)) {
-    targetGroup.memberTelegramIds.push(referralId);
-  }
-
-  return true;
-}
-
-function getReferralDisplayName(user) {
-  if (!user) return "Пользователь";
-  if (user.username) return `@${String(user.username).trim()}`;
-  if (user.firstName) return String(user.firstName).trim();
-  return String(user.telegramId || "Пользователь");
-}
-
-async function markReferralFirstOrderDoneIfNeeded(telegramId) {
-  const safeTelegramId = String(telegramId || "").trim();
-  if (!safeTelegramId) return false;
-
-  const referredUser = await User.findOne({ telegramId: safeTelegramId });
-  if (!referredUser) return false;
-
-  if (referredUser?.referral?.firstOrderDoneAt) return false;
-
-  const inviterCode = String(referredUser?.referral?.usedCode || "").trim();
-  if (!inviterCode) return false;
-
-  referredUser.referral = referredUser.referral || {};
-  referredUser.referral.firstOrderDoneAt = new Date();
-  await referredUser.save();
-
-  return true;
-}
-
-async function buildReferralStatusForUser(ownerUser) {
-  if (!ownerUser) {
-    return {
-      code: "",
-      totalReferrals: 0,
-      referralsCount: 0,
-      availableClaims: 0,
-      groups: [],
-    };
-  }
-
-  const groups = ensureReferralGroupsArray(ownerUser);
-
-  const memberIds = groups.flatMap((group) =>
-    Array.isArray(group?.memberTelegramIds) ? group.memberTelegramIds.map((x) => String(x)) : []
-  );
-
-  const referredUsers = memberIds.length
-    ? await User.find(
-        { telegramId: { $in: memberIds } },
-        { telegramId: 1, username: 1, firstName: 1, photoUrl: 1, createdAt: 1, referral: 1 }
-      ).lean()
-    : [];
-
-  const referredById = new Map(
-    referredUsers.map((row) => [String(row.telegramId || ""), row])
-  );
-
-  const completedOrderTelegramIds = memberIds.length
-    ? await Order.distinct("userTelegramId", {
-        userTelegramId: { $in: memberIds },
-        status: { $ne: "canceled" },
-      })
-    : [];
-
-  const completedSet = new Set((completedOrderTelegramIds || []).map((x) => String(x || "")));
-
-  const mappedGroups = groups.map((group) => {
-    const members = (Array.isArray(group?.memberTelegramIds) ? group.memberTelegramIds : []).map((tgId) => {
-      const safeTgId = String(tgId || "");
-      const refUser = referredById.get(safeTgId);
-      const hasFirstOrder = Boolean(refUser?.referral?.firstOrderDoneAt) || completedSet.has(safeTgId);
-
-      return {
-        telegramId: safeTgId,
-        invitedAt: refUser?.referral?.referredAt || refUser?.createdAt || null,
-        username: String(refUser?.username || ""),
-        firstName: String(refUser?.firstName || ""),
-        photoUrl: String(refUser?.photoUrl || ""),
-        displayName: getReferralDisplayName(refUser || { telegramId: safeTgId }),
-        firstOrderDoneAt: refUser?.referral?.firstOrderDoneAt || null,
-        completed: hasFirstOrder,
-      };
-    });
-
-    const completedCount = members.filter((m) => m.completed).length;
-    const isComplete = members.length === 2;
-    const isClaimed = group?.rewardClaimed === true;
-    const readyToClaim = isComplete && completedCount === 2 && !isClaimed;
-
-    return {
-      id: String(group?._id || ""),
-      pairIndex: Number(group?.pairIndex || 0),
-      rewardAmountZl: Number(group?.rewardAmountZl || 25),
-      rewardZl: Number(group?.rewardAmountZl || 25),
-      rewardClaimed: isClaimed,
-      rewardClaimedAt: group?.rewardClaimedAt || null,
-      claimedAt: group?.rewardClaimedAt || null,
-      completedCount,
-      isComplete,
-      isClaimed,
-      isClaimable: readyToClaim,
-      readyToClaim,
-      members,
-    };
-  });
-
-  return {
-    code: String(ownerUser?.referral?.code || ""),
-    totalReferrals: referredUsers.length,
-    referralsCount: referredUsers.length,
-    availableClaims: mappedGroups.filter((g) => g.isClaimable).length,
-    groups: mappedGroups,
-  };
-}
-
 function genOrderNo() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let out = "ED-";
@@ -588,8 +427,6 @@ async function applyOrderCashback(order) {
   });
 
   if (!freshOrder) return { applied: false, cashbackZl: 0, percent: 0 };
-
-  await markReferralFirstOrderDoneIfNeeded(freshOrder.userTelegramId);
 
   // защита от повторного начисления
   if (freshOrder.cashbackAppliedAt) {
@@ -1635,39 +1472,42 @@ async function ensureUserRefCode(user) {
   return code;
 }
 
-async function attachReferralIfAny(user, normalizedRef) {
-  const safeRef = String(normalizedRef || "").replace(/^ref_/, "").trim();
-  if (!user || !safeRef) return false;
+async function attachReferralIfAny(newUser, refRaw) {
+  const ref = String(refRaw || "").trim();
+  if (!ref) return;
 
-  user.referral = user.referral || {};
-
-  // уже привязан по рефке — повторно не трогаем
-  if (String(user.referral.usedCode || "").trim()) {
-    return false;
+  let inviter = await User.findOne({ "referral.code": ref });
+  if (!inviter && /^\d+$/.test(ref)) {
+    inviter = await User.findOne({ telegramId: ref });
   }
+  if (!inviter) return;
+  if (String(inviter.telegramId) === String(newUser.telegramId)) return;
 
-  let inviter = await User.findOne({ "referral.code": safeRef });
-  if (!inviter && /^\d+$/.test(safeRef)) {
-    inviter = await User.findOne({ telegramId: safeRef });
-  }
-  if (!inviter) return false;
+  await User.updateOne(
+    { _id: newUser._id, "referral.referredBy": { $in: [null, undefined] } },
+    {
+      $set: {
+        "referral.referredBy": inviter?.username
+          ? String(inviter.username)
+          : String(inviter.telegramId),
+        "referral.referredByCode": inviter.referral?.code || null,
+        "referral.referredAt": new Date(),
+      },
+    }
+  );
 
-  // защита от саморефералки
-  if (String(inviter.telegramId || "") === String(user.telegramId || "")) {
-    return false;
-  }
-
-  user.referral.usedCode = safeRef;
-  user.referral.invitedByTelegramId = String(inviter.telegramId || "");
-  user.referral.referredAt = user.referral.referredAt || new Date();
-
-  const addedToGroup = attachReferralToRewardGroup(inviter, user.telegramId);
-  if (addedToGroup) {
-    await inviter.save();
-  }
-
-  await user.save();
-  return true;
+  await User.updateOne(
+    { _id: inviter._id },
+    {
+      $inc: { "referral.referralsCount": 1 },
+      $push: {
+        "referral.referrals": {
+          telegramId: String(newUser.telegramId),
+          at: new Date(),
+        },
+      },
+    }
+  );
 }
 
 function requireAdmin(req, res, next) {
@@ -1688,45 +1528,38 @@ app.get("/ping", (_, res) => res.json({ ok: true }));
 // регистрируем юзера из mini-app
 app.post("/register-user", async (req, res) => {
   try {
-    const { telegramId, username, firstName, lastName, photoUrl, ref } = req.body || {};
+    const { telegramId, username, firstName, lastName, photoUrl, ref } = req.body;
     const normalizedRef = String(ref || "").replace(/^ref_/, "").trim();
-
     if (!telegramId) {
       return res.status(400).json({ ok: false, error: "telegramId is required" });
     }
 
-    let user = await User.findOne({ telegramId: String(telegramId) });
+    let user = await User.findOne({ telegramId });
 
     if (!user) {
       const newUser = await User.create({
-        telegramId: String(telegramId),
+        telegramId,
         username: username || null,
         firstName: firstName || null,
         lastName: lastName || null,
         photoUrl: photoUrl || null,
       });
 
-      await ensureUserRefCode(newUser);
+      const code = await ensureUserRefCode(newUser);
       await attachReferralIfAny(newUser, normalizedRef);
 
       const fresh = await User.findById(newUser._id).lean();
       return res.json({ ok: true, user: fresh });
     }
 
+    // update существующего
     user.username = username || user.username;
     user.firstName = firstName || user.firstName;
     user.lastName = lastName || user.lastName;
     user.photoUrl = photoUrl || user.photoUrl;
     await user.save();
 
-    if (normalizedRef) {
-      await attachReferralIfAny(user, normalizedRef);
-      user = await User.findById(user._id);
-    }
-
-    await ensureUserRefCode(user);
-
-    return res.json({ ok: true, user });
+    res.json({ ok: true, user });
   } catch (e) {
     console.error("/register-user error:", e);
     res.status(500).json({ ok: false, error: "Server error" });
@@ -1790,17 +1623,68 @@ app.get("/referral/status", async (req, res) => {
     const user = await User.findOne(
       { telegramId },
       { telegramId: 1, referral: 1 }
-    );
+    ).lean();
 
     if (!user) {
       return res.status(404).json({ ok: false, error: "User not found" });
     }
 
-    const referralStatus = await buildReferralStatusForUser(user);
+    const rawRefs = Array.isArray(user?.referral?.referrals) ? user.referral.referrals : [];
+    const claimedPairsCount = Math.max(0, Number(user?.referral?.claimedPairsCount || 0));
+
+    const ids = rawRefs
+      .map((r) => String(r?.telegramId || "").trim())
+      .filter(Boolean);
+
+    const referredUsers = ids.length
+      ? await User.find(
+          { telegramId: { $in: ids } },
+          { telegramId: 1, username: 1, firstName: 1, photoUrl: 1 }
+        ).lean()
+      : [];
+
+    const referredById = new Map(referredUsers.map((u) => [String(u.telegramId), u]));
+
+    const referrals = rawRefs.map((r) => {
+      const tgId = String(r?.telegramId || "").trim();
+      const u = referredById.get(tgId) || null;
+
+      return {
+        telegramId: tgId,
+        invitedAt: r?.at || null,
+        username: u?.username || "",
+        firstName: u?.firstName || "",
+        photoUrl: u?.photoUrl || "",
+      };
+    });
+
+    const groups = [];
+    for (let i = 0; i < referrals.length; i += 2) {
+      const pairIndex = groups.length;
+      const members = referrals.slice(i, i + 2);
+      const isComplete = members.length === 2;
+      const isClaimed = pairIndex < claimedPairsCount;
+      const isClaimable = isComplete && !isClaimed;
+
+      groups.push({
+        pairIndex,
+        members,
+        isComplete,
+        isClaimed,
+        isClaimable,
+        rewardZl: 25,
+      });
+    }
 
     return res.json({
       ok: true,
-      referralStatus,
+      referralStatus: {
+        code: user?.referral?.code || "",
+        referralsCount: referrals.length,
+        claimedPairsCount,
+        availableClaims: Math.max(0, groups.filter((g) => g.isClaimable).length),
+        groups,
+      },
     });
   } catch (e) {
     console.error("GET /referral/status error:", e);
@@ -1810,98 +1694,47 @@ app.get("/referral/status", async (req, res) => {
 
 app.post("/referral/claim", async (req, res) => {
   try {
-    const { telegramId } = req.body || {};
-    const safeTelegramId = String(telegramId || "").trim();
-
-    if (!safeTelegramId) {
-      return res.status(400).json({ ok: false, error: "TELEGRAM_ID_REQUIRED" });
+    const telegramId = String(req.body?.telegramId || "").trim();
+    if (!telegramId) {
+      return res.status(400).json({ ok: false, error: "telegramId is required" });
     }
 
-    const user = await User.findOne({ telegramId: safeTelegramId });
+    const user = await User.findOne({ telegramId });
     if (!user) {
-      return res.status(404).json({ ok: false, error: "USER_NOT_FOUND" });
+      return res.status(404).json({ ok: false, error: "User not found" });
     }
 
-    const referralStatus = await buildReferralStatusForUser(user);
-    const groups = Array.isArray(referralStatus?.groups) ? referralStatus.groups : [];
+    const totalRefs = Array.isArray(user?.referral?.referrals) ? user.referral.referrals.length : 0;
+    const fullPairs = Math.floor(totalRefs / 2);
+    const claimedPairsCount = Math.max(0, Number(user?.referral?.claimedPairsCount || 0));
 
-    const claimableGroup = groups.find(
-      (group) =>
-        group?.rewardClaimed !== true &&
-        Array.isArray(group?.members) &&
-        group.members.length === 2 &&
-        group.members.every((m) => m?.completed)
-    );
-
-    if (claimableGroup) {
-      const realGroups = ensureReferralGroupsArray(user);
-      const targetGroup = realGroups.find(
-        (group) => String(group?._id || "") === String(claimableGroup.id || "")
-      );
-
-      if (!targetGroup) {
-        return res.status(400).json({ ok: false, error: "REFERRAL_GROUP_NOT_FOUND" });
-      }
-
-      if (targetGroup.rewardClaimed === true) {
-        return res.json({ ok: false, status: "ALREADY_CLAIMED" });
-      }
-
-      targetGroup.rewardClaimed = true;
-      targetGroup.rewardClaimedAt = new Date();
-
-      user.cashbackLedger = Array.isArray(user.cashbackLedger) ? user.cashbackLedger : [];
-      user.cashbackLedger.push({
-        sourceOrderId: null,
-        amountZl: 25,
-        remainingZl: 25,
-        earnedAt: new Date(),
-        expiresAt: addDays(new Date(), 40),
-        warnedAt: null,
-        expiredAt: null,
-      });
-
-      recalcUserCashbackBalanceFromLedger(user);
-      await user.save();
-
-      return res.json({
-        ok: true,
-        status: "REWARD_GRANTED",
-        amount: 25,
-      });
-    }
-
-    const progressGroup = groups.find(
-      (group) =>
-        group?.rewardClaimed !== true &&
-        Array.isArray(group?.members) &&
-        group.members.length === 2
-    );
-
-    if (progressGroup) {
-      const completedMembers = progressGroup.members.filter((m) => m.completed);
-      const pendingMembers = progressGroup.members.filter((m) => !m.completed);
-
-      if (completedMembers.length === 1 && pendingMembers.length === 1) {
-        return res.json({
-          ok: false,
-          status: "ONE_COMPLETED",
-          completed: completedMembers[0].displayName,
-          pending: pendingMembers[0].displayName,
-        });
-      }
-
-      return res.json({
+    if (fullPairs <= claimedPairsCount) {
+      return res.status(400).json({
         ok: false,
-        status: "NONE_COMPLETED",
-        users: progressGroup.members.map((m) => m.displayName),
+        error: "NO_REWARD_AVAILABLE",
+        message: "Для получения награды необходимо пригласить ещё одного реферала.",
       });
     }
 
-    return res.json({ ok: false, status: "NOT_ENOUGH_REFERRALS" });
+    user.referral = {
+      ...(user.referral?.toObject ? user.referral.toObject() : user.referral || {}),
+      claimedPairsCount: claimedPairsCount + 1,
+    };
+
+    const rewardZl = 25;
+    user.cashbackBalance = Number(user.cashbackBalance || 0) + rewardZl;
+
+    await user.save();
+
+    return res.json({
+      ok: true,
+      rewardZl,
+      claimedPairsCount: claimedPairsCount + 1,
+      cashbackBalance: user.cashbackBalance,
+    });
   } catch (e) {
     console.error("POST /referral/claim error:", e);
-    res.status(500).json({ ok: false, error: "SERVER_ERROR" });
+    return res.status(500).json({ ok: false, error: "Server error" });
   }
 });
 
