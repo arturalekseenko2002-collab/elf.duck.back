@@ -895,7 +895,8 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
 
   for (const order of orders) {
     const orderCashbackSpent = Number(order?.payment?.cashbackAppliedZl || 0);
-    const orderTotalPaidByClient = Number(order?.totalZl || 0);
+    const orderTotalZl = Number(order?.totalZl || 0);
+    const orderPaidByMethodZl = Math.max(0, Number((orderTotalZl - orderCashbackSpent).toFixed(2)));
     const orderCashbackEarned = Number(order?.cashbackZl || 0);
     const paymentMethod = getOrderDisplayedPaymentMethod(order);
     const paymentMethodLabel = formatPaymentMethodLabel(paymentMethod);
@@ -939,15 +940,17 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
         const net = qty * unitPrice;
         const flavorSmartDiscount = Math.max(0, gross - net);
         const flavorCashbackSpent = allocateCashbackBySubtotal(
-          orderTotalPaidByClient,
+          orderTotalZl,
           orderCashbackSpent,
           net
         );
+
         const flavorCashbackEarned = allocateCashbackBySubtotal(
-          orderTotalPaidByClient,
+          orderTotalZl,
           orderCashbackEarned,
           net
         );
+
         const flavorNetRevenue = Math.max(0, net - flavorCashbackSpent);
 
         soldPositionsQty += qty;
@@ -975,7 +978,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
       }
     }
 
-    const paymentAmount = Math.max(0, orderTotalPaidByClient - orderCashbackSpent);
+    const paymentAmount = orderPaidByMethodZl;
     if (paymentAmount > 0) {
       const currentPayment = paymentMap.get(paymentMethod) || {
         amountZl: 0,
@@ -1002,7 +1005,8 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
       smartDiscountZl: Number(orderSmartDiscountZl.toFixed(2)),
       cashbackSpentZl: Number(orderCashbackSpent.toFixed(2)),
       cashbackEarnedZl: Number(orderCashbackEarned.toFixed(2)),
-      totalZl: Number(orderTotalPaidByClient.toFixed(2)),
+      totalZl: Number(orderPaidByMethodZl.toFixed(2)),
+      compactSummary: `скидка (смарт-цена): ${Number(orderSmartDiscountZl || 0).toFixed(2)} • скидка по (кэшбеку): ${Number(orderCashbackSpent || 0).toFixed(2)} • начислено кэшбека: ${Number(orderCashbackEarned || 0).toFixed(2)}`,
       lines: orderLines,
       createdAt: order?.createdAt || null,
     });
@@ -1010,13 +1014,17 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
 
   const revenueZl = Math.max(
     0,
-    Number((grossTurnoverZl - cashbackSpentZl - smartDiscountZl - cashbackEarnedZl).toFixed(2))
+    Number((grossTurnoverZl - smartDiscountZl - cashbackSpentZl).toFixed(2))
   );
 
   const managerSalaryPercent = Number(point?.managerSalaryPercent || 16);
+  const managerSalaryBaseZl = Math.max(
+    0,
+    Number((grossTurnoverZl - smartDiscountZl).toFixed(2))
+  );
   const managerSalaryZl = Math.max(
     0,
-    Number(((revenueZl * managerSalaryPercent) / 100).toFixed(2))
+    Number(((managerSalaryBaseZl * managerSalaryPercent) / 100).toFixed(2))
   );
 
   const revenueAfterSalaryZl = Math.max(
@@ -1034,20 +1042,19 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
   const lines = [
     `📊 <b>СТАТИСТИКА ДНЯ</b>`,
     `🏪 <b>Склад:</b> ${escapeHtml(pointTitle)}`,
-    `📅 <b>Дата:</b> ${escapeHtml(dayKey)}`,
+    `📅 ${escapeHtml(dayKey)}`,
     ``,
-    `🫂 <b>Новых рефералов:</b> ${referredFirstOrderUsers.size}`,
-    ``,
-    `🧾 <b>Продано позиций:</b> ${soldPositionsQty}`,
+    `🫂 <b>Рефералов:</b> ${referredFirstOrderUsers.size}`,
+    `🧾 <b>Позиций:</b> ${soldPositionsQty}`,
     `💰 <b>Оборот:</b> ${Number(grossTurnoverZl || 0).toFixed(2)} PLN`,
-    `🪙 <b>Оплачено / списано кэшбеком:</b> ${Number(cashbackSpentZl || 0).toFixed(2)} PLN`,
+    `🪙 <b>Кэшбеком оплачено:</b> ${Number(cashbackSpentZl || 0).toFixed(2)} PLN`,
     `🏷 <b>Скидка по смарт-цене:</b> ${Number(smartDiscountZl || 0).toFixed(2)} PLN`,
-    `🎁 <b>Начислено кэшбека клиентам:</b> ${Number(cashbackEarnedZl || 0).toFixed(2)} PLN`,
+    `🎁 <b>Начислено кэшбека:</b> ${Number(cashbackEarnedZl || 0).toFixed(2)} PLN`,
     `📈 <b>Выручка:</b> ${revenueZl.toFixed(2)} PLN`,
-    `👨‍💼 <b>Зарплата менеджеру:</b> ${managerSalaryZl.toFixed(2)} PLN (${managerSalaryPercent}%)`,
-    `💼 <b>Выручка после вычета зп:</b> ${revenueAfterSalaryZl.toFixed(2)} PLN`,
+    `👨‍💼 <b>ЗП менеджеру:</b> ${managerSalaryZl.toFixed(2)} PLN (${managerSalaryPercent}%)`,
+    `💼 <b>После вычета зп:</b> ${revenueAfterSalaryZl.toFixed(2)} PLN`,
     ``,
-    `💳 <b>По способам оплаты:</b>`,
+    `💳 <b>Оплата:</b>`,
   ];
 
   if (payments.length) {
@@ -1061,41 +1068,21 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
   }
 
   lines.push(``);
-  lines.push(`━━━━━━━━━━━━━━`);
-  lines.push(`🧾 <b>ЗАКАЗЫ ЗА ДЕНЬ</b>`);
-  lines.push(`━━━━━━━━━━━━━━`);
-  lines.push(``);
+  lines.push(`🧾 <b>ЗАКАЗЫ</b>`);
 
   if (!sortedOrders.length) {
     lines.push(`Заказов за день не было.`);
   } else {
     for (const order of sortedOrders) {
-      lines.push(`#${escapeHtml(order.orderNo || "—")}`);
-      lines.push(`👤 <b>Клиент:</b> ${escapeHtml(order.clientName)}`);
-      lines.push(`🛍 <b>Товары:</b> ${order.itemsQty} шт.`);
-      lines.push(`💳 <b>Оплата:</b> ${escapeHtml(order.paymentMethodLabel)}`);
-      lines.push(`🏷 <b>Скидка по смарт-цене:</b> ${order.smartDiscountZl.toFixed(2)} PLN`);
-      lines.push(`🪙 <b>Кэшбеком оплачено:</b> ${order.cashbackSpentZl.toFixed(2)} PLN`);
-      lines.push(`🎁 <b>Начислено кэшбека:</b> ${order.cashbackEarnedZl.toFixed(2)} PLN`);
-      lines.push(`💵 <b>Итого:</b> ${order.totalZl.toFixed(2)} PLN`);
-      lines.push(``);
-
-      if (order.lines.length) {
-        for (const rowLine of order.lines) {
-          lines.push(String(rowLine || ""));
-        }
-      } else {
-        lines.push(`• Без товаров`);
-      }
-
-      lines.push(``);
+      lines.push(
+        `#${escapeHtml(order.orderNo || "—")} • ${escapeHtml(order.clientName)} • ${order.itemsQty} шт. • ${escapeHtml(order.paymentMethodLabel)} • ${order.totalZl.toFixed(2)} PLN`
+      );
+      lines.push(`  смарт: ${order.smartDiscountZl.toFixed(2)} • кэшбек: ${order.cashbackSpentZl.toFixed(2)} • начислено: ${order.cashbackEarnedZl.toFixed(2)}`);
     }
   }
 
-  lines.push(`━━━━━━━━━━━━━━`);
-  lines.push(`🧺 <b>ПРОДАННЫЙ АССОРТИМЕНТ</b>`);
-  lines.push(`━━━━━━━━━━━━━━`);
   lines.push(``);
+  lines.push(`🧺 <b>АССОРТИМЕНТ</b>`);
 
   if (!products.length) {
     lines.push(`Продаж за день не было.`);
@@ -1106,14 +1093,17 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
       );
 
       const flavors = Array.from(product.flavors.values()).sort((a, b) => b.qty - a.qty);
-      flavors.forEach((flavor, idx) => {
-        lines.push(`  ${idx + 1}) ${escapeHtml(flavor.label)} — ${flavor.qty} шт.`);
-      });
+      const flavorLine = flavors
+        .map((flavor) => `${escapeHtml(flavor.label)} ×${flavor.qty}`)
+        .join(` • `);
 
-      lines.push(``);
+      if (flavorLine) {
+        lines.push(`  ${flavorLine}`);
+      }
     }
   }
 
+  lines.push(``);
   lines.push(`🦆 ELF DUCK &lt;&gt; СТАТИСТИКА`);
 
   return lines.join("\n");
