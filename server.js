@@ -3348,6 +3348,82 @@ app.post("/orders/confirm", async (req, res) => {
     }
 
     // 8) create order
+
+    const duplicateCreatedAfter = new Date(Date.now() - 15 * 1000);
+
+    const currentOrderFingerprint = JSON.stringify({
+      telegramId,
+      totalZl: Number(totalZl.toFixed(2)),
+      deliveryType,
+      deliveryMethod,
+      pickupPointId: pickupPointId ? String(pickupPointId) : null,
+      arrivalTime: cart.arrivalTime ?? null,
+      courierAddress: cart.courierAddress ?? null,
+      inpostData: cart.inpostData ?? {},
+      items: orderItems.map((row) => ({
+        productKey: String(row?.productKey || ""),
+        flavors: (Array.isArray(row?.flavors) ? row.flavors : []).map((f) => ({
+          flavorKey: String(f?.flavorKey || ""),
+          qty: Number(f?.qty || 0),
+          unitPrice: Number(f?.unitPrice || 0),
+        })),
+      })),
+    });
+
+    const recentDuplicateCandidates = await Order.find(
+      {
+        userTelegramId: telegramId,
+        totalZl: Number(totalZl.toFixed(2)),
+        deliveryType,
+        deliveryMethod,
+        pickupPointId,
+        status: "created",
+        createdAt: { $gte: duplicateCreatedAfter },
+      },
+      {
+        _id: 1,
+        userTelegramId: 1,
+        totalZl: 1,
+        deliveryType: 1,
+        deliveryMethod: 1,
+        pickupPointId: 1,
+        arrivalTime: 1,
+        courierAddress: 1,
+        inpostData: 1,
+        items: 1,
+        createdAt: 1,
+      }
+    )
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const duplicateOrder = recentDuplicateCandidates.find((existing) => {
+      const existingFingerprint = JSON.stringify({
+        telegramId: String(existing?.userTelegramId || "").trim(),
+        totalZl: Number(existing?.totalZl || 0),
+        deliveryType: existing?.deliveryType || null,
+        deliveryMethod: existing?.deliveryMethod || null,
+        pickupPointId: existing?.pickupPointId ? String(existing.pickupPointId) : null,
+        arrivalTime: existing?.arrivalTime ?? null,
+        courierAddress: existing?.courierAddress ?? null,
+        inpostData: existing?.inpostData ?? {},
+        items: (Array.isArray(existing?.items) ? existing.items : []).map((row) => ({
+          productKey: String(row?.productKey || ""),
+          flavors: (Array.isArray(row?.flavors) ? row.flavors : []).map((f) => ({
+            flavorKey: String(f?.flavorKey || ""),
+            qty: Number(f?.qty || 0),
+            unitPrice: Number(f?.unitPrice || 0),
+          })),
+        })),
+      });
+
+      return existingFingerprint === currentOrderFingerprint;
+    });
+
+    if (duplicateOrder) {
+      return res.json({ ok: true, order: duplicateOrder, duplicate: true });
+    }
+    
     const created = await Order.create({
       userTelegramId: telegramId,
 
