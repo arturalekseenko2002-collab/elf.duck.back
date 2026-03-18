@@ -84,7 +84,16 @@ function attachReferralToRewardGroup(ownerUser, referredTelegramId) {
     ? targetGroup.memberTelegramIds.map((x) => String(x)).filter(Boolean)
     : [];
 
-  targetGroup.memberTelegramIds = [...currentIds, referralId];
+  if (!currentIds.includes(referralId)) {
+    currentIds.push(referralId);
+  }
+
+  targetGroup.memberTelegramIds = currentIds;
+
+  if (typeof ownerUser.markModified === "function") {
+    ownerUser.markModified("referral.rewardGroups");
+  }
+
   return true;
 }
 
@@ -1662,6 +1671,9 @@ async function attachReferralIfAny(user, normalizedRef) {
 
   const addedToGroup = attachReferralToRewardGroup(inviter, user.telegramId);
   if (addedToGroup) {
+    if (typeof inviter.markModified === "function") {
+      inviter.markModified("referral.rewardGroups");
+    }
     await inviter.save();
   }
 
