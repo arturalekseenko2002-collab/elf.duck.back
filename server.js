@@ -971,7 +971,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
 
         flavorAgg.qty += qty;
 
-        orderLines.push(`• ${productTitle} — ${flavorLabel} ×${qty}`);
+        orderLines.push(`• ${escapeHtml(productTitle)} — ${escapeHtml(flavorLabel)} ×${qty}`);
       }
     }
 
@@ -1070,7 +1070,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
     lines.push(`Заказов за день не было.`);
   } else {
     for (const order of sortedOrders) {
-      lines.push(`#${escapeHtml(order.orderNo)}`);
+      lines.push(`#${escapeHtml(order.orderNo || "—")}`);
       lines.push(`👤 <b>Клиент:</b> ${escapeHtml(order.clientName)}`);
       lines.push(`🛍 <b>Товары:</b> ${order.itemsQty} шт.`);
       lines.push(`💳 <b>Оплата:</b> ${escapeHtml(order.paymentMethodLabel)}`);
@@ -1082,7 +1082,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
 
       if (order.lines.length) {
         for (const rowLine of order.lines) {
-          lines.push(rowLine);
+          lines.push(String(rowLine || ""));
         }
       } else {
         lines.push(`• Без товаров`);
@@ -1102,7 +1102,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
   } else {
     for (const product of products) {
       lines.push(
-        `• <b>${escapeHtml(product.title)}</b> — ${product.qty} шт. — ${Number(product.netRevenueZl || 0).toFixed(2)} PLN`
+        `• <b>${escapeHtml(product.title || "Товар")}</b> — ${product.qty} шт. — ${Number(product.netRevenueZl || 0).toFixed(2)} PLN`
       );
 
       const flavors = Array.from(product.flavors.values()).sort((a, b) => b.qty - a.qty);
