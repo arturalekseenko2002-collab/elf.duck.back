@@ -215,7 +215,7 @@ async function buildReferralStatusForUser(ownerUser) {
     code: String(ownerUser?.referral?.code || ""),
     totalReferrals: referredUsers.length,
     referralsCount: referredUsers.length,
-    availableClaims: mappedGroups.filter((g) => g.isClaimable).length,
+    availableClaims: mappedGroups.filter((g) => g.isClaimable).length, //d
     groups: mappedGroups,
   };
 }
