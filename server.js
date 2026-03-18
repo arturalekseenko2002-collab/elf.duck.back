@@ -1123,17 +1123,86 @@ async function sendDailyPointStats(point, orders, dayKey, extra = {}) {
   try {
     if (!bot || !point) return { ok: false, reason: "NO_BOT_OR_POINT" };
 
-    const chatId = getPointStatsChatId(point);
+    let chatId = getPointStatsChatId(point);
     if (!chatId) return { ok: false, reason: "NO_STATS_CHAT" };
 
-    const text = buildDailyStatsMessage(point, orders, dayKey, extra);
+    const fullText = buildDailyStatsMessage(point, orders, dayKey, extra);
 
-    await bot.telegram.sendMessage(chatId, text, {
-      parse_mode: "HTML",
-      disable_web_page_preview: true,
-    });
+    const splitTelegramHtmlMessage = (text, maxLen = 3500) => {
+      const src = String(text || "");
+      if (!src) return [""];
 
-    return { ok: true };
+      const lines = src.split("\n");
+      const chunks = [];
+      let current = "";
+
+      const pushCurrent = () => {
+        if (current) chunks.push(current);
+        current = "";
+      };
+
+      for (const line of lines) {
+        const candidate = current ? `${current}\n${line}` : line;
+
+        if (candidate.length <= maxLen) {
+          current = candidate;
+          continue;
+        }
+
+        if (current) pushCurrent();
+
+        if (line.length <= maxLen) {
+          current = line;
+          continue;
+        }
+
+        let rest = line;
+        while (rest.length > maxLen) {
+          chunks.push(rest.slice(0, maxLen));
+          rest = rest.slice(maxLen);
+        }
+        current = rest;
+      }
+
+      pushCurrent();
+      return chunks.length ? chunks : [src.slice(0, maxLen)];
+    };
+
+    const parts = splitTelegramHtmlMessage(fullText, 3500);
+
+    const sendAllParts = async (targetChatId) => {
+      for (const part of parts) {
+        await bot.telegram.sendMessage(targetChatId, part, {
+          parse_mode: "HTML",
+          disable_web_page_preview: true,
+        });
+      }
+    };
+
+    try {
+      await sendAllParts(chatId);
+      return { ok: true, parts: parts.length };
+    } catch (e) {
+      const migratedChatId = e?.response?.parameters?.migrate_to_chat_id;
+      if (!migratedChatId) throw e;
+
+      const nextChatId = String(migratedChatId).trim();
+
+      await PickupPoint.updateOne(
+        { _id: point._id },
+        { $set: { statsChatId: nextChatId } }
+      );
+
+      chatId = nextChatId;
+      await sendAllParts(chatId);
+
+      return {
+        ok: true,
+        migrated: true,
+        chatId,
+        parts: parts.length,
+      };
+    }
   } catch (e) {
     console.error("sendDailyPointStats error:", e);
     return { ok: false, reason: "SEND_ERROR" };
