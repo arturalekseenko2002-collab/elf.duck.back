@@ -5213,6 +5213,18 @@ if (TG_BOT_TOKEN) {
     .catch((e) => {
       console.error("❌ bot.launch error:", e);
     });
+    
+  process.once("SIGINT", () => {
+    try {
+      bot?.stop("SIGINT");
+    } catch {}
+  });
+
+  process.once("SIGTERM", () => {
+    try {
+      bot?.stop("SIGTERM");
+    } catch {}
+  });
 
 } else {
   console.warn("⚠️ TELEGRAM_BOT_TOKEN not set — bot disabled");
