@@ -5222,9 +5222,6 @@ if (TG_BOT_TOKEN) {
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  if (bot) {
-    bot.launch().then(() => console.log("✅ Bot launched"));
-  }
 });
 
 setInterval(() => {
