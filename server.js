@@ -3076,6 +3076,141 @@ app.get("/cart", async (req, res) => {
   }
 });
 
+app.delete("/cart/item", async (req, res) => {
+  try {
+    const telegramId = String(req.body?.telegramId || "").trim();
+    const itemKey = String(req.body?.itemKey || "").trim();
+
+    if (!telegramId) {
+      return res.status(400).json({ ok: false, error: "telegramId is required" });
+    }
+
+    if (!itemKey) {
+      return res.status(400).json({ ok: false, error: "itemKey is required" });
+    }
+
+    const [productKeyRaw, flavorKeyRaw] = itemKey.split("__");
+    const productKey = String(productKeyRaw || "").trim();
+    const flavorKey = String(flavorKeyRaw || "").trim();
+
+    if (!productKey || !flavorKey) {
+      return res.status(400).json({ ok: false, error: "itemKey is invalid" });
+    }
+
+    const cart = await Cart.findOne({ telegramId });
+    if (!cart) {
+      return res.json({ ok: true, cart: { telegramId, items: [] } });
+    }
+
+    const existingItems = Array.isArray(cart.items) ? cart.items : [];
+
+    const itemToRemove = existingItems.find(
+      (it) =>
+        String(it?.productKey || "").trim() === productKey &&
+        String(it?.flavorKey || "").trim() === flavorKey
+    );
+
+    if (!itemToRemove) {
+      return res.json({ ok: true, cart });
+    }
+
+    const removeQty = Math.max(1, Number(itemToRemove?.qty || 1));
+
+    const normId = (v) => String(v || "").trim().replace(/,+$/, "");
+    const toObjId = (v) => {
+      const s = normId(v);
+      return mongoose.isValidObjectId(s) ? new mongoose.Types.ObjectId(s) : null;
+    };
+
+    const [courierPP, inpostPP] = await Promise.all([
+      PickupPoint.findOne({ key: { $in: ["delivery", "delivery,"] } }, { _id: 1, key: 1 }).lean(),
+      PickupPoint.findOne({ key: { $in: ["delivery-2", "delivery-2,"] } }, { _id: 1, key: 1 }).lean(),
+    ]);
+
+    const courierWarehouseId = courierPP?._id || null;
+    const inpostWarehouseId = inpostPP?._id || null;
+
+    const stockContextIdFor = ({ type, method, pickupPointId }) => {
+      if (type === "pickup") return toObjId(pickupPointId);
+      if (type === "delivery") {
+        if (method === "inpost") return inpostWarehouseId;
+        return courierWarehouseId;
+      }
+      return null;
+    };
+
+    const contextId = stockContextIdFor({
+      type: cart.checkoutDeliveryType,
+      method: cart.checkoutDeliveryMethod,
+      pickupPointId: cart.checkoutPickupPointId,
+    });
+
+    const normFlavorKey = (v) => String(v || "").trim().replace(/,+$/, "");
+
+    if (contextId) {
+      const fkNorm = normFlavorKey(flavorKey);
+      const fkCandidates = Array.from(
+        new Set([String(flavorKey || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean))
+      );
+
+      const ppCandidates = [contextId, String(contextId)].filter(Boolean);
+
+      await Product.updateOne(
+        {
+          productKey,
+          "flavors.flavorKey": { $in: fkCandidates },
+          "flavors.stockByPickupPoint.pickupPointId": { $in: ppCandidates },
+        },
+        {
+          $inc: {
+            "flavors.$[f].stockByPickupPoint.$[s].reservedQty": -removeQty,
+          },
+        },
+        {
+          arrayFilters: [
+            { "f.flavorKey": { $in: fkCandidates } },
+            { "s.pickupPointId": { $in: ppCandidates } },
+          ],
+        }
+      );
+
+      await Product.updateOne(
+        {
+          productKey,
+          "flavors.flavorKey": { $in: fkCandidates },
+          "flavors.stockByPickupPoint.pickupPointId": { $in: ppCandidates },
+        },
+        {
+          $max: {
+            "flavors.$[f].stockByPickupPoint.$[s].reservedQty": 0,
+          },
+        },
+        {
+          arrayFilters: [
+            { "f.flavorKey": { $in: fkCandidates } },
+            { "s.pickupPointId": { $in: ppCandidates } },
+          ],
+        }
+      );
+    }
+
+    cart.items = existingItems.filter(
+      (it) =>
+        !(
+          String(it?.productKey || "").trim() === productKey &&
+          String(it?.flavorKey || "").trim() === flavorKey
+        )
+    );
+
+    await cart.save();
+
+    return res.json({ ok: true, cart });
+  } catch (e) {
+    console.error("DELETE /cart/item error:", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
 // ===== Public: replace cart (save full state) =====
 app.put("/cart", async (req, res) => {
   try {
