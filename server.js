@@ -4900,7 +4900,7 @@ app.get("/orders/:id/payment-config", async (req, res) => {
 
 const TG_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const WEBAPP_URL = process.env.WEBAPP_URL || "";
-const START_BANNER_URL = process.env.START_BANNER_URL || "";
+const START_BANNER_URL = String(process.env.START_BANNER_URL || "").trim();
 
 if (TG_BOT_TOKEN) {
   bot = new Telegraf(TG_BOT_TOKEN);
@@ -4912,15 +4912,6 @@ if (TG_BOT_TOKEN) {
       const username = String(ctx.from?.username || "").trim() || null;
       const firstName = String(ctx.from?.first_name || "").trim() || null;
       const lastName = String(ctx.from?.last_name || "").trim() || null;
-
-      console.log("[BOT_START] incoming", {
-        tgId,
-        username,
-        firstName,
-        payload,
-        hasWebappUrl: Boolean(WEBAPP_URL),
-        hasStartBanner: Boolean(START_BANNER_URL),
-      });
 
       if (!tgId) {
         throw new Error("TG_ID_MISSING");
@@ -4934,13 +4925,13 @@ if (TG_BOT_TOKEN) {
           username,
           firstName,
           lastName,
+          cashbackBalance: 0,
+          cashbackLedger: [],
           referral: {
             code: "",
             usedCode: "",
             rewardGroups: [],
           },
-          cashbackBalance: 0,
-          cashbackLedger: [],
         });
       } else {
         let changed = false;
@@ -4996,7 +4987,6 @@ if (TG_BOT_TOKEN) {
       }
 
       let openLink = String(WEBAPP_URL || "").trim();
-
       if (!openLink) {
         throw new Error("WEBAPP_URL_MISSING");
       }
@@ -5006,9 +4996,7 @@ if (TG_BOT_TOKEN) {
         if (payload) u.searchParams.set("startapp", payload);
         if (myRefCode) u.searchParams.set("ref", myRefCode);
         openLink = u.toString();
-      } catch (urlErr) {
-        console.error("[BOT_START] URL build error:", urlErr);
-
+      } catch {
         const params = new URLSearchParams();
         if (payload) params.set("startapp", payload);
         if (myRefCode) params.set("ref", myRefCode);
@@ -5016,22 +5004,20 @@ if (TG_BOT_TOKEN) {
       }
 
       const caption = "Добро пожаловать в ELF DUCK SHOP!";
-
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.webApp("💨 Посетить магазин 🛍️", openLink)],
       ]);
 
       if (START_BANNER_URL) {
         try {
-          await ctx.replyWithPhoto({ url: START_BANNER_URL }, { caption, ...keyboard });
+          await ctx.replyWithPhoto(START_BANNER_URL, { caption, ...keyboard });
           return;
         } catch (photoErr) {
-          console.error("[BOT_START] replyWithPhoto failed, fallback to text:", photoErr);
+          console.error("[BOT_START] replyWithPhoto failed:", photoErr);
         }
       }
 
       await ctx.reply(caption, keyboard);
-
     } catch (e) {
       console.error("bot.start error:", e);
       try {
