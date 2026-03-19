@@ -413,6 +413,19 @@ async function getIsReferralFirstOrderDiscountEligible(telegramId, cartItems = [
     };
   }
 
+  const inviterExists = await User.exists({
+    "referral.code": usedCode,
+  });
+
+  if (!inviterExists) {
+    return {
+      eligible: false,
+      percent: 0,
+      totalBeforeDiscount,
+      reason: "INVITER_NOT_FOUND",
+    };
+  }
+
   if (user?.referral?.firstOrderDoneAt) {
     return {
       eligible: false,
@@ -3245,30 +3258,22 @@ app.get("/cart", async (req, res) => {
         .toFixed(2)
     );
 
-    let reason = null;
+    let eligibility = null;
 
     if (!applied) {
-      const eligibility = await getIsReferralFirstOrderDiscountEligible(telegramId, safeItems);
-      reason = eligibility?.reason || null;
+      eligibility = await getIsReferralFirstOrderDiscountEligible(telegramId, safeItems);
     }
 
     return res.json({
       ok: true,
       cart: safeCart,
       referralFirstOrderDiscount: {
-        eligible: applied
-          ? true
-          : ![
-              "NO_USED_REFERRAL_CODE",
-              "INVITER_NOT_FOUND",
-              "FIRST_ORDER_ALREADY_DONE",
-              "PAID_ORDER_ALREADY_EXISTS",
-            ].includes(reason),
-        applied,
-        percent,
-        totalBeforeDiscount,
-        totalDiscountZl,
-        reason,
+        eligible: referralFirstOrderDiscountEligibility.eligible,
+        applied: Boolean(referralFirstOrderDiscountMeta?.applied),
+        percent: Number(referralFirstOrderDiscountMeta?.percent || 0),
+        totalBeforeDiscount: Number(referralFirstOrderDiscountMeta?.totalBeforeDiscount || 0),
+        totalDiscountZl: Number(referralFirstOrderDiscountMeta?.totalDiscountZl || 0),
+        reason: referralFirstOrderDiscountEligibility.reason || null,
       },
     });
   } catch (e) {
