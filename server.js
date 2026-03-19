@@ -5032,7 +5032,6 @@ if (TG_BOT_TOKEN) {
 
       await ctx.reply(caption, keyboard);
 
-      await ctx.reply(caption, keyboard);
     } catch (e) {
       console.error("bot.start error:", e);
       try {
