@@ -4907,50 +4907,130 @@ if (TG_BOT_TOKEN) {
 
   bot.start(async (ctx) => {
     try {
-      const payload = ctx.startPayload || ""; // ref_XXXX и т.п.
-      const tgId = String(ctx.from?.id || "");
-      let me = tgId ? await User.findOne({ telegramId: tgId }) : null;
+      const payload = String(ctx.startPayload || "").trim();
+      const tgId = String(ctx.from?.id || "").trim();
+      const username = String(ctx.from?.username || "").trim() || null;
+      const firstName = String(ctx.from?.first_name || "").trim() || null;
+      const lastName = String(ctx.from?.last_name || "").trim() || null;
 
-      if (!me && tgId) {
+      console.log("[BOT_START] incoming", {
+        tgId,
+        username,
+        firstName,
+        payload,
+        hasWebappUrl: Boolean(WEBAPP_URL),
+        hasStartBanner: Boolean(START_BANNER_URL),
+      });
+
+      if (!tgId) {
+        throw new Error("TG_ID_MISSING");
+      }
+
+      let me = await User.findOne({ telegramId: tgId });
+
+      if (!me) {
         me = await User.create({
           telegramId: tgId,
-          username: ctx.from?.username || null,
-          firstName: ctx.from?.first_name || null,
-          lastName: ctx.from?.last_name || null,
+          username,
+          firstName,
+          lastName,
+          referral: {
+            code: "",
+            usedCode: "",
+            rewardGroups: [],
+          },
+          cashbackBalance: 0,
+          cashbackLedger: [],
         });
+      } else {
+        let changed = false;
+
+        if (me.username !== username) {
+          me.username = username;
+          changed = true;
+        }
+
+        if (me.firstName !== firstName) {
+          me.firstName = firstName;
+          changed = true;
+        }
+
+        if (me.lastName !== lastName) {
+          me.lastName = lastName;
+          changed = true;
+        }
+
+        if (!me.referral || typeof me.referral !== "object") {
+          me.referral = {
+            code: "",
+            usedCode: "",
+            rewardGroups: [],
+          };
+          changed = true;
+        }
+
+        if (!Array.isArray(me.referral.rewardGroups)) {
+          me.referral.rewardGroups = [];
+          changed = true;
+        }
+
+        if (changed) {
+          await me.save();
+        }
       }
 
-      let myRefCode = null;
-      if (me) {
-        myRefCode = await ensureUserRefCode(me);
+      let myRefCode = String(me?.referral?.code || "").trim();
+
+      if (!myRefCode) {
+        if (typeof ensureUserRefCode === "function") {
+          myRefCode = await ensureUserRefCode(me);
+        } else {
+          myRefCode = genRefCode();
+          me.referral = me.referral || {};
+          me.referral.code = myRefCode;
+          if (!Array.isArray(me.referral.rewardGroups)) {
+            me.referral.rewardGroups = [];
+          }
+          await me.save();
+        }
       }
 
-      let openLink = WEBAPP_URL;
+      let openLink = String(WEBAPP_URL || "").trim();
+
+      if (!openLink) {
+        throw new Error("WEBAPP_URL_MISSING");
+      }
+
       try {
-        const u = new URL(WEBAPP_URL);
+        const u = new URL(openLink);
         if (payload) u.searchParams.set("startapp", payload);
         if (myRefCode) u.searchParams.set("ref", myRefCode);
         openLink = u.toString();
-      } catch {
+      } catch (urlErr) {
+        console.error("[BOT_START] URL build error:", urlErr);
+
         const params = new URLSearchParams();
         if (payload) params.set("startapp", payload);
         if (myRefCode) params.set("ref", myRefCode);
-        openLink = `${WEBAPP_URL}${params.toString() ? "?" + params.toString() : ""}`;
+        openLink = `${String(WEBAPP_URL || "").trim()}${params.toString() ? "?" + params.toString() : ""}`;
       }
 
-      const caption = [
-        "Добро пожаловать в ELF DUCK SHOP!",
-      ].join("\n");
+      const caption = "Добро пожаловать в ELF DUCK SHOP!";
 
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.webApp("💨 Посетить магазин 🛍️", openLink)],
       ]);
 
       if (START_BANNER_URL) {
-        await ctx.replyWithPhoto({ url: START_BANNER_URL }, { caption, ...keyboard });
-      } else {
-        await ctx.reply(caption, keyboard);
+        try {
+          await ctx.replyWithPhoto({ url: START_BANNER_URL }, { caption, ...keyboard });
+          return;
+        } catch (photoErr) {
+          console.error("[BOT_START] replyWithPhoto failed, fallback to text:", photoErr);
+        }
       }
+
+      await ctx.reply(caption, keyboard);
     } catch (e) {
       console.error("bot.start error:", e);
       try {
