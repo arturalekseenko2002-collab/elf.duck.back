@@ -379,6 +379,147 @@ function getCashbackPercentByTotal(totalZl) {
   return 4;
 }
 
+async function getIsReferralFirstOrderDiscountEligible(telegramId, cartItems = []) {
+  const safeTelegramId = String(telegramId || "").trim();
+  if (!safeTelegramId) {
+    return {
+      eligible: false,
+      percent: 0,
+      totalBeforeDiscount: 0,
+      reason: "NO_TELEGRAM_ID",
+    };
+  }
+
+  const totalBeforeDiscount = Number(
+    (Array.isArray(cartItems) ? cartItems : []).reduce((sum, it) => {
+      const qty = Math.max(1, Number(it?.qty || 1));
+      const unitPrice = Number(it?.unitPrice || 0);
+      return sum + qty * unitPrice;
+    }, 0).toFixed(2)
+  );
+
+  const user = await User.findOne(
+    { telegramId: safeTelegramId },
+    { telegramId: 1, referral: 1 }
+  ).lean();
+
+  const usedCode = String(user?.referral?.usedCode || "").trim();
+  if (!usedCode) {
+    return {
+      eligible: false,
+      percent: 0,
+      totalBeforeDiscount,
+      reason: "NO_USED_REFERRAL_CODE",
+    };
+  }
+
+  if (user?.referral?.firstOrderDoneAt) {
+    return {
+      eligible: false,
+      percent: 0,
+      totalBeforeDiscount,
+      reason: "FIRST_ORDER_ALREADY_DONE",
+    };
+  }
+
+  const hasPaidOrders = await Order.exists({
+    userTelegramId: safeTelegramId,
+    $or: [
+      { "payment.status": "paid" },
+      { status: { $in: ["processing", "done", "completed"] } },
+    ],
+  });
+
+  if (hasPaidOrders) {
+    return {
+      eligible: false,
+      percent: 0,
+      totalBeforeDiscount,
+      reason: "PAID_ORDER_ALREADY_EXISTS",
+    };
+  }
+
+  if (totalBeforeDiscount < 65) {
+    return {
+      eligible: false,
+      percent: 0,
+      totalBeforeDiscount,
+      reason: "TOTAL_BELOW_65",
+    };
+  }
+
+  return {
+    eligible: true,
+    percent: 10,
+    totalBeforeDiscount,
+    reason: "OK",
+  };
+}
+
+function applyReferralFirstOrderDiscountToCartItems(items = [], percent = 0) {
+  const safePercent = Math.max(0, Number(percent || 0));
+  if (!safePercent) {
+    return {
+      items: Array.isArray(items) ? items : [],
+      meta: {
+        applied: false,
+        percent: 0,
+        totalBeforeDiscount: Number(
+          (Array.isArray(items) ? items : []).reduce((sum, it) => {
+            const qty = Math.max(1, Number(it?.qty || 1));
+            const unitPrice = Number(it?.unitPrice || 0);
+            return sum + qty * unitPrice;
+          }, 0).toFixed(2)
+        ),
+        totalDiscountZl: 0,
+      },
+    };
+  }
+
+  const factor = (100 - safePercent) / 100;
+
+  const nextItems = (Array.isArray(items) ? items : []).map((it) => {
+    const oldUnitPrice = Number(it?.unitPrice || 0);
+    const newUnitPrice = Number((oldUnitPrice * factor).toFixed(2));
+    const qty = Math.max(1, Number(it?.qty || 1));
+
+    return {
+      ...it,
+      unitPrice: newUnitPrice,
+      referralFirstOrderDiscountPercent: safePercent,
+      referralFirstOrderDiscountPerItem: Number((oldUnitPrice - newUnitPrice).toFixed(2)),
+      referralFirstOrderDiscountTotalZl: Number(((oldUnitPrice - newUnitPrice) * qty).toFixed(2)),
+    };
+  });
+
+  const totalBeforeDiscount = Number(
+    (Array.isArray(items) ? items : []).reduce((sum, it) => {
+      const qty = Math.max(1, Number(it?.qty || 1));
+      const unitPrice = Number(it?.unitPrice || 0);
+      return sum + qty * unitPrice;
+    }, 0).toFixed(2)
+  );
+
+  const totalAfterDiscount = Number(
+    nextItems.reduce((sum, it) => {
+      const qty = Math.max(1, Number(it?.qty || 1));
+      const unitPrice = Number(it?.unitPrice || 0);
+      return sum + qty * unitPrice;
+    }, 0).toFixed(2)
+  );
+
+  return {
+    items: nextItems,
+    meta: {
+      applied: true,
+      percent: safePercent,
+      totalBeforeDiscount,
+      totalAfterDiscount,
+      totalDiscountZl: Number((totalBeforeDiscount - totalAfterDiscount).toFixed(2)),
+    },
+  };
+}
+
 function addDays(dateLike, days) {
   const dt = new Date(dateLike || Date.now());
   dt.setDate(dt.getDate() + Number(days || 0));
@@ -3296,8 +3437,30 @@ app.put("/cart", async (req, res) => {
         ).lean()
       : [];
 
-    const { repricedItems: cleanItems, smartPricingMeta } =
-      repriceCartItemsWithSmartPricing(cleanItemsBase, pricingProducts);
+  const { repricedItems: smartPricedItems, smartPricingMeta } =
+    repriceCartItemsWithSmartPricing(cleanItemsBase, pricingProducts);
+
+  const referralFirstOrderDiscountEligibility =
+    await getIsReferralFirstOrderDiscountEligible(telegramId, smartPricedItems);
+
+  const {
+    items: cleanItems,
+    meta: referralFirstOrderDiscountMeta,
+  } = referralFirstOrderDiscountEligibility.eligible
+    ? applyReferralFirstOrderDiscountToCartItems(
+        smartPricedItems,
+        referralFirstOrderDiscountEligibility.percent
+      )
+    : {
+        items: smartPricedItems,
+        meta: {
+          applied: false,
+          percent: 0,
+          totalBeforeDiscount: referralFirstOrderDiscountEligibility.totalBeforeDiscount,
+          totalDiscountZl: 0,
+          reason: referralFirstOrderDiscountEligibility.reason,
+        },
+      };
 
     const existing = await Cart.findOne({ telegramId }).lean();
 
@@ -3419,15 +3582,15 @@ app.put("/cart", async (req, res) => {
     const normFlavorKey = (v) => String(v || "").trim().replace(/,+$/, "");
 
     const checkReserveAvailable = async ({ productKey, flavorKey, pickupPointId, delta }) => {
-  const normId = (v) => String(v || "").trim().replace(/,+$/, "");
-  const toObjId = (v) => {
-    if (v instanceof mongoose.Types.ObjectId) return v;
-    if (v && typeof v === "object" && mongoose.isValidObjectId(String(v))) {
-      return new mongoose.Types.ObjectId(String(v));
-    }
-    const s = normId(v);
-    return mongoose.isValidObjectId(s) ? new mongoose.Types.ObjectId(s) : null;
-  };
+    const normId = (v) => String(v || "").trim().replace(/,+$/, "");
+    const toObjId = (v) => {
+      if (v instanceof mongoose.Types.ObjectId) return v;
+      if (v && typeof v === "object" && mongoose.isValidObjectId(String(v))) {
+        return new mongoose.Types.ObjectId(String(v));
+      }
+      const s = normId(v);
+      return mongoose.isValidObjectId(s) ? new mongoose.Types.ObjectId(s) : null;
+    };
 
   const ppObj = toObjId(pickupPointId);
   if (!ppObj) return;
@@ -3782,7 +3945,18 @@ for (const d of deltas) {
       { upsert: true, new: true }
     ).lean();
 
-    res.json({ ok: true, cart: updated, smartPricingMeta });
+    return res.json({
+      ok: true,
+      cart: updated,
+      smartPricingMeta,
+      referralFirstOrderDiscount: {
+        eligible: referralFirstOrderDiscountEligibility.eligible,
+        percent: Number(referralFirstOrderDiscountMeta?.percent || 0),
+        totalBeforeDiscount: Number(referralFirstOrderDiscountMeta?.totalBeforeDiscount || 0),
+        totalDiscountZl: Number(referralFirstOrderDiscountMeta?.totalDiscountZl || 0),
+        reason: referralFirstOrderDiscountEligibility.reason || null,
+      },
+    });
   } catch (e) {
     console.error("PUT /cart error:", e);
     res.status(500).json({ ok: false, error: "Server error" });
