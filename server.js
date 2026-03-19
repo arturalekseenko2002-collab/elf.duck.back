@@ -3196,20 +3196,80 @@ app.get("/products", async (req, res) => {
 app.get("/cart", async (req, res) => {
   try {
     const telegramId = String(req.query.telegramId || "").trim();
-    if (!telegramId) return res.status(400).json({ ok: false, error: "telegramId is required" });
+    if (!telegramId) {
+      return res.status(400).json({ ok: false, error: "telegramId is required" });
+    }
 
     const cart = await Cart.findOne({ telegramId }).lean();
-    res.json({
+
+    const safeCart =
+      cart || {
+        telegramId,
+        items: [],
+        checkoutDeliveryType: null,
+        checkoutDeliveryMethod: null,
+        checkoutPickupPointId: null,
+        arrivalTime: null,
+      };
+
+    const safeItems = Array.isArray(safeCart.items) ? safeCart.items : [];
+
+    const applied = safeItems.some(
+      (it) => Number(it?.referralFirstOrderDiscountPercent || 0) > 0
+    );
+
+    const percent = applied
+      ? Math.max(
+          0,
+          ...safeItems.map((it) => Number(it?.referralFirstOrderDiscountPercent || 0))
+        )
+      : 0;
+
+    const totalDiscountZl = Number(
+      safeItems
+        .reduce(
+          (sum, it) => sum + Number(it?.referralFirstOrderDiscountTotalZl || 0),
+          0
+        )
+        .toFixed(2)
+    );
+
+    const totalBeforeDiscount = Number(
+      safeItems
+        .reduce((sum, it) => {
+          const qty = Math.max(1, Number(it?.qty || 1));
+          const unitPrice = Number(it?.unitPrice || 0);
+          const discountPerItem = Number(it?.referralFirstOrderDiscountPerItem || 0);
+          return sum + qty * (unitPrice + discountPerItem);
+        }, 0)
+        .toFixed(2)
+    );
+
+    let reason = null;
+
+    if (!applied) {
+      const eligibility = await getIsReferralFirstOrderDiscountEligible(telegramId, safeItems);
+      reason = eligibility?.reason || null;
+    }
+
+    return res.json({
       ok: true,
-      cart:
-        cart || {
-          telegramId,
-          items: [],
-          checkoutDeliveryType: null,
-          checkoutDeliveryMethod: null,
-          checkoutPickupPointId: null,
-          arrivalTime: null,
-        },
+      cart: safeCart,
+      referralFirstOrderDiscount: {
+        eligible: applied
+          ? true
+          : ![
+              "NO_USED_REFERRAL_CODE",
+              "INVITER_NOT_FOUND",
+              "FIRST_ORDER_ALREADY_DONE",
+              "PAID_ORDER_ALREADY_EXISTS",
+            ].includes(reason),
+        applied,
+        percent,
+        totalBeforeDiscount,
+        totalDiscountZl,
+        reason,
+      },
     });
   } catch (e) {
     console.error("GET /cart error:", e);
