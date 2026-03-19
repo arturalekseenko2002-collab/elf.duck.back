@@ -413,6 +413,19 @@ async function getIsReferralFirstOrderDiscountEligible(telegramId, cartItems = [
     };
   }
 
+  const inviterExists = await User.exists({
+    "referral.code": usedCode,
+  });
+
+  if (!inviterExists) {
+    return {
+      eligible: false,
+      percent: 0,
+      totalBeforeDiscount,
+      reason: "INVITER_NOT_FOUND",
+    };
+  }
+
   if (user?.referral?.firstOrderDoneAt) {
     return {
       eligible: false,
@@ -3951,6 +3964,7 @@ for (const d of deltas) {
       smartPricingMeta,
       referralFirstOrderDiscount: {
         eligible: referralFirstOrderDiscountEligibility.eligible,
+        applied: Boolean(referralFirstOrderDiscountMeta?.applied),
         percent: Number(referralFirstOrderDiscountMeta?.percent || 0),
         totalBeforeDiscount: Number(referralFirstOrderDiscountMeta?.totalBeforeDiscount || 0),
         totalDiscountZl: Number(referralFirstOrderDiscountMeta?.totalDiscountZl || 0),
