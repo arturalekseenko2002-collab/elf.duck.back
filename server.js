@@ -4953,6 +4953,9 @@ if (TG_BOT_TOKEN) {
       }
     } catch (e) {
       console.error("bot.start error:", e);
+      try {
+        await ctx.reply("Произошла ошибка при открытии магазина. Попробуйте ещё раз.");
+      } catch {}
     }
   });
 
@@ -5135,6 +5138,15 @@ if (TG_BOT_TOKEN) {
       await ctx.answerCbQuery("Статус уже обновлён");
     } catch {}
   });
+
+  bot.launch()
+    .then(() => {
+      console.log("✅ User bot launched");
+    })
+    .catch((e) => {
+      console.error("❌ bot.launch error:", e);
+    });
+
 } else {
   console.warn("⚠️ TELEGRAM_BOT_TOKEN not set — bot disabled");
 }
