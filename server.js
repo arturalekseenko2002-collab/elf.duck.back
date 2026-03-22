@@ -883,17 +883,29 @@ async function updateManagerOrderChannelMessage(order, options = {}) {
 
     const messageChatId = String(
       order?.managerMessageChatId ||
+      order?.managerChannelChatId ||
       order?.notificationChatId ||
       order?.managerNotificationChatId ||
+      order?.managerChatId ||
       ""
     ).trim();
 
     const messageId = Number(
       order?.managerMessageId ||
+      order?.managerChannelMessageId ||
       order?.notificationMessageId ||
       order?.managerNotificationMessageId ||
+      order?.managerMsgId ||
       0
     );
+
+    console.log("[MANAGER MSG UPDATE]", {
+      orderId: String(order?._id || ""),
+      messageChatId,
+      messageId,
+      managerMessageChatId: order?.managerMessageChatId,
+      managerMessageId: order?.managerMessageId,
+    });
 
     if (!messageChatId || !messageId) return false;
 
@@ -1001,17 +1013,40 @@ async function updateManagerOrderChannelMessage(order, options = {}) {
       }
     }
 
+  const nextText = lines.join("\n");
+
+  try {
     await bot.telegram.editMessageText(
       messageChatId,
       messageId,
       undefined,
-      lines.join("\n"),
+      nextText,
       {
         parse_mode: "HTML",
         disable_web_page_preview: true,
         reply_markup: { inline_keyboard: [] },
       }
     );
+  } catch (editTextErr) {
+    console.error("updateManagerOrderChannelMessage editMessageText error:", editTextErr);
+
+    try {
+      await bot.telegram.editMessageReplyMarkup(messageChatId, messageId, undefined, {
+        inline_keyboard: [],
+      });
+    } catch (editMarkupErr) {
+      console.error("updateManagerOrderChannelMessage editMessageReplyMarkup error:", editMarkupErr);
+    }
+
+    try {
+      await bot.telegram.sendMessage(messageChatId, nextText, {
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
+      });
+    } catch (sendFallbackErr) {
+      console.error("updateManagerOrderChannelMessage fallback sendMessage error:", sendFallbackErr);
+    }
+  }
 
     return true;
   } catch (e) {
@@ -1916,11 +1951,26 @@ async function refreshManagerOrderMessage(order) {
         ? "Наличные"
         : "—";
 
+    const orderStatusKey = String(order?.status || "").trim().toLowerCase();
+    const canceledByTelegramId = String(order?.canceledByTelegramId || "").trim();
+    const userTelegramId = String(order?.userTelegramId || "").trim();
+
+    const canceledByClient =
+      orderStatusKey === "canceled" &&
+      canceledByTelegramId &&
+      canceledByTelegramId === userTelegramId;
+
     const orderStatusLabel =
-      String(order?.status || "") === "completed"
+      orderStatusKey === "completed"
         ? "✅ Выполнен"
-        : String(order?.status || "") === "assembled"
+        : orderStatusKey === "canceled"
+        ? canceledByClient
+          ? "❌ Отменен клиентом"
+          : "❌ Отклонен менеджером"
+        : orderStatusKey === "assembled"
         ? "🟠 Заказ собран"
+        : orderStatusKey === "processing"
+        ? "🟠 В процессе"
         : "⚪️ Создан";
 
     const lines = [
@@ -2000,10 +2050,23 @@ async function refreshManagerOrderMessage(order) {
     const text = lines.filter((line) => line !== null && line !== undefined).join("\n");
 
     const replyMarkup =
-      String(order?.status || "") === "completed"
+      orderStatusKey === "completed"
         ? {
             inline_keyboard: [
               [{ text: "✅ Заказ выполнен", callback_data: `mgr_order_completed_done:${order._id}` }],
+            ],
+          }
+        : orderStatusKey === "canceled"
+        ? {
+            inline_keyboard: [
+              [
+                {
+                  text: canceledByClient
+                    ? "❌ Заказ отменен клиентом"
+                    : "❌ Заказ отклонен менеджером",
+                  callback_data: `mgr_order_canceled_done:${order._id}`,
+                },
+              ],
             ],
           }
         : {
