@@ -882,6 +882,7 @@ async function updateManagerOrderChannelMessage(order, options = {}) {
     if (!bot || !order) return false;
 
     const messageChatId = String(
+      order?.payment?.managerMessageChatId ||
       order?.managerMessageChatId ||
       order?.managerChannelChatId ||
       order?.notificationChatId ||
@@ -891,6 +892,7 @@ async function updateManagerOrderChannelMessage(order, options = {}) {
     ).trim();
 
     const messageId = Number(
+      order?.payment?.managerMessageId ||
       order?.managerMessageId ||
       order?.managerChannelMessageId ||
       order?.notificationMessageId ||
@@ -903,6 +905,8 @@ async function updateManagerOrderChannelMessage(order, options = {}) {
       orderId: String(order?._id || ""),
       messageChatId,
       messageId,
+      paymentManagerMessageChatId: order?.payment?.managerMessageChatId,
+      paymentManagerMessageId: order?.payment?.managerMessageId,
       managerMessageChatId: order?.managerMessageChatId,
       managerMessageId: order?.managerMessageId,
     });
