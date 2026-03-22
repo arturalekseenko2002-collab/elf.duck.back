@@ -4510,6 +4510,81 @@ app.post("/orders/confirm", async (req, res) => {
   }
 });
 
+// ===== Public: cancel order by user =====
+app.post("/orders/:id/cancel", async (req, res) => {
+  try {
+    const orderId = String(req.params.id || "").trim();
+    const telegramId = String(req.body?.telegramId || "").trim();
+
+    if (!orderId) {
+      return res.status(400).json({ ok: false, error: "orderId is required" });
+    }
+
+    if (!telegramId) {
+      return res.status(400).json({ ok: false, error: "telegramId is required" });
+    }
+
+    const order = await Order.findById(orderId);
+    if (!order) {
+      return res.status(404).json({ ok: false, error: "Order not found" });
+    }
+
+    if (String(order.userTelegramId || "") !== telegramId) {
+      return res.status(403).json({ ok: false, error: "FORBIDDEN" });
+    }
+
+    const status = String(order.status || "").toLowerCase();
+
+    if (status === "completed") {
+      return res.status(400).json({
+        ok: false,
+        error: "COMPLETED_ORDER_CANNOT_BE_CANCELED",
+      });
+    }
+
+    if (status === "canceled") {
+      return res.json({ ok: true, order });
+    }
+
+    if (!order.stockReleasedAt) {
+      await releaseOrderReservedStock(order);
+      order.stockReleasedAt = new Date();
+    }
+
+    await refundOrderCashback(order);
+
+    const freshOrderAfterRefund = await Order.findById(order._id);
+    if (!freshOrderAfterRefund) {
+      throw new Error("ORDER_NOT_FOUND_AFTER_REFUND");
+    }
+
+    order.payment = {
+      ...(freshOrderAfterRefund.payment?.toObject
+        ? freshOrderAfterRefund.payment.toObject()
+        : freshOrderAfterRefund.payment || {}),
+      status: "unpaid",
+      paidAt: null,
+      checkedAt: new Date(),
+      checkedByTelegramId: telegramId,
+    };
+
+    order.status = "canceled";
+    order.canceledAt = new Date();
+    order.canceledByTelegramId = telegramId;
+
+    await order.save();
+
+    try {
+      stopPaymentReminder(order._id);
+    } catch {}
+
+    return res.json({ ok: true, order });
+  } catch (e) {
+    console.error("POST /orders/:id/cancel error:", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
 // ===== Repeat order (create new order from existing snapshot) =====
 app.post("/orders/repeat", async (req, res) => {
   try {
