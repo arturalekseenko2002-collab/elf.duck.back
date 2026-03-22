@@ -1904,10 +1904,29 @@ processDailyPointStats().catch((e) => {
 async function refreshManagerOrderMessage(order) {
   try {
     if (!bot || !order) return { ok: false, reason: "NO_BOT_OR_ORDER" };
+    
 
     const point = await resolveOrderNotificationPoint(order);
     const chatId = String(order?.payment?.managerMessageChatId || point?.notificationChatId || "").trim();
-    const messageId = Number(order?.payment?.managerMessageId || 0);
+    const messageChatId = String(
+      order?.payment?.managerMessageChatId ||
+      order?.managerMessageChatId ||
+      order?.managerChannelChatId ||
+      order?.notificationChatId ||
+      order?.managerNotificationChatId ||
+      order?.managerChatId ||
+      ""
+    ).trim();
+
+    const messageId = Number(
+      order?.payment?.managerMessageId ||
+      order?.managerMessageId ||
+      order?.managerChannelMessageId ||
+      order?.notificationMessageId ||
+      order?.managerNotificationMessageId ||
+      order?.managerMsgId ||
+      0
+    );
 
     if (!chatId || !messageId) {
       return { ok: false, reason: "NO_MANAGER_MESSAGE" };
@@ -2082,11 +2101,27 @@ async function refreshManagerOrderMessage(order) {
             ],
           };
 
-    await bot.telegram.editMessageText(chatId, messageId, undefined, text, {
-      parse_mode: "HTML",
-      disable_web_page_preview: true,
-      reply_markup: replyMarkup,
-    });
+    try {
+      await bot.telegram.editMessageText(
+        messageChatId,
+        messageId,
+        undefined,
+        lines.join("\n"),
+        {
+          parse_mode: "HTML",
+          disable_web_page_preview: true,
+          reply_markup: replyMarkup,
+        }
+      );
+    } catch (editErr) {
+      console.error("refreshManagerOrderMessage editMessageText error:", editErr);
+
+      try {
+        await bot.telegram.editMessageReplyMarkup(messageChatId, messageId, undefined, replyMarkup);
+      } catch (markupErr) {
+        console.error("refreshManagerOrderMessage editMessageReplyMarkup error:", markupErr);
+      }
+    }
 
     return { ok: true };
   } catch (e) {
@@ -4784,7 +4819,7 @@ app.post("/orders/:id/cancel", async (req, res) => {
 
     await order.save();
 
-    await updateManagerOrderChannelMessage(order, { cancelSource: "client" });
+    await refreshManagerOrderMessage(order);
 
     try {
       stopPaymentReminder(order._id);
