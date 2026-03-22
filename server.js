@@ -877,6 +877,149 @@ async function resolveOrderNotificationPoint(order) {
   return null;
 }
 
+async function updateManagerOrderChannelMessage(order, options = {}) {
+  try {
+    if (!bot || !order) return false;
+
+    const messageChatId = String(
+      order?.managerMessageChatId ||
+      order?.notificationChatId ||
+      order?.managerNotificationChatId ||
+      ""
+    ).trim();
+
+    const messageId = Number(
+      order?.managerMessageId ||
+      order?.notificationMessageId ||
+      order?.managerNotificationMessageId ||
+      0
+    );
+
+    if (!messageChatId || !messageId) return false;
+
+    const cancelSource = String(options?.cancelSource || "").trim().toLowerCase();
+
+    const statusLabel =
+      cancelSource === "client"
+        ? "❌ Отменен клиентом"
+        : cancelSource === "manager"
+        ? "❌ Отменен менеджером"
+        : "❌ Отменен";
+
+    const dateText = formatOrderDate(order?.createdAt || new Date());
+    const orderNo = escapeHtml(order?.orderNo || order?._id || "Заказ");
+    const totalText = Number(order?.totalZl || 0).toFixed(2);
+
+    const deliveryType = String(order?.deliveryType || "").trim();
+    const deliveryMethod = String(order?.deliveryMethod || "").trim();
+
+    const pickupTitle = escapeHtml(
+      order?.pickupPointTitle || order?.pickupPointAddress || ""
+    );
+    const courierAddress = escapeHtml(order?.courierAddress || "");
+    const arrivalTime = escapeHtml(order?.arrivalTime || "");
+    const inpostData = order?.inpostData || {};
+
+    const userName = escapeHtml(
+      order?.userSnapshot?.displayName ||
+      order?.userSnapshot?.firstName ||
+      order?.userFirstName ||
+      order?.userName ||
+      "Клиент"
+    );
+
+    const userTelegramId = escapeHtml(order?.userTelegramId || "");
+
+    const lines = [];
+    lines.push(`🧾 <b>Заказ ${orderNo}</b>`);
+    lines.push(`Статус: <b>${statusLabel}</b>`);
+    lines.push(`Создан: <b>${dateText}</b>`);
+    lines.push(
+      `Клиент: <b>${userName}</b>${userTelegramId ? ` (${userTelegramId})` : ""}`
+    );
+    lines.push(`Сумма: <b>${totalText} zł</b>`);
+
+    if (deliveryType === "pickup") {
+      lines.push(`Получение: <b>Самовывоз</b>${pickupTitle ? ` — ${pickupTitle}` : ""}`);
+      if (arrivalTime) lines.push(`Время прибытия: <b>${arrivalTime}</b>`);
+    } else if (deliveryType === "delivery") {
+      if (deliveryMethod === "inpost") {
+        lines.push(`Получение: <b>Доставка · InPost</b>`);
+
+        const fullName = escapeHtml(inpostData?.fullName || "");
+        const phone = escapeHtml(inpostData?.phone || "");
+        const email = escapeHtml(inpostData?.email || "");
+        const city = escapeHtml(inpostData?.city || "");
+        const lockerAddress = escapeHtml(inpostData?.lockerAddress || "");
+
+        if (fullName) lines.push(`Имя: <b>${fullName}</b>`);
+        if (phone) lines.push(`Телефон: <b>${phone}</b>`);
+        if (email) lines.push(`Email: <b>${email}</b>`);
+        if (city) lines.push(`Город: <b>${city}</b>`);
+        if (lockerAddress) lines.push(`Пачкомат: <b>${lockerAddress}</b>`);
+      } else {
+        lines.push(`Получение: <b>Доставка · Курьер</b>`);
+        if (courierAddress) lines.push(`Адрес: <b>${courierAddress}</b>`);
+      }
+    }
+
+    const items = Array.isArray(order?.items) ? order.items : [];
+    if (items.length) {
+      lines.push("");
+      lines.push("<b>Позиции:</b>");
+
+      for (const item of items) {
+        const productTitle = escapeHtml(
+          item?.productTitle1 ||
+          item?.productTitle ||
+          item?.title ||
+          item?.productKey ||
+          "Товар"
+        );
+
+        const flavorRows = Array.isArray(item?.flavors) ? item.flavors : [];
+
+        if (flavorRows.length) {
+          for (const fl of flavorRows) {
+            const flavorLabel = escapeHtml(
+              fl?.flavorLabel || fl?.label || fl?.flavorKey || "Вкус"
+            );
+            const qty = Math.max(1, Number(fl?.qty || 1));
+            const unitPrice = Number(fl?.unitPrice || item?.unitPrice || 0).toFixed(2);
+
+            lines.push(`• ${productTitle} — ${flavorLabel} × ${qty} (${unitPrice} zł)`);
+          }
+        } else {
+          const flavorLabel = escapeHtml(item?.flavorLabel || item?.flavorKey || "");
+          const qty = Math.max(1, Number(item?.qty || 1));
+          const unitPrice = Number(item?.unitPrice || 0).toFixed(2);
+
+          lines.push(
+            `• ${productTitle}${flavorLabel ? ` — ${flavorLabel}` : ""} × ${qty} (${unitPrice} zł)`
+          );
+        }
+      }
+    }
+
+    await bot.telegram.editMessageText(
+      messageChatId,
+      messageId,
+      undefined,
+      lines.join("\n"),
+      {
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
+        reply_markup: { inline_keyboard: [] },
+      }
+    );
+
+    return true;
+  } catch (e) {
+    console.error("updateManagerOrderChannelMessage error:", e);
+    return false;
+  }
+}
+
 const DAILY_STATS_RUNTIME_SENT = new Set();
 
 function getPointStatsChatId(point) {
@@ -4574,6 +4717,8 @@ app.post("/orders/:id/cancel", async (req, res) => {
 
     await order.save();
 
+    await updateManagerOrderChannelMessage(order, { cancelSource: "client" });
+
     try {
       stopPaymentReminder(order._id);
     } catch {}
@@ -5561,6 +5706,8 @@ if (TG_BOT_TOKEN) {
       order.status = "canceled";
 
       await order.save();
+
+      await updateManagerOrderChannelMessage(order, { cancelSource: "manager" });
 
       stopPaymentReminder(order._id);
 
