@@ -2106,6 +2106,7 @@ async function refreshManagerOrderMessage(order) {
         messageChatId,
         messageId,
         undefined,
+        lines.join("\n"),
         {
           parse_mode: "HTML",
           disable_web_page_preview: true,
