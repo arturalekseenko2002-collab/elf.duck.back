@@ -1665,7 +1665,7 @@ async function processDailyPointStats() {
   }
 }
 
-async function notifyManagerClientArrived(order) {
+async function notifyManagerDeliveryReadyToShip(order) {
   try {
     if (!bot || !order) return { ok: false, reason: "NO_BOT_OR_ORDER" };
 
@@ -1680,21 +1680,16 @@ async function notifyManagerClientArrived(order) {
       return { ok: false, reason: "NO_MANAGER_MESSAGE" };
     }
 
-    const user = await User.findOne(
-      { telegramId: String(order.userTelegramId || "") },
-      { telegramId: 1, username: 1, firstName: 1 }
-    ).lean();
-
-    const customerName =
-      (user?.username ? `@${user.username}` : "") ||
-      String(user?.firstName || "").trim() ||
-      "—";
+    const orderNo = escapeHtml(order?.orderNo || "—");
+    const deliveryLabel =
+      String(order?.deliveryMethod || "").trim() === "inpost"
+        ? "с помощью пачкомата"
+        : "курьеру";
 
     const text = [
-      `📍 <b>КЛИЕНТ ПРИБЫЛ НА ТОЧКУ САМОВЫВОЗА</b>`,
+      `📦 <b>ЗАКАЗ ГОТОВ К ОТПРАВКЕ</b>`,
       ``,
-      `🔢 <b>Номер заказа:</b> #${escapeHtml(order.orderNo)}`,
-      `👤 <b>Клиент:</b> ${escapeHtml(customerName)}`,
+      `Когда вы отдадите ${deliveryLabel} этот заказ (<b>#${orderNo}</b>) нажмите кнопку ниже.`,
     ].join("\n");
 
     const sent = await bot.telegram.sendMessage(chatId, text, {
@@ -1703,7 +1698,7 @@ async function notifyManagerClientArrived(order) {
       allow_sending_without_reply: true,
       reply_markup: {
         inline_keyboard: [
-          [{ text: "✅ Заказ выполнен", callback_data: `mgr_order_completed:${order._id}` }],
+          [{ text: "📦 ЗАКАЗ ОТПРАВЛЕН", callback_data: `mgr_order_shipped:${order._id}` }],
         ],
       },
     });
@@ -1712,15 +1707,14 @@ async function notifyManagerClientArrived(order) {
       { _id: order._id },
       {
         $push: {
-          managerArrivalMessageIds: String(sent?.message_id || ""),
+          managerDeliveryMessageIds: String(sent?.message_id || ""),
         },
       }
     );
 
     return { ok: true };
-
   } catch (e) {
-    console.error("notifyManagerClientArrived error:", e);
+    console.error("notifyManagerDeliveryReadyToShip error:", e);
     return { ok: false, reason: "SEND_ERROR" };
   }
 }
@@ -1986,6 +1980,8 @@ async function refreshManagerOrderMessage(order) {
     const orderStatusLabel =
       orderStatusKey === "completed"
         ? "✅ Выполнен"
+        : orderStatusKey === "shipped"
+        ? "📦 Отправлен"
         : orderStatusKey === "canceled"
         ? canceledByClient
           ? "❌ Отменен клиентом"
@@ -2072,34 +2068,40 @@ async function refreshManagerOrderMessage(order) {
 
     const text = lines.filter((line) => line !== null && line !== undefined).join("\n");
 
-    const replyMarkup =
-      orderStatusKey === "completed"
-        ? {
-            inline_keyboard: [
-              [{ text: "✅ Заказ выполнен", callback_data: `mgr_order_completed_done:${order._id}` }],
+  const replyMarkup =
+    orderStatusKey === "completed"
+      ? {
+          inline_keyboard: [
+            [{ text: "✅ Заказ выполнен", callback_data: `mgr_order_completed_done:${order._id}` }],
+          ],
+        }
+      : orderStatusKey === "shipped"
+      ? {
+          inline_keyboard: [
+            [{ text: "📦 Заказ отправлен", callback_data: `mgr_order_shipped_done:${order._id}` }],
+          ],
+        }
+      : orderStatusKey === "canceled"
+      ? {
+          inline_keyboard: [
+            [
+              {
+                text: canceledByClient
+                  ? "❌ Заказ отменен клиентом"
+                  : "❌ Заказ отклонен менеджером",
+                callback_data: `mgr_order_canceled_done:${order._id}`,
+              },
             ],
-          }
-        : orderStatusKey === "canceled"
-        ? {
-            inline_keyboard: [
-              [
-                {
-                  text: canceledByClient
-                    ? "❌ Заказ отменен клиентом"
-                    : "❌ Заказ отклонен менеджером",
-                  callback_data: `mgr_order_canceled_done:${order._id}`,
-                },
-              ],
+          ],
+        }
+      : {
+          inline_keyboard: [
+            [
+              { text: "✅ Оплачено", callback_data: `mgr_pay_paid:${order._id}` },
+              { text: "❌ Отклонить", callback_data: `mgr_pay_unpaid:${order._id}` },
             ],
-          }
-        : {
-            inline_keyboard: [
-              [
-                { text: "✅ Оплачено", callback_data: `mgr_pay_paid:${order._id}` },
-                { text: "❌ Отклонить", callback_data: `mgr_pay_unpaid:${order._id}` },
-              ],
-            ],
-          };
+          ],
+        };
 
     try {
       await bot.telegram.editMessageText(
@@ -5739,32 +5741,62 @@ if (TG_BOT_TOKEN) {
         checkedByTelegramId: String(ctx.from?.id || ""),
       };
 
+      // После подтверждения оплаты заказ остается "assembled"
+      // и только потом отдельно отмечается как shipped/completed.
       order.status = "assembled";
       await order.save();
+
       await refreshManagerOrderMessage(order);
-
       await applyOrderCashback(order);
-
       stopPaymentReminder(order._id);
 
-      await ctx.answerCbQuery("Оплата подтверждена");
+      // Для доставки отправляем отдельное сообщение-напоминание менеджеру
+      if (String(order?.deliveryType || "") === "delivery") {
+        try {
+          const managerChatId = String(order?.payment?.managerMessageChatId || "").trim();
+          const managerMessageId = Number(order?.payment?.managerMessageId || 0);
+          const orderNo = escapeHtml(order?.orderNo || "—");
 
-      try {
-        const currentText = ctx.callbackQuery?.message?.text || "";
-        const nextText = currentText.replace("🟠 Оплата на проверке", "✅ Оплачено");
+          const deliveryText =
+            String(order?.deliveryMethod || "").trim() === "inpost"
+              ? `Когда вы отправите с помощью пачкомата этот заказ (<b>#${orderNo}</b>) нажмите кнопку <b>ЗАКАЗ ОТПРАВЛЕН</b>, чтобы клиент был уведомлен.`
+              : `Когда вы доставите этот заказ (<b>#${orderNo}</b>) нажмите кнопку <b>ЗАКАЗ ДОСТАВЛЕН</b>, чтобы клиент был уведомлен.`;
 
-        await ctx.editMessageText(nextText, {
-          parse_mode: "HTML",
-          disable_web_page_preview: true,
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: "✅ Оплачено", callback_data: `mgr_done:${order._id}` }],
-            ],
-          },
-        });
-      } catch (e) {
-        console.error("mgr_pay_paid editMessageText error:", e);
+          if (managerChatId && managerMessageId) {
+            const sent = await bot.telegram.sendMessage(
+              managerChatId,
+              [
+                `📦 <b>ЗАКАЗ ГОТОВ К ОТПРАВКЕ</b>`,
+                ``,
+                deliveryText,
+              ].join("\n"),
+              {
+                parse_mode: "HTML",
+                reply_to_message_id: managerMessageId,
+                allow_sending_without_reply: true,
+                reply_markup: {
+                  inline_keyboard: [
+                    [{ text: "📦 ЗАКАЗ ОТПРАВЛЕН", callback_data: `mgr_order_shipped:${order._id}` }],
+                  ],
+                },
+              }
+            );
+
+            await Order.updateOne(
+              { _id: order._id },
+              {
+                $push: {
+                  managerDeliveryMessageIds: String(sent?.message_id || ""),
+                },
+              }
+            );
+          }
+        } catch (e) {
+          console.error("mgr_pay_paid delivery notify error:", e);
+        }
       }
+
+      await ctx.answerCbQuery("Оплата подтверждена");
     } catch (e) {
       console.error("mgr_pay_paid error:", e);
       try {
@@ -5835,6 +5867,88 @@ if (TG_BOT_TOKEN) {
       console.error("mgr_pay_unpaid error:", e);
       try {
         await ctx.answerCbQuery("Ошибка");
+      } catch {}
+    }
+  });
+
+  bot.action(/mgr_order_shipped:(.+)/, async (ctx) => {
+    try {
+      const orderId = String(ctx.match?.[1] || "").trim();
+      if (!orderId) {
+        await ctx.answerCbQuery("Заказ не найден");
+        return;
+      }
+
+      const order = await Order.findById(orderId);
+      if (!order) {
+        await ctx.answerCbQuery("Заказ не найден");
+        return;
+      }
+
+      if (String(order.status || "") === "shipped") {
+        await ctx.answerCbQuery("Заказ уже отправлен");
+        return;
+      }
+
+      order.status = "shipped";
+      order.shippedAt = new Date();
+      await order.save();
+
+      const deliveryMessageIds = Array.isArray(order.managerDeliveryMessageIds)
+        ? order.managerDeliveryMessageIds.filter(Boolean)
+        : [];
+
+      const deliveryChatId = String(order?.payment?.managerMessageChatId || "").trim();
+
+      for (const messageId of deliveryMessageIds) {
+        try {
+          if (deliveryChatId && messageId) {
+            await bot.telegram.deleteMessage(deliveryChatId, Number(messageId));
+          }
+        } catch (_) {}
+      }
+
+      if (deliveryMessageIds.length) {
+        order.managerDeliveryMessageIds = [];
+        await order.save();
+      }
+
+      await refreshManagerOrderMessage(order);
+
+      try {
+        if (bot && order?.userTelegramId) {
+          const orderNo = escapeHtml(order?.orderNo || "—");
+          const deliveryText =
+            String(order?.deliveryMethod || "").trim() === "inpost"
+              ? `Твой заказ <b>#${orderNo}</b> отправлен через InPost.`
+              : `Твой заказ <b>#${orderNo}</b> передан курьеру.`;
+
+          await bot.telegram.sendMessage(
+            String(order.userTelegramId),
+            [
+              `📦 <b>ЗАКАЗ ОТПРАВЛЕН</b>`,
+              ``,
+              deliveryText,
+            ].join("\n"),
+            {
+              parse_mode: "HTML",
+              disable_web_page_preview: true,
+            }
+          );
+        }
+      } catch (e) {
+        console.error("mgr_order_shipped client notify error:", e);
+      }
+
+      await ctx.answerCbQuery("Заказ отмечен как отправленный");
+
+      try {
+        await ctx.deleteMessage();
+      } catch (_) {}
+    } catch (e) {
+      console.error("mgr_order_shipped error:", e);
+      try {
+        await ctx.answerCbQuery("Не удалось отметить заказ как отправленный");
       } catch {}
     }
   });

@@ -55,7 +55,7 @@ const orderSchema = new mongoose.Schema(
     // статусы
     status: {
       type: String,
-      enum: ["created", "processing", "assembled", "completed", "done", "canceled"],
+      enum: ["created", "processing", "assembled", "completed", "done", "shipped", "canceled"],
       default: "created",
       index: true,
     },
