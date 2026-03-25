@@ -877,187 +877,272 @@ async function resolveOrderNotificationPoint(order) {
   return null;
 }
 
-async function updateManagerOrderChannelMessage(order, options = {}) {
+async function annulOrderBecauseNoPaymentConfirm(order, options = {}) {
   try {
-    if (!bot || !order) return false;
+    if (!order) return { ok: false, reason: "NO_ORDER" };
 
-    const messageChatId = String(
-      order?.payment?.managerMessageChatId ||
-      order?.managerMessageChatId ||
-      order?.managerChannelChatId ||
-      order?.notificationChatId ||
-      order?.managerNotificationChatId ||
-      order?.managerChatId ||
-      ""
-    ).trim();
+    const reason = String(options?.reason || "NO_PAYMENT_CONFIRM").trim() || "NO_PAYMENT_CONFIRM";
 
-    const messageId = Number(
-      order?.payment?.managerMessageId ||
-      order?.managerMessageId ||
-      order?.managerChannelMessageId ||
-      order?.notificationMessageId ||
-      order?.managerNotificationMessageId ||
-      order?.managerMsgId ||
-      0
-    );
+    const freshOrder = await Order.findById(String(order._id || ""));
+    if (!freshOrder) return { ok: false, reason: "NOT_FOUND" };
 
-    console.log("[MANAGER MSG UPDATE]", {
-      orderId: String(order?._id || ""),
-      messageChatId,
-      messageId,
-      paymentManagerMessageChatId: order?.payment?.managerMessageChatId,
-      paymentManagerMessageId: order?.payment?.managerMessageId,
-      managerMessageChatId: order?.managerMessageChatId,
-      managerMessageId: order?.managerMessageId,
-    });
+    const currentStatus = String(freshOrder.status || "").toLowerCase();
+    const paymentStatus = String(freshOrder?.payment?.status || "").toLowerCase();
 
-    if (!messageChatId || !messageId) return false;
+    if (["completed", "done", "shipped", "canceled", "annulled"].includes(currentStatus)) {
+      return { ok: false, reason: "ALREADY_FINAL" };
+    }
 
-    const cancelSource = String(options?.cancelSource || "").trim().toLowerCase();
+    if (paymentStatus === "paid" || paymentStatus === "checking") {
+      return { ok: false, reason: "PAYMENT_ALREADY_IN_PROGRESS" };
+    }
 
-    const statusLabel =
-      cancelSource === "client"
-        ? "❌ Отменен клиентом"
-        : cancelSource === "manager"
-        ? "❌ Отменен менеджером"
-        : "❌ Отменен";
-
-    const dateText = formatOrderDate(order?.createdAt || new Date());
-    const orderNo = escapeHtml(order?.orderNo || order?._id || "Заказ");
-    const totalText = Number(order?.totalZl || 0).toFixed(2);
-
-    const deliveryType = String(order?.deliveryType || "").trim();
-    const deliveryMethod = String(order?.deliveryMethod || "").trim();
-
-    const pickupTitle = escapeHtml(
-      order?.pickupPointTitle || order?.pickupPointAddress || ""
-    );
-    const courierAddress = escapeHtml(order?.courierAddress || "");
-    const arrivalTime = escapeHtml(order?.arrivalTime || "");
-    const inpostData = order?.inpostData || {};
-
-    const userName = escapeHtml(
-      order?.userSnapshot?.displayName ||
-      order?.userSnapshot?.firstName ||
-      order?.userFirstName ||
-      order?.userName ||
-      "Клиент"
-    );
-
-    const userTelegramId = escapeHtml(order?.userTelegramId || "");
-
-    const lines = [];
-    lines.push(`🧾 <b>Заказ ${orderNo}</b>`);
-    lines.push(`Статус: <b>${statusLabel}</b>`);
-    lines.push(`Создан: <b>${dateText}</b>`);
-    lines.push(
-      `Клиент: <b>${userName}</b>${userTelegramId ? ` (${userTelegramId})` : ""}`
-    );
-    lines.push(`Сумма: <b>${totalText} zł</b>`);
-
-    if (deliveryType === "pickup") {
-      lines.push(`Получение: <b>Самовывоз</b>${pickupTitle ? ` — ${pickupTitle}` : ""}`);
-      if (arrivalTime) lines.push(`Время прибытия: <b>${arrivalTime}</b>`);
-    } else if (deliveryType === "delivery") {
-      if (deliveryMethod === "inpost") {
-        lines.push(`Получение: <b>Доставка · InPost</b>`);
-
-        const fullName = escapeHtml(inpostData?.fullName || "");
-        const phone = escapeHtml(inpostData?.phone || "");
-        const email = escapeHtml(inpostData?.email || "");
-        const city = escapeHtml(inpostData?.city || "");
-        const lockerAddress = escapeHtml(inpostData?.lockerAddress || "");
-
-        if (fullName) lines.push(`Имя: <b>${fullName}</b>`);
-        if (phone) lines.push(`Телефон: <b>${phone}</b>`);
-        if (email) lines.push(`Email: <b>${email}</b>`);
-        if (city) lines.push(`Город: <b>${city}</b>`);
-        if (lockerAddress) lines.push(`Пачкомат: <b>${lockerAddress}</b>`);
-      } else {
-        lines.push(`Получение: <b>Доставка · Курьер</b>`);
-        if (courierAddress) lines.push(`Адрес: <b>${courierAddress}</b>`);
+    if (!freshOrder.stockCommittedAt && !freshOrder.stockReleasedAt) {
+      try {
+        await releaseReservedStockForOrder(freshOrder);
+        freshOrder.stockReleasedAt = new Date();
+      } catch (releaseErr) {
+        console.error("annulOrderBecauseNoPaymentConfirm releaseReservedStockForOrder error:", releaseErr);
       }
     }
 
-    const items = Array.isArray(order?.items) ? order.items : [];
-    if (items.length) {
-      lines.push("");
-      lines.push("<b>Позиции:</b>");
+    freshOrder.status = "annulled";
+    freshOrder.annulledAt = new Date();
+    freshOrder.annulledReason = reason;
+    await freshOrder.save();
 
-      for (const item of items) {
-        const productTitle = escapeHtml(
-          item?.productTitle1 ||
-          item?.productTitle ||
-          item?.title ||
-          item?.productKey ||
-          "Товар"
-        );
+    await refreshManagerOrderMessage(freshOrder);
 
-        const flavorRows = Array.isArray(item?.flavors) ? item.flavors : [];
+    try {
+      if (bot && freshOrder?.userTelegramId) {
+        const orderNo = escapeHtml(freshOrder?.orderNo || "—");
 
-        if (flavorRows.length) {
-          for (const fl of flavorRows) {
-            const flavorLabel = escapeHtml(
-              fl?.flavorLabel || fl?.label || fl?.flavorKey || "Вкус"
-            );
-            const qty = Math.max(1, Number(fl?.qty || 1));
-            const unitPrice = Number(fl?.unitPrice || item?.unitPrice || 0).toFixed(2);
-
-            lines.push(`• ${productTitle} — ${flavorLabel} × ${qty} (${unitPrice} zł)`);
+        await bot.telegram.sendMessage(
+          String(freshOrder.userTelegramId),
+          [
+            `⌛️ <b>ЗАКАЗ АННУЛИРОВАН</b>`,
+            ``,
+            `Твой заказ <b>#${orderNo}</b> аннулирован из-за отсутствия подтверждения оплаты.`,
+          ].join("\n"),
+          {
+            parse_mode: "HTML",
+            disable_web_page_preview: true,
           }
-        } else {
-          const flavorLabel = escapeHtml(item?.flavorLabel || item?.flavorKey || "");
-          const qty = Math.max(1, Number(item?.qty || 1));
-          const unitPrice = Number(item?.unitPrice || 0).toFixed(2);
-
-          lines.push(
-            `• ${productTitle}${flavorLabel ? ` — ${flavorLabel}` : ""} × ${qty} (${unitPrice} zł)`
-          );
-        }
+        );
       }
+    } catch (notifyErr) {
+      console.error("annulOrderBecauseNoPaymentConfirm notify client error:", notifyErr);
     }
 
-  const nextText = lines.join("\n");
-
-  try {
-    await bot.telegram.editMessageText(
-      messageChatId,
-      messageId,
-      undefined,
-      nextText,
-      {
-        parse_mode: "HTML",
-        disable_web_page_preview: true,
-        reply_markup: { inline_keyboard: [] },
-      }
-    );
-  } catch (editTextErr) {
-    console.error("updateManagerOrderChannelMessage editMessageText error:", editTextErr);
-
-    try {
-      await bot.telegram.editMessageReplyMarkup(messageChatId, messageId, undefined, {
-        inline_keyboard: [],
-      });
-    } catch (editMarkupErr) {
-      console.error("updateManagerOrderChannelMessage editMessageReplyMarkup error:", editMarkupErr);
-    }
-
-    try {
-      await bot.telegram.sendMessage(messageChatId, nextText, {
-        parse_mode: "HTML",
-        disable_web_page_preview: true,
-      });
-    } catch (sendFallbackErr) {
-      console.error("updateManagerOrderChannelMessage fallback sendMessage error:", sendFallbackErr);
-    }
-  }
-
-    return true;
+    return { ok: true, order: freshOrder };
   } catch (e) {
-    console.error("updateManagerOrderChannelMessage error:", e);
-    return false;
+    console.error("annulOrderBecauseNoPaymentConfirm error:", e);
+    return { ok: false, reason: "INTERNAL_ERROR" };
   }
 }
+
+async function processOrdersWithoutPaymentConfirm() {
+  try {
+    const timeoutMinutes = Number(process.env.ORDER_PAYMENT_CONFIRM_TIMEOUT_MINUTES || 30);
+    const cutoff = new Date(Date.now() - timeoutMinutes * 60 * 1000);
+
+    const staleOrders = await Order.find({
+      status: { $in: ["created", "processing"] },
+      "payment.status": "unpaid",
+      createdAt: { $lte: cutoff },
+    });
+
+    for (const order of staleOrders) {
+      await annulOrderBecauseNoPaymentConfirm(order, {
+        reason: "NO_PAYMENT_CONFIRM_TIMEOUT",
+      });
+    }
+  } catch (e) {
+    console.error("processOrdersWithoutPaymentConfirm error:", e);
+  }
+}
+
+// async function updateManagerOrderChannelMessage(order, options = {}) {
+//   try {
+//     if (!bot || !order) return false;
+
+//     const messageChatId = String(
+//       order?.payment?.managerMessageChatId ||
+//       order?.managerMessageChatId ||
+//       order?.managerChannelChatId ||
+//       order?.notificationChatId ||
+//       order?.managerNotificationChatId ||
+//       order?.managerChatId ||
+//       ""
+//     ).trim();
+
+//     const messageId = Number(
+//       order?.payment?.managerMessageId ||
+//       order?.managerMessageId ||
+//       order?.managerChannelMessageId ||
+//       order?.notificationMessageId ||
+//       order?.managerNotificationMessageId ||
+//       order?.managerMsgId ||
+//       0
+//     );
+
+//     console.log("[MANAGER MSG UPDATE]", {
+//       orderId: String(order?._id || ""),
+//       messageChatId,
+//       messageId,
+//       paymentManagerMessageChatId: order?.payment?.managerMessageChatId,
+//       paymentManagerMessageId: order?.payment?.managerMessageId,
+//       managerMessageChatId: order?.managerMessageChatId,
+//       managerMessageId: order?.managerMessageId,
+//     });
+
+//     if (!messageChatId || !messageId) return false;
+
+//     const cancelSource = String(options?.cancelSource || "").trim().toLowerCase();
+
+//     const statusLabel =
+//       cancelSource === "client"
+//         ? "❌ Отменен клиентом"
+//         : cancelSource === "manager"
+//         ? "❌ Отменен менеджером"
+//         : "❌ Отменен";
+
+//     const dateText = formatOrderDate(order?.createdAt || new Date());
+//     const orderNo = escapeHtml(order?.orderNo || order?._id || "Заказ");
+//     const totalText = Number(order?.totalZl || 0).toFixed(2);
+
+//     const deliveryType = String(order?.deliveryType || "").trim();
+//     const deliveryMethod = String(order?.deliveryMethod || "").trim();
+
+//     const pickupTitle = escapeHtml(
+//       order?.pickupPointTitle || order?.pickupPointAddress || ""
+//     );
+//     const courierAddress = escapeHtml(order?.courierAddress || "");
+//     const arrivalTime = escapeHtml(order?.arrivalTime || "");
+//     const inpostData = order?.inpostData || {};
+
+//     const userName = escapeHtml(
+//       order?.userSnapshot?.displayName ||
+//       order?.userSnapshot?.firstName ||
+//       order?.userFirstName ||
+//       order?.userName ||
+//       "Клиент"
+//     );
+
+//     const userTelegramId = escapeHtml(order?.userTelegramId || "");
+
+//     const lines = [];
+//     lines.push(`🧾 <b>Заказ ${orderNo}</b>`);
+//     lines.push(`Статус: <b>${statusLabel}</b>`);
+//     lines.push(`Создан: <b>${dateText}</b>`);
+//     lines.push(
+//       `Клиент: <b>${userName}</b>${userTelegramId ? ` (${userTelegramId})` : ""}`
+//     );
+//     lines.push(`Сумма: <b>${totalText} zł</b>`);
+
+//     if (deliveryType === "pickup") {
+//       lines.push(`Получение: <b>Самовывоз</b>${pickupTitle ? ` — ${pickupTitle}` : ""}`);
+//       if (arrivalTime) lines.push(`Время прибытия: <b>${arrivalTime}</b>`);
+//     } else if (deliveryType === "delivery") {
+//       if (deliveryMethod === "inpost") {
+//         lines.push(`Получение: <b>Доставка · InPost</b>`);
+
+//         const fullName = escapeHtml(inpostData?.fullName || "");
+//         const phone = escapeHtml(inpostData?.phone || "");
+//         const email = escapeHtml(inpostData?.email || "");
+//         const city = escapeHtml(inpostData?.city || "");
+//         const lockerAddress = escapeHtml(inpostData?.lockerAddress || "");
+
+//         if (fullName) lines.push(`Имя: <b>${fullName}</b>`);
+//         if (phone) lines.push(`Телефон: <b>${phone}</b>`);
+//         if (email) lines.push(`Email: <b>${email}</b>`);
+//         if (city) lines.push(`Город: <b>${city}</b>`);
+//         if (lockerAddress) lines.push(`Пачкомат: <b>${lockerAddress}</b>`);
+//       } else {
+//         lines.push(`Получение: <b>Доставка · Курьер</b>`);
+//         if (courierAddress) lines.push(`Адрес: <b>${courierAddress}</b>`);
+//       }
+//     }
+
+//     const items = Array.isArray(order?.items) ? order.items : [];
+//     if (items.length) {
+//       lines.push("");
+//       lines.push("<b>Позиции:</b>");
+
+//       for (const item of items) {
+//         const productTitle = escapeHtml(
+//           item?.productTitle1 ||
+//           item?.productTitle ||
+//           item?.title ||
+//           item?.productKey ||
+//           "Товар"
+//         );
+
+//         const flavorRows = Array.isArray(item?.flavors) ? item.flavors : [];
+
+//         if (flavorRows.length) {
+//           for (const fl of flavorRows) {
+//             const flavorLabel = escapeHtml(
+//               fl?.flavorLabel || fl?.label || fl?.flavorKey || "Вкус"
+//             );
+//             const qty = Math.max(1, Number(fl?.qty || 1));
+//             const unitPrice = Number(fl?.unitPrice || item?.unitPrice || 0).toFixed(2);
+
+//             lines.push(`• ${productTitle} — ${flavorLabel} × ${qty} (${unitPrice} zł)`);
+//           }
+//         } else {
+//           const flavorLabel = escapeHtml(item?.flavorLabel || item?.flavorKey || "");
+//           const qty = Math.max(1, Number(item?.qty || 1));
+//           const unitPrice = Number(item?.unitPrice || 0).toFixed(2);
+
+//           lines.push(
+//             `• ${productTitle}${flavorLabel ? ` — ${flavorLabel}` : ""} × ${qty} (${unitPrice} zł)`
+//           );
+//         }
+//       }
+//     }
+
+//   const nextText = lines.join("\n");
+
+//   try {
+//     await bot.telegram.editMessageText(
+//       messageChatId,
+//       messageId,
+//       undefined,
+//       nextText,
+//       {
+//         parse_mode: "HTML",
+//         disable_web_page_preview: true,
+//         reply_markup: { inline_keyboard: [] },
+//       }
+//     );
+//   } catch (editTextErr) {
+//     console.error("updateManagerOrderChannelMessage editMessageText error:", editTextErr);
+
+//     try {
+//       await bot.telegram.editMessageReplyMarkup(messageChatId, messageId, undefined, {
+//         inline_keyboard: [],
+//       });
+//     } catch (editMarkupErr) {
+//       console.error("updateManagerOrderChannelMessage editMessageReplyMarkup error:", editMarkupErr);
+//     }
+
+//     try {
+//       await bot.telegram.sendMessage(messageChatId, nextText, {
+//         parse_mode: "HTML",
+//         disable_web_page_preview: true,
+//       });
+//     } catch (sendFallbackErr) {
+//       console.error("updateManagerOrderChannelMessage fallback sendMessage error:", sendFallbackErr);
+//     }
+//   }
+
+//     return true;
+//   } catch (e) {
+//     console.error("updateManagerOrderChannelMessage error:", e);
+//     return false;
+//   }
+// }
 
 const DAILY_STATS_RUNTIME_SENT = new Set();
 
@@ -1977,6 +2062,21 @@ async function refreshManagerOrderMessage(order) {
       canceledByTelegramId &&
       canceledByTelegramId === userTelegramId;
 
+    const paymentStatusKey = String(order?.payment?.status || "").trim().toLowerCase();
+
+    const paymentStatusLabel =
+      orderStatusKey === "annulled"
+        ? "⌛️ Аннулирован из-за отсутствия подтверждения оплаты"
+        : orderStatusKey === "canceled"
+        ? canceledByClient
+          ? "❌ Отменен клиентом"
+          : "❌ Отклонен менеджером"
+        : paymentStatusKey === "paid"
+        ? "✅ Оплачено"
+        : paymentStatusKey === "checking"
+        ? "🟠 Оплата на проверке"
+        : "❌ Не оплачено";
+
     const orderStatusLabel =
       orderStatusKey === "completed"
         ? String(order?.deliveryType || "") === "delivery" && String(order?.deliveryMethod || "") === "courier"
@@ -1984,6 +2084,8 @@ async function refreshManagerOrderMessage(order) {
           : "✅ Выполнен"
         : orderStatusKey === "shipped"
         ? "📦 Отправлен"
+        : orderStatusKey === "annulled"
+        ? "⌛️ Аннулирован"
         : orderStatusKey === "canceled"
         ? canceledByClient
           ? "❌ Отменен клиентом"
@@ -2020,11 +2122,15 @@ async function refreshManagerOrderMessage(order) {
         ? `💸 <b>Остаток к оплате:</b> ${Number(order.payment.cashbackRemainingToPayZl || 0).toFixed(2)} ${escapeHtml(order.currency || "PLN")}`
         : null,
       ``,
-      order?.payment?.cashbackFullyPaid
+      orderStatusKey === "annulled"
+        ? `💳 <b>Статус оплаты:</b> ⌛️ Аннулирован из-за отсутствия подтверждения оплаты`
+        : order?.payment?.cashbackFullyPaid
         ? `💳 <b>Статус оплаты:</b> ✅ Полностью оплачено`
         : String(order?.payment?.status || "") === "paid"
         ? `💳 <b>Статус оплаты:</b> ✅ Оплачено`
-        : `💳 <b>Статус оплаты:</b> 🟠 Оплата на проверке`,
+        : String(order?.payment?.status || "") === "checking"
+        ? `💳 <b>Статус оплаты:</b> 🟠 Оплата на проверке`
+        : `💳 <b>Статус оплаты:</b> ❌ Не оплачено`,
       `📦 <b>Статус заказа:</b> ${orderStatusLabel}`,
       ``,
     ];
@@ -2070,47 +2176,53 @@ async function refreshManagerOrderMessage(order) {
 
     const text = lines.filter((line) => line !== null && line !== undefined).join("\n");
 
-  const replyMarkup =
-    orderStatusKey === "completed"
-      ? {
-          inline_keyboard: [
-            [{
-              text:
-                String(order?.deliveryType || "") === "delivery" &&
-                String(order?.deliveryMethod || "") === "courier"
-                  ? "🚚 Заказ доставлен"
-                  : "✅ Заказ выполнен",
-              callback_data: `mgr_order_completed_done:${order._id}`,
-            }],
+const replyMarkup =
+  orderStatusKey === "completed"
+    ? {
+        inline_keyboard: [
+          [{
+            text:
+              String(order?.deliveryType || "") === "delivery" &&
+              String(order?.deliveryMethod || "") === "courier"
+                ? "🚚 Заказ доставлен"
+                : "✅ Заказ выполнен",
+            callback_data: `mgr_order_completed_done:${order._id}`,
+          }],
+        ],
+      }
+    : orderStatusKey === "shipped"
+    ? {
+        inline_keyboard: [
+          [{ text: "📦 Заказ отправлен", callback_data: `mgr_order_shipped_done:${order._id}` }],
+        ],
+      }
+    : orderStatusKey === "annulled"
+    ? {
+        inline_keyboard: [
+          [{ text: "⌛️ Заказ аннулирован", callback_data: `mgr_order_annulled_done:${order._id}` }],
+        ],
+      }
+    : orderStatusKey === "canceled"
+    ? {
+        inline_keyboard: [
+          [
+            {
+              text: canceledByClient
+                ? "❌ Заказ отменен клиентом"
+                : "❌ Заказ отклонен менеджером",
+              callback_data: `mgr_order_canceled_done:${order._id}`,
+            },
           ],
-        }
-      : orderStatusKey === "shipped"
-      ? {
-          inline_keyboard: [
-            [{ text: "📦 Заказ отправлен", callback_data: `mgr_order_shipped_done:${order._id}` }],
+        ],
+      }
+    : {
+        inline_keyboard: [
+          [
+            { text: "✅ Оплачено", callback_data: `mgr_pay_paid:${order._id}` },
+            { text: "❌ Отклонить", callback_data: `mgr_pay_unpaid:${order._id}` },
           ],
-        }
-      : orderStatusKey === "canceled"
-      ? {
-          inline_keyboard: [
-            [
-              {
-                text: canceledByClient
-                  ? "❌ Заказ отменен клиентом"
-                  : "❌ Заказ отклонен менеджером",
-                callback_data: `mgr_order_canceled_done:${order._id}`,
-              },
-            ],
-          ],
-        }
-      : {
-          inline_keyboard: [
-            [
-              { text: "✅ Оплачено", callback_data: `mgr_pay_paid:${order._id}` },
-              { text: "❌ Отклонить", callback_data: `mgr_pay_unpaid:${order._id}` },
-            ],
-          ],
-        };
+        ],
+      };
 
     try {
       await bot.telegram.editMessageText(
@@ -5869,7 +5981,7 @@ if (TG_BOT_TOKEN) {
 
       await order.save();
 
-      await updateManagerOrderChannelMessage(order, { cancelSource: "manager" });
+      await refreshManagerOrderMessage(order);
 
       stopPaymentReminder(order._id);
 
@@ -6161,6 +6273,12 @@ setInterval(() => {
     console.error("cashback expiration interval error:", e);
   });
 }, 6 * 60 * 60 * 1000);
+
+setInterval(() => {
+  processOrdersWithoutPaymentConfirm();
+}, 60 * 1000);
+
+processOrdersWithoutPaymentConfirm();
 
 processCashbackLedgerExpirations().catch((e) => {
   console.error("initial cashback expiration run error:", e);

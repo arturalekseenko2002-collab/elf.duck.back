@@ -55,7 +55,7 @@ const orderSchema = new mongoose.Schema(
     // статусы
     status: {
       type: String,
-      enum: ["created", "processing", "assembled", "completed", "done", "shipped", "canceled"],
+      enum: ["created", "processing", "assembled", "completed", "done", "shipped", "canceled", "annulled"],
       default: "created",
       index: true,
     },
@@ -120,7 +120,9 @@ const orderSchema = new mongoose.Schema(
 
     arrivedNotifiedAt: { type: Date, default: null }, // клиент нажал "Я на месте"
     managerArrivalMessageIds: { type: [String], default: [] },
-    completedAt: { type: Date, default: null },       // менеджер отметил выполненным (опционально)
+    completedAt: { type: Date, default: null },
+    annulledAt: { type: Date, default: null },
+    annulledReason: { type: String, default: "" },
 
     cashbackPercent: { type: Number, default: 0 },
     cashbackZl: { type: Number, default: 0 },
