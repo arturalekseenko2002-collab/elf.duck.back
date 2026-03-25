@@ -5771,9 +5771,18 @@ if (TG_BOT_TOKEN) {
             ? `📦 <b>ЗАКАЗ ГОТОВ К ОТПРАВКЕ</b>`
             : `🚚 <b>ЗАКАЗ ГОТОВ К ДОСТАВКЕ</b>`;
 
+          const courierUsernameRaw = String(order?.courierUsername || order?.courier?.username || "").trim();
+          const courierUsername = courierUsernameRaw
+            ? (courierUsernameRaw.startsWith("@") ? courierUsernameRaw : `@${courierUsernameRaw}`)
+            : "—";
+
           const deliveryText = isInpost
             ? `Когда вы отправите с помощью пачкомата этот заказ (<b>#${orderNo}</b>) нажмите кнопку <b>ЗАКАЗ ОТПРАВЛЕН</b>, чтобы клиент был уведомлен.`
-            : `Когда курьер прибудет на адрес по заказу <b>#${orderNo}</b>, нажмите кнопку <b>ЗАКАЗ ДОСТАВЛЕН</b>, чтобы клиент был уведомлен.`;
+            : [
+                `Когда курьер прибудет на адрес по заказу <b>#${orderNo}</b>, нажмите кнопку <b>ЗАКАЗ ДОСТАВЛЕН</b>, чтобы клиент был уведомлен.`,
+                ``,
+                `📲 <b>Связь с курьером:</b> ${escapeHtml(courierUsername)}`,
+              ].join("\n");
 
           const deliveryButton = isInpost
             ? { text: "📦 ЗАКАЗ ОТПРАВЛЕН", callback_data: `mgr_order_shipped:${order._id}` }
@@ -5931,65 +5940,24 @@ if (TG_BOT_TOKEN) {
       await refreshManagerOrderMessage(order);
 
       try {
-        // Для КУРЬЕРА — не уведомляем клиента сразу, а отправляем менеджеру следующий шаг
-        if (
-          String(order?.deliveryType || "") === "delivery" &&
-          String(order?.deliveryMethod || "") === "courier"
-        ) {
-          const managerChatId = String(order?.payment?.managerMessageChatId || "").trim();
-          const managerMessageId = Number(order?.payment?.managerMessageId || 0);
+        if (bot && order?.userTelegramId) {
           const orderNo = escapeHtml(order?.orderNo || "—");
 
-          if (managerChatId && managerMessageId) {
-            const sent = await bot.telegram.sendMessage(
-              managerChatId,
-              [
-                `🚚 <b>КУРЬЕР ВЫЕХАЛ</b>`,
-                ``,
-                `Когда курьер прибудет на адрес по заказу <b>#${orderNo}</b>, нажмите кнопку <b>ЗАКАЗ ДОСТАВЛЕН</b>, чтобы клиент был уведомлен.`,
-              ].join("\n"),
-              {
-                parse_mode: "HTML",
-                reply_to_message_id: managerMessageId,
-                allow_sending_without_reply: true,
-                reply_markup: {
-                  inline_keyboard: [
-                    [{ text: "🚚 ЗАКАЗ ДОСТАВЛЕН", callback_data: `mgr_order_delivered:${order._id}` }],
-                  ],
-                },
-              }
-            );
-
-            await Order.updateOne(
-              { _id: order._id },
-              {
-                $push: {
-                  managerDeliveryMessageIds: String(sent?.message_id || ""),
-                },
-              }
-            );
-          }
-        } else {
-          // Для INPOST уведомляем клиента сразу после отправки
-          if (bot && order?.userTelegramId) {
-            const orderNo = escapeHtml(order?.orderNo || "—");
-
-            await bot.telegram.sendMessage(
-              String(order.userTelegramId),
-              [
-                `📦 <b>ЗАКАЗ ОТПРАВЛЕН</b>`,
-                ``,
-                `Твой заказ <b>#${orderNo}</b> отправлен через InPost.`,
-              ].join("\n"),
-              {
-                parse_mode: "HTML",
-                disable_web_page_preview: true,
-              }
-            );
-          }
+          await bot.telegram.sendMessage(
+            String(order.userTelegramId),
+            [
+              `📦 <b>ЗАКАЗ ОТПРАВЛЕН</b>`,
+              ``,
+              `Твой заказ <b>#${orderNo}</b> отправлен через InPost.`,
+            ].join("\n"),
+            {
+              parse_mode: "HTML",
+              disable_web_page_preview: true,
+            }
+          );
         }
       } catch (e) {
-        console.error("mgr_order_shipped client/manager notify error:", e);
+        console.error("mgr_order_shipped client notify error:", e);
       }
 
       await ctx.answerCbQuery("Заказ отмечен как отправленный");
