@@ -877,6 +877,65 @@ async function resolveOrderNotificationPoint(order) {
   return null;
 }
 
+async function notifyManagerClientArrived(order) {
+  try {
+    if (!bot || !order) return { ok: false, reason: "NO_BOT_OR_ORDER" };
+
+    const point = await resolveOrderNotificationPoint(order);
+    const chatId = String(
+      order?.payment?.managerMessageChatId || point?.notificationChatId || ""
+    ).trim();
+
+    const replyToMessageId = Number(order?.payment?.managerMessageId || 0);
+
+    if (!chatId || !replyToMessageId) {
+      return { ok: false, reason: "NO_MANAGER_MESSAGE" };
+    }
+
+    const user = await User.findOne(
+      { telegramId: String(order.userTelegramId || "") },
+      { telegramId: 1, username: 1, firstName: 1 }
+    ).lean();
+
+    const customerName =
+      (user?.username ? `@${user.username}` : "") ||
+      String(user?.firstName || "").trim() ||
+      "—";
+
+    const text = [
+      `📍 <b>КЛИЕНТ ПРИБЫЛ НА ТОЧКУ САМОВЫВОЗА</b>`,
+      ``,
+      `🔢 <b>Номер заказа:</b> #${escapeHtml(order.orderNo)}`,
+      `👤 <b>Клиент:</b> ${escapeHtml(customerName)}`,
+    ].join("\n");
+
+    const sent = await bot.telegram.sendMessage(chatId, text, {
+      parse_mode: "HTML",
+      reply_to_message_id: replyToMessageId,
+      allow_sending_without_reply: true,
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "✅ Заказ выполнен", callback_data: `mgr_order_completed:${order._id}` }],
+        ],
+      },
+    });
+
+    await Order.updateOne(
+      { _id: order._id },
+      {
+        $push: {
+          managerArrivalMessageIds: String(sent?.message_id || ""),
+        },
+      }
+    );
+
+    return { ok: true };
+  } catch (e) {
+    console.error("notifyManagerClientArrived error:", e);
+    return { ok: false, reason: "SEND_ERROR" };
+  }
+}
+
 async function annulOrderBecauseNoPaymentConfirm(order, options = {}) {
   try {
     if (!order) return { ok: false, reason: "NO_ORDER" };
@@ -2241,16 +2300,27 @@ const replyMarkup =
 
       try {
         await bot.telegram.editMessageReplyMarkup(messageChatId, messageId, undefined, replyMarkup);
-      } catch (markupErr) {
-        console.error("refreshManagerOrderMessage editMessageReplyMarkup error:", markupErr);
-      }
+} catch (e) {
+  const msg = String(e?.response?.description || e?.message || "").toLowerCase();
+
+  if (msg.includes("message is not modified")) {
+    return;
+  }
+
+  console.error("refreshManagerOrderMessage editMessageReplyMarkup error:", e);
+}
     }
 
     return { ok: true };
-  } catch (e) {
-    console.error("refreshManagerOrderMessage error:", e);
-    return { ok: false, reason: "EDIT_ERROR" };
+} catch (e) {
+  const msg = String(e?.response?.description || e?.message || "").toLowerCase();
+
+  if (msg.includes("message is not modified")) {
+    return;
   }
+
+  console.error("refreshManagerOrderMessage editMessageText error:", e);
+}
 }
 
 async function sendClientOrderCreatedInfo(order) {
