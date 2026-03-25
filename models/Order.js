@@ -82,6 +82,8 @@ const orderSchema = new mongoose.Schema(
     },
 
     courierAddress: { type: String, default: null },
+    courierUsername: { type: String, default: "" },
+    courierTelegramId: { type: String, default: "" },
     inpostData: {
       fullName: { type: String, default: null },
       phone: { type: String, default: null },

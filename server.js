@@ -5750,6 +5750,14 @@ if (TG_BOT_TOKEN) {
         checkedByTelegramId: String(ctx.from?.id || ""),
       };
 
+      if (
+        String(order?.deliveryType || "") === "delivery" &&
+        String(order?.deliveryMethod || "") === "courier"
+      ) {
+        order.courierUsername = String(ctx.from?.username || "").trim();
+        order.courierTelegramId = String(ctx.from?.id || "").trim();
+      }
+
       // После подтверждения оплаты заказ остается "assembled"
       // и только потом отдельно отмечается как shipped/completed.
       order.status = "assembled";
@@ -5771,18 +5779,14 @@ if (TG_BOT_TOKEN) {
             ? `📦 <b>ЗАКАЗ ГОТОВ К ОТПРАВКЕ</b>`
             : `🚚 <b>ЗАКАЗ ГОТОВ К ДОСТАВКЕ</b>`;
 
-          const courierUsernameRaw = String(order?.courierUsername || order?.courier?.username || "").trim();
-          const courierUsername = courierUsernameRaw
-            ? (courierUsernameRaw.startsWith("@") ? courierUsernameRaw : `@${courierUsernameRaw}`)
-            : "—";
+          // const courierUsernameRaw = String(order?.courierUsername || order?.courier?.username || "").trim();
+          // const courierUsername = courierUsernameRaw
+          //   ? (courierUsernameRaw.startsWith("@") ? courierUsernameRaw : `@${courierUsernameRaw}`)
+          //   : "—";
 
           const deliveryText = isInpost
             ? `Когда вы отправите с помощью пачкомата этот заказ (<b>#${orderNo}</b>) нажмите кнопку <b>ЗАКАЗ ОТПРАВЛЕН</b>, чтобы клиент был уведомлен.`
-            : [
-                `Когда курьер прибудет на адрес по заказу <b>#${orderNo}</b>, нажмите кнопку <b>ЗАКАЗ ДОСТАВЛЕН</b>, чтобы клиент был уведомлен.`,
-                ``,
-                `📲 <b>Связь с курьером:</b> ${escapeHtml(courierUsername)}`,
-              ].join("\n");
+            : `Когда вы прибудете на адрес по заказу <b>#${orderNo}</b>, нажмите кнопку <b>ЗАКАЗ ДОСТАВЛЕН</b>, чтобы клиент был уведомлен.`;
 
           const deliveryButton = isInpost
             ? { text: "📦 ЗАКАЗ ОТПРАВЛЕН", callback_data: `mgr_order_shipped:${order._id}` }
@@ -6021,12 +6025,23 @@ if (TG_BOT_TOKEN) {
         if (bot && order?.userTelegramId) {
           const orderNo = escapeHtml(order?.orderNo || "—");
 
+          const courierUsernameRaw = String(
+            order?.courierUsername || order?.courier?.username || ""
+          ).trim();
+
+          const courierUsername = courierUsernameRaw
+            ? (courierUsernameRaw.startsWith("@")
+                ? courierUsernameRaw
+                : `@${courierUsernameRaw}`)
+            : "—";
+
           await bot.telegram.sendMessage(
             String(order.userTelegramId),
             [
               `🚚 <b>КУРЬЕР ПРИБЫЛ НА АДРЕС</b>`,
               ``,
               `Курьер прибыл по заказу <b>#${orderNo}</b>.`,
+              `📲 <b>Связь с курьером:</b> ${escapeHtml(courierUsername)}`,
             ].join("\n"),
             {
               parse_mode: "HTML",
