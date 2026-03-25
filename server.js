@@ -943,7 +943,7 @@ async function annulOrderBecauseNoPaymentConfirm(order, options = {}) {
 
 async function processOrdersWithoutPaymentConfirm() {
   try {
-    const timeoutMinutes = Number(process.env.ORDER_PAYMENT_CONFIRM_TIMEOUT_MINUTES || 30);
+    const timeoutMinutes = Number(process.env.ORDER_PAYMENT_CONFIRM_TIMEOUT_MINUTES || 10);
     const cutoff = new Date(Date.now() - timeoutMinutes * 60 * 1000);
 
     const staleOrders = await Order.find({
@@ -2306,14 +2306,26 @@ async function sendClientOrderCreatedInfo(order) {
   }
 }
 
-const paymentReminderTimers = new Map(); // orderId -> intervalId
+const ORDER_PAYMENT_REMINDER_START_DELAY_MS = 5 * 60 * 1000; // 5 минут
+const ORDER_PAYMENT_REMINDER_INTERVAL_MS = 35 * 1000; // 35 секунд
+
+const paymentReminderTimeouts = new Map(); // orderId -> timeoutId
+const paymentReminderIntervals = new Map(); // orderId -> intervalId
 
 function stopPaymentReminder(orderId) {
   const key = String(orderId || "").trim();
-  const timer = paymentReminderTimers.get(key);
-  if (timer) {
-    clearInterval(timer);
-    paymentReminderTimers.delete(key);
+  if (!key) return;
+
+  const timeoutId = paymentReminderTimeouts.get(key);
+  if (timeoutId) {
+    clearTimeout(timeoutId);
+    paymentReminderTimeouts.delete(key);
+  }
+
+  const intervalId = paymentReminderIntervals.get(key);
+  if (intervalId) {
+    clearInterval(intervalId);
+    paymentReminderIntervals.delete(key);
   }
 }
 
@@ -2345,12 +2357,12 @@ async function startPaymentReminder(order) {
         }
 
         const paymentStatus = String(fresh?.payment?.status || "unpaid");
-        const orderStatus = String(fresh?.status || "");
+        const orderStatus = String(fresh?.status || "").toLowerCase();
 
-        // как только заказ ушёл на проверку / подтверждён / отменён — останавливаем напоминания
+        // как только заказ ушёл на проверку / подтверждён / отменён / аннулирован — останавливаем напоминания
         if (
           ["checking", "paid", "refunded"].includes(paymentStatus) ||
-          orderStatus === "canceled"
+          ["canceled", "annulled", "completed", "done", "shipped"].includes(orderStatus)
         ) {
           stopPaymentReminder(orderId);
           return;
@@ -2399,8 +2411,17 @@ async function startPaymentReminder(order) {
       }
     };
 
-    const intervalId = setInterval(tick, 35000);
-    paymentReminderTimers.set(orderId, intervalId);
+    const startTimeoutId = setTimeout(() => {
+      tick();
+
+      const intervalId = setInterval(() => {
+        tick();
+      }, ORDER_PAYMENT_REMINDER_INTERVAL_MS);
+
+      paymentReminderIntervals.set(orderId, intervalId);
+    }, ORDER_PAYMENT_REMINDER_START_DELAY_MS);
+
+    paymentReminderTimeouts.set(orderId, startTimeoutId);
   } catch (e) {
     console.error("startPaymentReminder error:", e);
   }
