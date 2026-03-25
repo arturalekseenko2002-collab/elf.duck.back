@@ -5765,17 +5765,25 @@ if (TG_BOT_TOKEN) {
           const managerChatId = String(order?.payment?.managerMessageChatId || "").trim();
           const managerMessageId = Number(order?.payment?.managerMessageId || 0);
           const orderNo = escapeHtml(order?.orderNo || "—");
+          const isInpost = String(order?.deliveryMethod || "").trim() === "inpost";
 
-          const deliveryText =
-            String(order?.deliveryMethod || "").trim() === "inpost"
-              ? `Когда вы отправите с помощью пачкомата этот заказ (<b>#${orderNo}</b>) нажмите кнопку <b>ЗАКАЗ ОТПРАВЛЕН</b>, чтобы клиент был уведомлен.`
-              : `Когда вы доставите этот заказ (<b>#${orderNo}</b>) нажмите кнопку <b>ЗАКАЗ ДОСТАВЛЕН</b>, чтобы клиент был уведомлен.`;
+          const deliveryTitle = isInpost
+            ? `📦 <b>ЗАКАЗ ГОТОВ К ОТПРАВКЕ</b>`
+            : `🚚 <b>ЗАКАЗ ГОТОВ К ДОСТАВКЕ</b>`;
+
+          const deliveryText = isInpost
+            ? `Когда вы отправите с помощью пачкомата этот заказ (<b>#${orderNo}</b>) нажмите кнопку <b>ЗАКАЗ ОТПРАВЛЕН</b>, чтобы клиент был уведомлен.`
+            : `Когда курьер прибудет на адрес по заказу <b>#${orderNo}</b>, нажмите кнопку <b>ЗАКАЗ ДОСТАВЛЕН</b>, чтобы клиент был уведомлен.`;
+
+          const deliveryButton = isInpost
+            ? { text: "📦 ЗАКАЗ ОТПРАВЛЕН", callback_data: `mgr_order_shipped:${order._id}` }
+            : { text: "🚚 ЗАКАЗ ДОСТАВЛЕН", callback_data: `mgr_order_delivered:${order._id}` };
 
           if (managerChatId && managerMessageId) {
             const sent = await bot.telegram.sendMessage(
               managerChatId,
               [
-                `📦 <b>ЗАКАЗ ГОТОВ К ОТПРАВКЕ</b>`,
+                deliveryTitle,
                 ``,
                 deliveryText,
               ].join("\n"),
@@ -5784,9 +5792,7 @@ if (TG_BOT_TOKEN) {
                 reply_to_message_id: managerMessageId,
                 allow_sending_without_reply: true,
                 reply_markup: {
-                  inline_keyboard: [
-                    [{ text: "📦 ЗАКАЗ ОТПРАВЛЕН", callback_data: `mgr_order_shipped:${order._id}` }],
-                  ],
+                  inline_keyboard: [[deliveryButton]],
                 },
               }
             );
