@@ -4017,7 +4017,12 @@ app.put("/cart", async (req, res) => {
       });
     }
 
-    if (finalCheckoutDeliveryType === "delivery" && finalCheckoutDeliveryMethod === "courier" && cleanItems.length > 0) {
+    if (
+      forceCheckoutSelection &&
+      finalCheckoutDeliveryType === "delivery" &&
+      finalCheckoutDeliveryMethod === "courier" &&
+      cleanItems.length > 0
+    ) {
       if (!String(courierAddress || "").trim()) {
         return res.status(400).json({
           ok: false,
