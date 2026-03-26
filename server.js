@@ -5132,6 +5132,7 @@ app.post("/orders/repeat", async (req, res) => {
         pickupPointId: 1,
         arrivalTime: 1,
         courierAddress: 1,
+        deliveryTimeWindow: 1,
         inpostData: 1,
         items: 1,
       }
@@ -5293,6 +5294,10 @@ app.post("/orders/repeat", async (req, res) => {
         checkoutDeliveryMethod: orig.deliveryMethod || null,
         checkoutPickupPointId: orig.pickupPointId || null,
         arrivalTime: orig.deliveryType === "pickup" ? null : (orig.arrivalTime ?? null),
+        deliveryTimeWindow:
+  orig.deliveryType === "delivery" && orig.deliveryMethod === "courier"
+    ? (orig.deliveryTimeWindow ?? null)
+    : null,
         courierAddress: orig.courierAddress ?? null,
         inpostData: orig.inpostData ?? {
           fullName: null,
