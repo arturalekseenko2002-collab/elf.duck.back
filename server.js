@@ -4529,23 +4529,28 @@ app.post("/orders/confirm", async (req, res) => {
       return res.status(400).json({ ok: false, error: "Cart is empty" });
     }
 
-    if (cart.checkoutDeliveryType === "delivery" && cart.checkoutDeliveryMethod === "courier") {
-      if (!String(cart?.courierAddress || "").trim()) {
-        return res.status(400).json({
-          ok: false,
-          field: "courierAddress",
-          error: "Для доставки курьером нужно заполнить адрес доставки.",
-        });
-      }
+if (
+  forceCheckoutSelection &&
+  finalCheckoutDeliveryType === "delivery" &&
+  finalCheckoutDeliveryMethod === "courier" &&
+  cleanItems.length > 0
+) {
+  if (!String(courierAddress || "").trim()) {
+    return res.status(400).json({
+      ok: false,
+      field: "courierAddress",
+      error: "Для доставки курьером нужно заполнить адрес доставки.",
+    });
+  }
 
-      if (!String(cart?.deliveryTimeWindow || "").trim()) {
-        return res.status(400).json({
-          ok: false,
-          field: "deliveryTimeWindow",
-          error: "Для доставки курьером нужно выбрать временной промежуток",
-        });
-      }
-    }
+  if (!String(deliveryTimeWindow || "").trim()) {
+    return res.status(400).json({
+      ok: false,
+      field: "deliveryTimeWindow",
+      error: "Для доставки курьером нужно выбрать временной промежуток",
+    });
+  }
+}
 
     // 1) total
     const totalZl = cart.items.reduce((sum, it) => {
