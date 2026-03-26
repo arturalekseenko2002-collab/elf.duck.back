@@ -1969,9 +1969,11 @@ async function sendOrderCreatedNotification(order) {
     if (order.deliveryType === "delivery" && order.deliveryMethod === "courier") {
       if (order.courierAddress) {
         lines.push(`📍 <b>Адрес доставки:</b> ${escapeHtml(order.courierAddress)}`);
+
         if (order?.deliveryTimeWindow) {
           lines.push(`🕒 <b>Временной промежуток:</b> ${escapeHtml(order.deliveryTimeWindow)}`);
         }
+
         lines.push("");
       }
     }
@@ -3677,6 +3679,7 @@ app.get("/cart", async (req, res) => {
         checkoutDeliveryMethod: null,
         checkoutPickupPointId: null,
         arrivalTime: null,
+        deliveryTimeWindow: null,
       };
 
     const safeItems = Array.isArray(safeCart.items) ? safeCart.items : [];
