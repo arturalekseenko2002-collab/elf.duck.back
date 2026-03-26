@@ -1,4 +1,3 @@
-// backGifts/server.js
 import "dotenv/config";
 import express from "express";
 import mongoose from "mongoose";
@@ -1969,11 +1968,6 @@ async function sendOrderCreatedNotification(order) {
     if (order.deliveryType === "delivery" && order.deliveryMethod === "courier") {
       if (order.courierAddress) {
         lines.push(`📍 <b>Адрес доставки:</b> ${escapeHtml(order.courierAddress)}`);
-
-        if (order?.deliveryTimeWindow) {
-          lines.push(`🕒 <b>Временной промежуток:</b> ${escapeHtml(order.deliveryTimeWindow)}`);
-        }
-
         lines.push("");
       }
     }
@@ -2207,11 +2201,6 @@ async function refreshManagerOrderMessage(order) {
     if (order.deliveryType === "delivery" && order.deliveryMethod === "courier") {
       if (order.courierAddress) {
         lines.push(`📍 <b>Адрес доставки:</b> ${escapeHtml(order.courierAddress)}`);
-
-        if (order?.deliveryTimeWindow) {
-          lines.push(`🕒 <b>Временной промежуток:</b> ${escapeHtml(order.deliveryTimeWindow)}`);
-        }
-
         lines.push("");
       }
     }
@@ -3679,7 +3668,6 @@ app.get("/cart", async (req, res) => {
         checkoutDeliveryMethod: null,
         checkoutPickupPointId: null,
         arrivalTime: null,
-        deliveryTimeWindow: null,
       };
 
     const safeItems = Array.isArray(safeCart.items) ? safeCart.items : [];
@@ -3913,11 +3901,6 @@ app.put("/cart", async (req, res) => {
           ? null
           : String(b.arrivalTime || "").trim();
 
-      const deliveryTimeWindow =
-        b.deliveryTimeWindow === null || b.deliveryTimeWindow === undefined
-          ? null
-          : String(b.deliveryTimeWindow || "").trim();
-
       const inpostDataRaw = b.inpostData && typeof b.inpostData === "object" ? b.inpostData : {};
 
       const inpostData = {
@@ -4019,29 +4002,6 @@ app.put("/cart", async (req, res) => {
         error: "pickupPointId is required for pickup when cart has items",
       });
     }
-
-if (
-  forceCheckoutSelection &&
-  finalCheckoutDeliveryType === "delivery" &&
-  finalCheckoutDeliveryMethod === "courier" &&
-  cleanItems.length > 0
-) {
-  if (!String(courierAddress || "").trim()) {
-    return res.status(400).json({
-      ok: false,
-      field: "courierAddress",
-      error: "Для доставки курьером нужно заполнить адрес доставки.",
-    });
-  }
-
-  if (!String(deliveryTimeWindow || "").trim()) {
-    return res.status(400).json({
-      ok: false,
-      field: "deliveryTimeWindow",
-      error: "Для доставки курьером нужно выбрать временной промежуток",
-    });
-  }
-}
 
     // ================= STOCK RESERVATION (reservedQty) =================
     // Goal: when items are in the cart, we reserve their qty on the selected stock context
@@ -4498,7 +4458,6 @@ for (const d of deltas) {
           courierAddress,
           inpostData,
           arrivalTime,
-          deliveryTimeWindow,
         },
       },
       { upsert: true, new: true }
@@ -4531,24 +4490,6 @@ app.post("/orders/confirm", async (req, res) => {
     if (!cart || !Array.isArray(cart.items) || cart.items.length === 0) {
       return res.status(400).json({ ok: false, error: "Cart is empty" });
     }
-
-if (cart.checkoutDeliveryType === "delivery" && cart.checkoutDeliveryMethod === "courier") {
-  if (!String(cart?.courierAddress || "").trim()) {
-    return res.status(400).json({
-      ok: false,
-      field: "courierAddress",
-      error: "Для доставки курьером нужно заполнить адрес доставки.",
-    });
-  }
-
-  if (!String(cart?.deliveryTimeWindow || "").trim()) {
-    return res.status(400).json({
-      ok: false,
-      field: "deliveryTimeWindow",
-      error: "Для доставки курьером нужно выбрать временной промежуток",
-    });
-  }
-}
 
     // 1) total
     const totalZl = cart.items.reduce((sum, it) => {
@@ -4898,7 +4839,6 @@ if (cart.checkoutDeliveryType === "delivery" && cart.checkoutDeliveryMethod === 
       deliveryMethod,
       pickupPointId: pickupPointId ? String(pickupPointId) : null,
       arrivalTime: cart.arrivalTime ?? null,
-      deliveryTimeWindow: cart.deliveryTimeWindow ?? null,
       courierAddress: cart.courierAddress ?? null,
       inpostData: cart.inpostData ?? {},
       items: orderItems.map((row) => ({
@@ -4929,7 +4869,6 @@ if (cart.checkoutDeliveryType === "delivery" && cart.checkoutDeliveryMethod === 
         deliveryMethod: 1,
         pickupPointId: 1,
         arrivalTime: 1,
-        deliveryTimeWindow: 1,
         courierAddress: 1,
         inpostData: 1,
         items: 1,
@@ -4947,7 +4886,6 @@ if (cart.checkoutDeliveryType === "delivery" && cart.checkoutDeliveryMethod === 
         deliveryMethod: existing?.deliveryMethod || null,
         pickupPointId: existing?.pickupPointId ? String(existing.pickupPointId) : null,
         arrivalTime: existing?.arrivalTime ?? null,
-        deliveryTimeWindow: existing?.deliveryTimeWindow ?? null,
         courierAddress: existing?.courierAddress ?? null,
         inpostData: existing?.inpostData ?? {},
         items: (Array.isArray(existing?.items) ? existing.items : []).map((row) => ({
@@ -4982,7 +4920,6 @@ if (cart.checkoutDeliveryType === "delivery" && cart.checkoutDeliveryMethod === 
       pickupPointId,
 
       arrivalTime: cart.arrivalTime ?? null,
-      deliveryTimeWindow: cart.deliveryTimeWindow ?? null,
       courierAddress: cart.courierAddress ?? null,
       inpostData: cart.inpostData ?? {},
 
@@ -5012,7 +4949,6 @@ if (cart.checkoutDeliveryType === "delivery" && cart.checkoutDeliveryMethod === 
           checkoutDeliveryMethod: null,
           checkoutPickupPointId: null,
           arrivalTime: null,
-          deliveryTimeWindow: null,
           courierAddress: null,
           inpostData: {
             fullName: null,
@@ -5132,7 +5068,6 @@ app.post("/orders/repeat", async (req, res) => {
         pickupPointId: 1,
         arrivalTime: 1,
         courierAddress: 1,
-        deliveryTimeWindow: 1,
         inpostData: 1,
         items: 1,
       }
@@ -5294,10 +5229,6 @@ app.post("/orders/repeat", async (req, res) => {
         checkoutDeliveryMethod: orig.deliveryMethod || null,
         checkoutPickupPointId: orig.pickupPointId || null,
         arrivalTime: orig.deliveryType === "pickup" ? null : (orig.arrivalTime ?? null),
-        deliveryTimeWindow:
-        orig.deliveryType === "delivery" && orig.deliveryMethod === "courier"
-          ? (orig.deliveryTimeWindow ?? null)
-          : null,
         courierAddress: orig.courierAddress ?? null,
         inpostData: orig.inpostData ?? {
           fullName: null,
