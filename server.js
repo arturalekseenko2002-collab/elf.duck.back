@@ -4529,13 +4529,8 @@ app.post("/orders/confirm", async (req, res) => {
       return res.status(400).json({ ok: false, error: "Cart is empty" });
     }
 
-if (
-  forceCheckoutSelection &&
-  finalCheckoutDeliveryType === "delivery" &&
-  finalCheckoutDeliveryMethod === "courier" &&
-  cleanItems.length > 0
-) {
-  if (!String(courierAddress || "").trim()) {
+if (cart.checkoutDeliveryType === "delivery" && cart.checkoutDeliveryMethod === "courier") {
+  if (!String(cart?.courierAddress || "").trim()) {
     return res.status(400).json({
       ok: false,
       field: "courierAddress",
@@ -4543,7 +4538,7 @@ if (
     });
   }
 
-  if (!String(deliveryTimeWindow || "").trim()) {
+  if (!String(cart?.deliveryTimeWindow || "").trim()) {
     return res.status(400).json({
       ok: false,
       field: "deliveryTimeWindow",
