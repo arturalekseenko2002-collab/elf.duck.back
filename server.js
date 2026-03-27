@@ -4536,6 +4536,13 @@ for (const d of deltas) {
     });
   } catch (e) {
     console.error("PUT /cart error:", e);
+    if (String(e?.message || "").trim() === "RESERVE_CONFLICT") {
+  return res.status(409).json({
+    ok: false,
+    error: "OUT_OF_STOCK",
+    meta: e?.meta || null,
+  });
+}
     res.status(500).json({ ok: false, error: "Server error" });
   }
 });
