@@ -4038,28 +4038,28 @@ app.put("/cart", async (req, res) => {
       });
     }
 
-    if (
-      forceCheckoutSelection &&
-      finalCheckoutDeliveryType === "delivery" &&
-      finalCheckoutDeliveryMethod === "courier" &&
-      cleanItems.length > 0
-    ) {
-      if (!String(courierAddress || "").trim()) {
-        return res.status(400).json({
-          ok: false,
-          field: "courierAddress",
-          error: "Для доставки курьером нужно заполнить адрес доставки.",
-        });
-      }
+    // if (
+    //   forceCheckoutSelection &&
+    //   finalCheckoutDeliveryType === "delivery" &&
+    //   finalCheckoutDeliveryMethod === "courier" &&
+    //   cleanItems.length > 0
+    // ) {
+    //   if (!String(courierAddress || "").trim()) {
+    //     return res.status(400).json({
+    //       ok: false,
+    //       field: "courierAddress",
+    //       error: "Для доставки курьером нужно заполнить адрес доставки.",
+    //     });
+    //   }
 
-      if (!String(deliveryTimeWindow || "").trim()) {
-        return res.status(400).json({
-          ok: false,
-          field: "deliveryTimeWindow",
-          error: "Для доставки курьером нужно выбрать временной промежуток",
-        });
-      }
-    }
+    //   if (!String(deliveryTimeWindow || "").trim()) {
+    //     return res.status(400).json({
+    //       ok: false,
+    //       field: "deliveryTimeWindow",
+    //       error: "Для доставки курьером нужно выбрать временной промежуток",
+    //     });
+    //   }
+    // }
 
     // ================= STOCK RESERVATION (reservedQty) =================
     // Goal: when items are in the cart, we reserve their qty on the selected stock context
