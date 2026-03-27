@@ -6018,11 +6018,19 @@ if (TG_BOT_TOKEN) {
       // После подтверждения оплаты заказ остается "assembled"
       // и только потом отдельно отмечается как shipped/completed.
       order.status = "assembled";
+      // --- PATCH 1: replace block ---
       await order.save();
 
-      await refreshManagerOrderMessage(order);
       await applyOrderCashback(order);
+
+      const freshPaidOrder = await Order.findById(order._id);
+      if (!freshPaidOrder) {
+        throw new Error("ORDER_NOT_FOUND_AFTER_PAY");
+      }
+
+      await refreshManagerOrderMessage(freshPaidOrder);
       stopPaymentReminder(order._id);
+      // --- END PATCH 1 ---
 
       // Для доставки отправляем отдельное сообщение-напоминание менеджеру
       if (String(order?.deliveryType || "") === "delivery") {
@@ -6082,6 +6090,25 @@ if (TG_BOT_TOKEN) {
       }
 
       await ctx.answerCbQuery("Оплата подтверждена");
+      // --- PATCH 2: add collapse/collapseButton logic after answerCbQuery ---
+      try {
+        const isDelivery = String(freshPaidOrder?.deliveryType || "") === "delivery";
+        const isCourier = String(freshPaidOrder?.deliveryMethod || "") === "courier";
+        const isInpost = String(freshPaidOrder?.deliveryMethod || "") === "inpost";
+
+        const collapseButton = isDelivery
+          ? isInpost
+            ? { text: "📦 ЗАКАЗ ОТПРАВЛЕН", callback_data: `mgr_order_shipped:${freshPaidOrder._id}` }
+            : { text: "🚚 ЗАКАЗ ДОСТАВЛЕН", callback_data: `mgr_order_delivered:${freshPaidOrder._id}` }
+          : { text: "✅ Оплачено", callback_data: `mgr_done:${freshPaidOrder._id}` };
+
+        await ctx.editMessageReplyMarkup({
+          inline_keyboard: [[collapseButton]],
+        });
+      } catch (e) {
+        console.error("mgr_pay_paid editMessageReplyMarkup error:", e);
+      }
+      // --- END PATCH 2 ---
     } catch (e) {
       console.error("mgr_pay_paid error:", e);
       try {
@@ -6124,30 +6151,30 @@ if (TG_BOT_TOKEN) {
 
       order.status = "canceled";
 
+      // --- PATCH 3: replace block for unpaid status ---
       await order.save();
 
-      await refreshManagerOrderMessage(order);
+      const freshUnpaidOrder = await Order.findById(order._id);
+      if (!freshUnpaidOrder) {
+        throw new Error("ORDER_NOT_FOUND_AFTER_UNPAID");
+      }
+
+      await refreshManagerOrderMessage(freshUnpaidOrder);
 
       stopPaymentReminder(order._id);
 
       await ctx.answerCbQuery("Оплата отклонена, кэшбек возвращён");
 
       try {
-        const currentText = ctx.callbackQuery?.message?.text || "";
-        const nextText = currentText.replace("🟠 Оплата на проверке", "❌ Не оплачено");
-
-        await ctx.editMessageText(nextText, {
-          parse_mode: "HTML",
-          disable_web_page_preview: true,
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: "❌ Оплата отклонена", callback_data: `mgr_done:${order._id}` }],
-            ],
-          },
+        await ctx.editMessageReplyMarkup({
+          inline_keyboard: [
+            [{ text: "❌ Оплата отклонена", callback_data: `mgr_done:${freshUnpaidOrder._id}` }],
+          ],
         });
       } catch (e) {
-        console.error("mgr_pay_unpaid editMessageText error:", e);
+        console.error("mgr_pay_unpaid editMessageReplyMarkup error:", e);
       }
+      // --- END PATCH 3 ---
     } catch (e) {
       console.error("mgr_pay_unpaid error:", e);
       try {
