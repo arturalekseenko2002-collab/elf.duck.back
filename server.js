@@ -2148,11 +2148,13 @@ async function refreshManagerOrderMessage(order) {
         ? canceledByClient
           ? "❌ Отменен клиентом"
           : "❌ Отклонен менеджером"
-        : paymentStatusKey === "paid"
-        ? "✅ Оплачено"
-        : paymentStatusKey === "checking"
-        ? "🟠 Оплата на проверке"
-        : "❌ Не оплачено";
+          : paymentStatusKey === "paid"
+          ? "✅ Оплачено"
+          : paymentStatusKey === "awaiting"
+          ? "🕒 Ожидаю клиента"
+          : paymentStatusKey === "checking"
+          ? "🟠 Оплата на проверке"
+          : "❌ Не оплачено";
 
     const orderStatusLabel =
       orderStatusKey === "completed"
@@ -2205,6 +2207,8 @@ async function refreshManagerOrderMessage(order) {
         ? `💳 <b>Статус оплаты:</b> ✅ Полностью оплачено`
         : String(order?.payment?.status || "") === "paid"
         ? `💳 <b>Статус оплаты:</b> ✅ Оплачено`
+        : String(order?.payment?.status || "") === "awaiting"
+        ? `💳 <b>Статус оплаты:</b> 🕒 Ожидаю клиента`
         : String(order?.payment?.status || "") === "checking"
         ? `💳 <b>Статус оплаты:</b> 🟠 Оплата на проверке`
         : `💳 <b>Статус оплаты:</b> ❌ Не оплачено`,
@@ -2297,12 +2301,18 @@ const replyMarkup =
           ],
         ],
       }
-    : String(order?.payment?.status || "") === "paid"
-    ? {
-        inline_keyboard: [
-          [{ text: "✅ Оплачено", callback_data: `mgr_done:${order._id}` }],
-        ],
-      }
+: String(order?.payment?.status || "") === "paid"
+? {
+    inline_keyboard: [
+      [{ text: "✅ Оплачено", callback_data: `mgr_done:${order._id}` }],
+    ],
+  }
+: String(order?.payment?.status || "") === "awaiting"
+? {
+    inline_keyboard: [
+      [{ text: "🕒 Ожидаю", callback_data: `mgr_done:${order._id}` }],
+    ],
+  }
     : {
         inline_keyboard: [
           [
@@ -6044,9 +6054,13 @@ if (TG_BOT_TOKEN) {
         order.stockCommittedAt = new Date();
       }
 
+      const shouldMarkAwaiting =
+      String(order?.deliveryType || "") === "pickup" &&
+      String(order?.payment?.method || "") === "cash";
+
       order.payment = {
         ...(order.payment?.toObject ? order.payment.toObject() : order.payment || {}),
-        status: "paid",
+        status: shouldMarkAwaiting ? "awaiting" : "paid",
         paidAt: new Date(),
         checkedAt: new Date(),
         checkedByTelegramId: String(ctx.from?.id || ""),
@@ -6134,25 +6148,19 @@ if (TG_BOT_TOKEN) {
         }
       }
 
-      await ctx.answerCbQuery("Оплата подтверждена");
+      await ctx.answerCbQuery(
+        shouldMarkAwaiting ? "Клиент ожидается на точке" : "Оплата подтверждена"
+      );
       // --- PATCH 2: add collapse/collapseButton logic after answerCbQuery ---
-      try {
-        const isDelivery = String(freshPaidOrder?.deliveryType || "") === "delivery";
-        const isCourier = String(freshPaidOrder?.deliveryMethod || "") === "courier";
-        const isInpost = String(freshPaidOrder?.deliveryMethod || "") === "inpost";
-
-        const collapseButton = isDelivery
-          ? isInpost
-            ? { text: "📦 ЗАКАЗ ОТПРАВЛЕН", callback_data: `mgr_order_shipped:${freshPaidOrder._id}` }
-            : { text: "🚚 ЗАКАЗ ДОСТАВЛЕН", callback_data: `mgr_order_delivered:${freshPaidOrder._id}` }
-          : { text: "✅ Оплачено", callback_data: `mgr_done:${freshPaidOrder._id}` };
-
-        await ctx.editMessageReplyMarkup({
-          inline_keyboard: [[collapseButton]],
-        });
-      } catch (e) {
-        console.error("mgr_pay_paid editMessageReplyMarkup error:", e);
-      }
+try {
+  await ctx.editMessageReplyMarkup({
+    inline_keyboard: [
+      [{ text: shouldMarkAwaiting ? "🕒 Ожидаю" : "✅ Оплачено", callback_data: `mgr_done:${freshPaidOrder._id}` }],
+    ],
+  });
+} catch (e) {
+  console.error("mgr_pay_paid editMessageReplyMarkup error:", e);
+}
       // --- END PATCH 2 ---
     } catch (e) {
       console.error("mgr_pay_paid error:", e);

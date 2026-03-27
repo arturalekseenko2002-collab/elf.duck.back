@@ -96,7 +96,7 @@ const orderSchema = new mongoose.Schema(
     deliveryTimeWindow: { type: String, default: null },
 
     payment: {
-      status: { type: String, enum: ["unpaid", "checking", "paid", "refunded"], default: "unpaid" },
+      status: { type: String, enum: ["unpaid", "checking", "awaiting", "paid", "refunded"], default: "unpaid" },
       method: { type: String, default: null },
       paidAt: { type: Date, default: null },
       amountZl: { type: Number, default: 0 },
