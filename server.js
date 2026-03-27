@@ -1896,6 +1896,14 @@ async function sendOrderCreatedNotification(order) {
       String(user?.firstName || "").trim() ||
       "—";
 
+    const managerAmountValue = Number(order?.payment?.managerDisplayAmount || 0);
+    const managerAmountCurrency = String(order?.payment?.managerDisplayCurrency || "").trim();
+
+    const managerAmountText =
+      managerAmountValue > 0 && managerAmountCurrency
+        ? `${managerAmountValue.toFixed(2)} ${escapeHtml(managerAmountCurrency)}`
+        : `${Number(order.totalZl || 0)} ${escapeHtml(order.currency || "PLN")}`;
+
     const itemsText = (order.items || [])
       .map((it) => {
         const productTitle =
