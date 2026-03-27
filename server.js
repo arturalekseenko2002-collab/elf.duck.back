@@ -6253,7 +6253,27 @@ if (TG_BOT_TOKEN) {
         await order.save();
       }
 
-      await refreshManagerOrderMessage(order);
+      const freshShippedOrder = await Order.findById(order._id);
+      if (!freshShippedOrder) {
+        throw new Error("ORDER_NOT_FOUND_AFTER_SHIPPED");
+      }
+
+      await refreshManagerOrderMessage(freshShippedOrder);
+
+      try {
+        const mainChatId = String(freshShippedOrder?.payment?.managerMessageChatId || "").trim();
+        const mainMessageId = Number(freshShippedOrder?.payment?.managerMessageId || 0);
+
+        if (mainChatId && mainMessageId) {
+          await bot.telegram.editMessageReplyMarkup(mainChatId, mainMessageId, undefined, {
+            inline_keyboard: [
+              [{ text: "📦 Заказ отправлен", callback_data: `mgr_order_shipped_done:${freshShippedOrder._id}` }],
+            ],
+          });
+        }
+      } catch (e) {
+        console.error("mgr_order_shipped main message markup error:", e);
+      }
 
       try {
         if (bot && order?.userTelegramId) {
@@ -6331,7 +6351,27 @@ if (TG_BOT_TOKEN) {
         await order.save();
       }
 
-      await refreshManagerOrderMessage(order);
+      const freshDeliveredOrder = await Order.findById(order._id);
+      if (!freshDeliveredOrder) {
+        throw new Error("ORDER_NOT_FOUND_AFTER_DELIVERED");
+      }
+
+      await refreshManagerOrderMessage(freshDeliveredOrder);
+
+      try {
+        const mainChatId = String(freshDeliveredOrder?.payment?.managerMessageChatId || "").trim();
+        const mainMessageId = Number(freshDeliveredOrder?.payment?.managerMessageId || 0);
+
+        if (mainChatId && mainMessageId) {
+          await bot.telegram.editMessageReplyMarkup(mainChatId, mainMessageId, undefined, {
+            inline_keyboard: [
+              [{ text: "🚚 Заказ доставлен", callback_data: `mgr_order_completed_done:${freshDeliveredOrder._id}` }],
+            ],
+          });
+        }
+      } catch (e) {
+        console.error("mgr_order_delivered main message markup error:", e);
+      }
 
       try {
         if (bot && order?.userTelegramId) {
