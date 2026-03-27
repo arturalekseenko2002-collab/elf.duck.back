@@ -2311,34 +2311,29 @@ const replyMarkup =
           ],
         ],
       }
-: String(order?.payment?.status || "") === "awaiting"
-? {
-    inline_keyboard: [
-      [{ text: "🕒 Ожидаю", callback_data: `mgr_done:${order._id}` }],
-    ],
-  }
-: String(order?.deliveryType || "") === "pickup" &&
-  String(order?.payment?.method || "") === "cash" &&
-  String(order?.payment?.status || "") !== "awaiting"
-? {
-    inline_keyboard: [
-      [{ text: "🕒 Ожидаю", callback_data: `mgr_pay_paid:${order._id}` }],
-    ],
-  }
-: String(order?.payment?.status || "") === "paid"
-? {
-    inline_keyboard: [
-      [{ text: "✅ Оплачено", callback_data: `mgr_done:${order._id}` }],
-    ],
-  }
-  : String(order?.deliveryType || "") === "pickup" &&
-  String(order?.payment?.method || "") === "cash" &&
-  String(order?.payment?.status || "") !== "awaiting"
-? {
-    inline_keyboard: [
-      [{ text: "🕒 Ожидаю", callback_data: `mgr_pay_paid:${order._id}` }],
-    ],
-  }
+    : String(order?.payment?.status || "") === "awaiting"
+    ? {
+        inline_keyboard: [
+          [{ text: "🕒 Ожидаю", callback_data: `mgr_done:${order._id}` }],
+        ],
+      }
+    : String(order?.deliveryType || "") === "pickup" &&
+      String(order?.payment?.method || "") === "cash" &&
+      String(order?.payment?.status || "") !== "awaiting"
+    ? {
+        inline_keyboard: [
+          [
+            { text: "🕒 Ожидаю", callback_data: `mgr_pay_paid:${order._id}` },
+            { text: "❌ Отклонить", callback_data: `mgr_pay_unpaid:${order._id}` },
+          ],
+        ],
+      }
+    : String(order?.payment?.status || "") === "paid"
+    ? {
+        inline_keyboard: [
+          [{ text: "✅ Оплачено", callback_data: `mgr_done:${order._id}` }],
+        ],
+      }
     : {
         inline_keyboard: [
           [
@@ -6185,6 +6180,12 @@ try {
     ],
   });
 } catch (e) {
+  const msg = String(e?.response?.description || e?.message || "").toLowerCase();
+
+  if (msg.includes("message is not modified")) {
+    return;
+  }
+
   console.error("mgr_pay_paid editMessageReplyMarkup error:", e);
 }
       // --- END PATCH 2 ---
