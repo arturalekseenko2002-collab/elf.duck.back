@@ -2281,27 +2281,10 @@ const replyMarkup =
           ],
         ],
       }
-    : String(order?.deliveryType || "") === "pickup" &&
-      String(order?.payment?.status || "") === "paid"
+    : String(order?.payment?.status || "") === "paid"
     ? {
         inline_keyboard: [
           [{ text: "✅ Оплачено", callback_data: `mgr_done:${order._id}` }],
-        ],
-      }
-    : String(order?.deliveryType || "") === "delivery" &&
-      String(order?.deliveryMethod || "") === "courier" &&
-      String(order?.payment?.status || "") === "paid"
-    ? {
-        inline_keyboard: [
-          [{ text: "🚚 Заказ доставлен", callback_data: `mgr_order_delivered:${order._id}` }],
-        ],
-      }
-    : String(order?.deliveryType || "") === "delivery" &&
-      String(order?.deliveryMethod || "") === "inpost" &&
-      String(order?.payment?.status || "") === "paid"
-    ? {
-        inline_keyboard: [
-          [{ text: "📦 Заказ отправлен", callback_data: `mgr_order_shipped:${order._id}` }],
         ],
       }
     : {
