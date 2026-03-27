@@ -2321,6 +2321,14 @@ const replyMarkup =
       [{ text: "✅ Оплачено", callback_data: `mgr_done:${order._id}` }],
     ],
   }
+  : String(order?.deliveryType || "") === "pickup" &&
+  String(order?.payment?.method || "") === "cash" &&
+  String(order?.payment?.status || "") !== "awaiting"
+? {
+    inline_keyboard: [
+      [{ text: "🕒 Ожидаю", callback_data: `mgr_pay_paid:${order._id}` }],
+    ],
+  }
     : {
         inline_keyboard: [
           [
