@@ -2012,17 +2012,27 @@ async function sendOrderCreatedNotification(order) {
 
     const text = lines.filter((line) => line !== null && line !== undefined).join("\n");
 
-    const sent = await bot.telegram.sendMessage(point.notificationChatId, text, {
-      parse_mode: "HTML",
-      disable_web_page_preview: true,
-      reply_markup: {
+    const initialReplyMarkup =
+  String(order?.deliveryType || "") === "pickup" &&
+  String(order?.payment?.method || "") === "cash"
+    ? {
+        inline_keyboard: [
+          [{ text: "🕒 Ожидаю", callback_data: `mgr_pay_paid:${order._id}` }],
+        ],
+      }
+    : {
         inline_keyboard: [
           [
             { text: "✅ Оплачено", callback_data: `mgr_pay_paid:${order._id}` },
             { text: "❌ Отклонить", callback_data: `mgr_pay_unpaid:${order._id}` },
           ],
         ],
-      },
+      };
+
+    const sent = await bot.telegram.sendMessage(point.notificationChatId, text, {
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+reply_markup: initialReplyMarkup,
     });
 
     await Order.updateOne(
