@@ -2201,12 +2201,17 @@ async function refreshManagerOrderMessage(order) {
       lines.push("");
     }
 
-    if (order.deliveryType === "delivery" && order.deliveryMethod === "courier") {
-      if (order.courierAddress) {
-        lines.push(`📍 <b>Адрес доставки:</b> ${escapeHtml(order.courierAddress)}`);
-        lines.push("");
-      }
+if (order.deliveryType === "delivery" && order.deliveryMethod === "courier") {
+  if (order.courierAddress) {
+    lines.push(`📍 <b>Адрес доставки:</b> ${escapeHtml(order.courierAddress)}`);
+
+    if (order?.deliveryTimeWindow) {
+      lines.push(`🕒 <b>Временной промежуток:</b> ${escapeHtml(order.deliveryTimeWindow)}`);
     }
+
+    lines.push("");
+  }
+}
 
     if (order.deliveryType === "delivery" && order.deliveryMethod === "inpost") {
       if (order.inpostData?.fullName) lines.push(`👤 <b>Получатель:</b> ${escapeHtml(order.inpostData.fullName)}`);
@@ -2274,6 +2279,29 @@ const replyMarkup =
               callback_data: `mgr_order_canceled_done:${order._id}`,
             },
           ],
+        ],
+      }
+    : String(order?.deliveryType || "") === "pickup" &&
+      String(order?.payment?.status || "") === "paid"
+    ? {
+        inline_keyboard: [
+          [{ text: "✅ Оплачено", callback_data: `mgr_done:${order._id}` }],
+        ],
+      }
+    : String(order?.deliveryType || "") === "delivery" &&
+      String(order?.deliveryMethod || "") === "courier" &&
+      String(order?.payment?.status || "") === "paid"
+    ? {
+        inline_keyboard: [
+          [{ text: "🚚 Заказ доставлен", callback_data: `mgr_order_delivered:${order._id}` }],
+        ],
+      }
+    : String(order?.deliveryType || "") === "delivery" &&
+      String(order?.deliveryMethod || "") === "inpost" &&
+      String(order?.payment?.status || "") === "paid"
+    ? {
+        inline_keyboard: [
+          [{ text: "📦 Заказ отправлен", callback_data: `mgr_order_shipped:${order._id}` }],
         ],
       }
     : {
