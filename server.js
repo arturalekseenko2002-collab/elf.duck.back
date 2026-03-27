@@ -6424,9 +6424,15 @@ try {
             ],
           });
         }
-      } catch (e) {
-        console.error("mgr_order_delivered main message markup error:", e);
-      }
+} catch (e) {
+  const msg = String(e?.response?.description || e?.message || "").toLowerCase();
+
+  if (msg.includes("message is not modified")) {
+    return;
+  }
+
+  console.error("mgr_order_delivered main message markup error:", e);
+}
 
       try {
         if (bot && order?.userTelegramId) {
