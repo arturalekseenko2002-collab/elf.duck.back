@@ -2012,12 +2012,15 @@ async function sendOrderCreatedNotification(order) {
 
     const text = lines.filter((line) => line !== null && line !== undefined).join("\n");
 
-    const initialReplyMarkup =
+const initialReplyMarkup =
   String(order?.deliveryType || "") === "pickup" &&
   String(order?.payment?.method || "") === "cash"
     ? {
         inline_keyboard: [
-          [{ text: "🕒 Ожидаю", callback_data: `mgr_pay_paid:${order._id}` }],
+          [
+            { text: "🕒 Ожидаю", callback_data: `mgr_pay_paid:${order._id}` },
+            { text: "❌ Отклонить", callback_data: `mgr_pay_unpaid:${order._id}` },
+          ],
         ],
       }
     : {
