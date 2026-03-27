@@ -1940,7 +1940,7 @@ async function sendOrderCreatedNotification(order) {
       ``,
       itemsText || "—",
       ``,
-      `💰 <b>Сумма заказа:</b> ${Number(order.totalZl || 0)} ${escapeHtml(order.currency || "PLN")}`,
+      `💰 <b>Сумма заказа:</b> ${managerAmountText}`,
       `💳 <b>Способ оплаты:</b> ${
         order?.payment?.cashbackFullyPaid
           ? "Кэшбек"
@@ -2114,6 +2114,14 @@ async function refreshManagerOrderMessage(order) {
         ? "Наличные"
         : "—";
 
+    const managerAmountValue = Number(order?.payment?.managerDisplayAmount || 0);
+    const managerAmountCurrency = String(order?.payment?.managerDisplayCurrency || "").trim();
+
+    const managerAmountText =
+      managerAmountValue > 0 && managerAmountCurrency
+        ? `${managerAmountValue.toFixed(2)} ${escapeHtml(managerAmountCurrency)}`
+        : `${Number(order.totalZl || 0)} ${escapeHtml(order.currency || "PLN")}`;
+
     const orderStatusKey = String(order?.status || "").trim().toLowerCase();
     const canceledByTelegramId = String(order?.canceledByTelegramId || "").trim();
     const userTelegramId = String(order?.userTelegramId || "").trim();
@@ -2169,7 +2177,7 @@ async function refreshManagerOrderMessage(order) {
       ``,
       itemsText || "—",
       ``,
-      `💰 <b>Сумма заказа:</b> ${Number(order.totalZl || 0)} ${escapeHtml(order.currency || "PLN")}`,
+      `💰 <b>Сумма заказа:</b> ${managerAmountText}`,
       `💳 <b>Способ оплаты:</b> ${
         order?.payment?.cashbackFullyPaid
           ? "Кэшбек"
@@ -5525,6 +5533,14 @@ app.post("/orders/:id/payment-check", async (req, res) => {
 
     const cashbackAppliedZl = Number(prevPayment.cashbackAppliedZl || 0);
     const cashbackRemainingToPayZl = Number(prevPayment.cashbackRemainingToPayZl || 0);
+    const managerDisplayAmount = Number(req.body?.managerDisplayAmount || 0);
+    const managerDisplayCurrency = String(req.body?.managerDisplayCurrency || "PLN").trim() || "PLN";
+    const managerDisplayRate =
+      req.body?.managerDisplayRate === null ||
+      req.body?.managerDisplayRate === undefined ||
+      req.body?.managerDisplayRate === ""
+        ? null
+        : Number(req.body.managerDisplayRate || 0);
 
     order.payment = {
       ...(order.payment?.toObject ? order.payment.toObject() : order.payment || {}),
@@ -5552,6 +5568,9 @@ app.post("/orders/:id/payment-check", async (req, res) => {
         cashbackRemainingToPayZl !== undefined
           ? Number(Number(cashbackRemainingToPayZl || 0).toFixed(2))
           : Number(Number(order.payment?.cashbackRemainingToPayZl || 0).toFixed(2)),
+      managerDisplayAmount,
+      managerDisplayCurrency,
+      managerDisplayRate,
       cashbackFullyPaid,
       checkedAt: new Date(),
       checkedByTelegramId: "",
