@@ -3338,7 +3338,7 @@ app.post("/tg/prepared-referral-message", async (req, res) => {
     const deepLink = `https://t.me/elfduck_shop_bot?startapp=${encodeURIComponent(startParam)}`;
 
     // Твой баннер/картинка для карточки
-    const photo = "https://blush-impressive-moth-462.mypinata.cloud/ipfs/bafybeihgmrlfe3p5p5dlc2ic7lcobhv6pwl4cp45injv24vuife7dtcowa";
+    const photo = "https://blush-impressive-moth-462.mypinata.cloud/ipfs/bafybeifdnnsv4ddcjyorb3xrf6fvzi4yyqizuhhpomv7aew4j7oodfsg3q";
 
     const caption =
       `🦆 ELF DUCK\n\n` +
