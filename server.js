@@ -12,57 +12,9 @@ import PickupPoint from "./models/PickupPoint.js";
 import Cart from "./models/Cart.js";
 import Order from "./models/Order.js";
 
-const botSettingsSchema = new mongoose.Schema(
-  {
-    key: { type: String, required: true, unique: true, index: true },
-    value: { type: String, default: "" },
-    updatedAt: { type: Date, default: Date.now },
-    updatedBy: { type: String, default: "" },
-  },
-  { collection: "bot_settings" }
-);
 
-const BotSettings =
-  mongoose.models.BotSettings || mongoose.model("BotSettings", botSettingsSchema);
 
 let bot = null;
-
-let activeBotToken = "";
-
-async function getRuntimeTelegramBotToken() {
-  const fromDb = await BotSettings.findOne({ key: "telegram_bot_token" }).lean();
-  const dbToken = String(fromDb?.value || "").trim();
-  const envToken = String(process.env.TELEGRAM_BOT_TOKEN || "").trim();
-  return dbToken || envToken;
-}
-
-async function startOrReplaceTelegramBot(token) {
-  const safeToken = String(token || "").trim();
-  if (!safeToken) throw new Error("TELEGRAM_BOT_TOKEN_MISSING");
-
-  if (bot && activeBotToken === safeToken) {
-    return { ok: true, reused: true };
-  }
-
-  if (bot) {
-    try {
-      await bot.stop("token switched");
-    } catch {}
-    bot = null;
-  }
-
-  const nextBot = new Telegraf(safeToken);
-
-  // ВАЖНО:
-  // если ниже по файлу все bot.action / bot.command / bot.on
-  // навешиваются прямо на глобальный bot,
-  // то для идеальной архитектуры их надо вынести в registerBotHandlers(nextBot).
-  // Но минимально можно сначала заменить создание bot на nextBot, если setup идёт после этого.
-  bot = nextBot;
-  activeBotToken = safeToken;
-
-  return { ok: true, reused: false };
-}
 
 const app = express();
 
@@ -3452,42 +3404,6 @@ app.get("/pickup-points", async (req, res) => {
   }
 });
 
-app.put("/admin/runtime-bot-token", async (req, res) => {
-  try {
-    const adminToken = String(req.headers["x-admin-token"] || "").trim();
-
-    if (!process.env.ADMIN_API_TOKEN || adminToken !== String(process.env.ADMIN_API_TOKEN).trim()) {
-      return res.status(403).json({ ok: false, error: "FORBIDDEN" });
-    }
-
-    const token = String(req.body?.token || "").trim();
-    const updatedBy = String(req.body?.updatedBy || "").trim();
-
-    if (!token) {
-      return res.status(400).json({ ok: false, error: "TOKEN_REQUIRED" });
-    }
-
-    await BotSettings.updateOne(
-      { key: "telegram_bot_token" },
-      {
-        $set: {
-          value: token,
-          updatedAt: new Date(),
-          updatedBy,
-        },
-      },
-      { upsert: true }
-    );
-
-    await startOrReplaceTelegramBot(token);
-
-    return res.json({ ok: true });
-  } catch (e) {
-    console.error("PUT /admin/runtime-bot-token error:", e);
-    return res.status(500).json({ ok: false, error: "SERVER_ERROR" });
-  }
-});
-
 // ===== Admin: pickup points (CRUD) =====
 app.post("/admin/pickup-points", requireAdmin, async (req, res) => {
   try {
@@ -6020,9 +5936,7 @@ app.get("/orders/:id/payment-config", async (req, res) => {
 
 // ==== Telegram бот ====
 
-const runtimeToken = await getRuntimeTelegramBotToken();
-await startOrReplaceTelegramBot(runtimeToken);
-// const TG_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+const TG_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const WEBAPP_URL = process.env.WEBAPP_URL || "";
 const START_BANNER_URL = String(process.env.START_BANNER_URL || "").trim();
 
