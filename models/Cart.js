@@ -54,6 +54,9 @@ const cartSchema = new mongoose.Schema(
     arrivalTime: { type: String, default: null },
     deliveryTimeWindow: { type: String, default: null },
 
+    courierDistrict: { type: String, default: null },
+    deliveryFeeZl: { type: Number, default: 0 },
+
     // one order = one pickup point (can be changed later in cart/checkout)
     checkoutPickupPointId: {
       type: mongoose.Schema.Types.ObjectId,

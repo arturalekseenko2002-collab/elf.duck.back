@@ -249,6 +249,131 @@ function formatOrderDate(dt) {
   }
 }
 
+const WARSAW_DELIVERY_DISTRICT_PRICES = new Map([
+  ["srodmiescie", { label: "Śródmieście", price: 20 }],
+  ["wola", { label: "Wola", price: 20 }],
+  ["ochota", { label: "Ochota", price: 20 }],
+  ["zoliborz", { label: "Żoliborz", price: 20 }],
+  ["praga-polnoc", { label: "Praga Północ", price: 20 }],
+
+  ["mokotow", { label: "Mokotów", price: 20 }],
+  ["praga-poludnie", { label: "Praga Południe", price: 20 }],
+  ["bialoleka", { label: "Białołęka", price: 20 }],
+  ["targowek", { label: "Targówek", price: 20 }],
+  ["bielany", { label: "Bielany", price: 20 }],
+  ["bemowo", { label: "Bemowo", price: 20 }],
+  ["ursus", { label: "Ursus", price: 20 }],
+  ["wlochy", { label: "Włochy", price: 20 }],
+  ["ursynow", { label: "Ursynów", price: 20 }],
+  ["wilanow", { label: "Wilanów", price: 20 }],
+
+  ["wawer", { label: "Wawer", price: 25 }],
+  ["rembertow", { label: "Rembertów", price: 25 }],
+  ["wesola", { label: "Wesoła", price: 25 }],
+]);
+
+function normalizeDistrictChunk(input) {
+  return String(input || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/ł/g, "l")
+    .replace(/ś/g, "s")
+    .replace(/ż/g, "z")
+    .replace(/ź/g, "z")
+    .replace(/ć/g, "c")
+    .replace(/ń/g, "n")
+    .replace(/ó/g, "o")
+    .replace(/ą/g, "a")
+    .replace(/ę/g, "e")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+async function resolveWarsawDeliveryPricing(address) {
+  const rawAddress = String(address || "").trim();
+  if (!rawAddress) {
+    return {
+      districtKey: "",
+      districtLabel: null,
+      deliveryFeeZl: 0,
+      matched: false,
+    };
+  }
+
+  const matchDistrictFromText = (input) => {
+    const normalizedAddress = normalizeDistrictChunk(input);
+
+    for (const [key, meta] of WARSAW_DELIVERY_DISTRICT_PRICES.entries()) {
+      if (normalizedAddress.includes(key)) {
+        return {
+          districtKey: key,
+          districtLabel: meta.label,
+          deliveryFeeZl: Number(meta.price || 0),
+          matched: true,
+        };
+      }
+    }
+
+    return {
+      districtKey: "",
+      districtLabel: null,
+      deliveryFeeZl: 0,
+      matched: false,
+    };
+  };
+
+  const directMatch = matchDistrictFromText(rawAddress);
+  if (directMatch.matched) {
+    return directMatch;
+  }
+
+  try {
+    const query = encodeURIComponent(`${rawAddress}, Warszawa, Poland`);
+    const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=1&q=${query}`;
+
+    const response = await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "ELF-DUCK/1.0 (delivery district lookup)",
+      },
+    });
+
+    const data = await response.json().catch(() => []);
+    const first = Array.isArray(data) ? data[0] : null;
+    const addr = first?.address || {};
+
+    const districtCandidates = [
+      addr.city_district,
+      addr.suburb,
+      addr.borough,
+      addr.quarter,
+      addr.neighbourhood,
+      addr.city,
+      addr.town,
+      addr.municipality,
+    ].filter(Boolean);
+
+    for (const candidate of districtCandidates) {
+      const matched = matchDistrictFromText(candidate);
+      if (matched.matched) {
+        return matched;
+      }
+    }
+  } catch (e) {
+    console.error("resolveWarsawDeliveryPricing geocode error:", e);
+  }
+
+  return {
+    districtKey: "",
+    districtLabel: null,
+    deliveryFeeZl: 0,
+    matched: false,
+  };
+}
+
 const LIQUIDS_CATEGORY_KEYS = new Set(["liquids"]);
 const DISPOSABLES_CATEGORY_KEYS = new Set(["disposables"]);
 const CARTRIDGES_CATEGORY_KEYS = new Set(["cartridges"]);
@@ -1973,14 +2098,12 @@ async function sendOrderCreatedNotification(order) {
       lines.push("");
     }
 
-    if (order.deliveryType === "delivery" && order.deliveryMethod === "courier") {
-      if (order.courierAddress) {
-        lines.push(`📍 <b>Адрес доставки:</b> ${escapeHtml(order.courierAddress)}`);
-        if (order?.deliveryTimeWindow) {
-          lines.push(`🕒 <b>Временной промежуток:</b> ${escapeHtml(order.deliveryTimeWindow)}`);
-        }
-        lines.push("");
-      }
+    if (String(order?.deliveryType || "") === "delivery" && String(order?.deliveryMethod || "") === "courier") {
+      if (order?.courierAddress) lines.push(`📍 <b>Адрес доставки:</b> ${escapeHtml(order.courierAddress)}`);
+      if (order?.courierDistrict) lines.push(`🌍 <b>Район:</b> ${escapeHtml(order.courierDistrict)}`);
+      if (Number(order?.deliveryFeeZl || 0) > 0) lines.push(`🚚 <b>Стоимость доставки:</b> ${Number(order.deliveryFeeZl || 0).toFixed(2)} PLN`);
+      if (order?.deliveryTimeWindow) lines.push(`🕒 <b>Временной промежуток:</b> ${escapeHtml(order.deliveryTimeWindow)}`);
+      lines.push("");
     }
 
     if (order.deliveryType === "delivery" && order.deliveryMethod === "inpost") {
@@ -2237,13 +2360,17 @@ async function refreshManagerOrderMessage(order) {
 if (order.deliveryType === "delivery" && order.deliveryMethod === "courier") {
   if (order.courierAddress) {
     lines.push(`📍 <b>Адрес доставки:</b> ${escapeHtml(order.courierAddress)}`);
-
-    if (order?.deliveryTimeWindow) {
-      lines.push(`🕒 <b>Временной промежуток:</b> ${escapeHtml(order.deliveryTimeWindow)}`);
-    }
-
-    lines.push("");
   }
+  if (order.courierDistrict) {
+    lines.push(`🌍 <b>Район:</b> ${escapeHtml(order.courierDistrict)}`);
+  }
+  if (Number(order.deliveryFeeZl || 0) > 0) {
+    lines.push(`🚚 <b>Стоимость доставки:</b> ${Number(order.deliveryFeeZl || 0).toFixed(2)} PLN`);
+  }
+  if (order.deliveryTimeWindow) {
+    lines.push(`🕒 <b>Временной промежуток:</b> ${escapeHtml(order.deliveryTimeWindow)}`);
+  }
+  lines.push("");
 }
 
     if (order.deliveryType === "delivery" && order.deliveryMethod === "inpost") {
@@ -3965,6 +4092,10 @@ app.put("/cart", async (req, res) => {
           ? null
           : String(b.arrivalTime || "").trim();
 
+      const deliveryPricing = await resolveWarsawDeliveryPricing(courierAddress);
+      const courierDistrict = deliveryPricing.districtLabel || null;
+      const deliveryFeeZl = deliveryPricing.matched ? Number(deliveryPricing.deliveryFeeZl || 0) : 0;
+
       const deliveryTimeWindow =
         b.deliveryTimeWindow === null || b.deliveryTimeWindow === undefined
           ? null
@@ -4551,6 +4682,15 @@ for (const d of deltas) {
           inpostData,
           arrivalTime,
           deliveryTimeWindow,
+          courierDistrict:
+          finalCheckoutDeliveryType === "delivery" && finalCheckoutDeliveryMethod === "courier"
+            ? courierDistrict
+            : null,
+
+          deliveryFeeZl:
+            finalCheckoutDeliveryType === "delivery" && finalCheckoutDeliveryMethod === "courier"
+              ? deliveryFeeZl
+              : 0,
         },
       },
       { upsert: true, new: true }
@@ -4609,12 +4749,31 @@ app.post("/orders/confirm", async (req, res) => {
       }
     }
 
+    if (cart.checkoutDeliveryType === "delivery" && cart.checkoutDeliveryMethod === "courier") {
+      const deliveryPricing = await resolveWarsawDeliveryPricing(cart?.courierAddress || "");
+
+      if (!deliveryPricing.matched) {
+        return res.status(400).json({
+          ok: false,
+          field: "courierAddress",
+          error: "Укажите адрес с районом Варшавы из доступного списка доставки.",
+        });
+      }
+    }
+
     // 1) total
-    const totalZl = cart.items.reduce((sum, it) => {
+    const itemsTotalZl = cart.items.reduce((sum, it) => {
       const qty = Math.max(1, Number(it.qty || 1));
       const price = Number(it.unitPrice || 0);
       return sum + qty * price;
     }, 0);
+
+    const deliveryFeeZl =
+      cart.checkoutDeliveryType === "delivery" && cart.checkoutDeliveryMethod === "courier"
+        ? Number(cart.deliveryFeeZl || 0)
+        : 0;
+
+    const totalZl = Number((itemsTotalZl + deliveryFeeZl).toFixed(2));
 
     // 2) delivery mapping (из Cart -> Order)
     const deliveryType = cart.checkoutDeliveryType === "pickup" ? "pickup" : "delivery";
@@ -4948,6 +5107,11 @@ app.post("/orders/confirm", async (req, res) => {
 
     // 8) create order
 
+    const confirmedDeliveryPricing =
+    deliveryType === "delivery" && deliveryMethod === "courier"
+      ? await resolveWarsawDeliveryPricing(cart.courierAddress || "")
+      : { districtLabel: null, deliveryFeeZl: 0 };
+
     const duplicateCreatedAfter = new Date(Date.now() - 15 * 1000);
 
     const currentOrderFingerprint = JSON.stringify({
@@ -5045,6 +5209,16 @@ app.post("/orders/confirm", async (req, res) => {
       courierAddress: cart.courierAddress ?? null,
       inpostData: cart.inpostData ?? {},
 
+      courierDistrict:
+        deliveryType === "delivery" && deliveryMethod === "courier"
+          ? (confirmedDeliveryPricing.districtLabel || cart.courierDistrict || null)
+          : null,
+
+      deliveryFeeZl:
+        deliveryType === "delivery" && deliveryMethod === "courier"
+          ? Number(confirmedDeliveryPricing.deliveryFeeZl || cart.deliveryFeeZl || 0)
+          : 0,
+          
       items: orderItems,
 
       payment: { status: "unpaid", amountZl: Number(totalZl.toFixed(2)) },
@@ -5073,6 +5247,8 @@ app.post("/orders/confirm", async (req, res) => {
           arrivalTime: null,
           deliveryTimeWindow: null,
           courierAddress: null,
+          courierDistrict: null,
+          deliveryFeeZl: 0,
           inpostData: {
             fullName: null,
             phone: null,
