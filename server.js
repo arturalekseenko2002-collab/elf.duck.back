@@ -4750,14 +4750,19 @@ app.post("/orders/confirm", async (req, res) => {
     }
 
     if (cart.checkoutDeliveryType === "delivery" && cart.checkoutDeliveryMethod === "courier") {
-      const deliveryPricing = await resolveWarsawDeliveryPricing(cart?.courierAddress || "");
+      const savedCourierDistrict = String(cart?.courierDistrict || "").trim();
+      const savedDeliveryFeeZl = Number(cart?.deliveryFeeZl || 0);
 
-      if (!deliveryPricing.matched) {
-        return res.status(400).json({
-          ok: false,
-          field: "courierAddress",
-          error: "Укажите адрес с районом Варшавы из доступного списка доставки.",
-        });
+      if (!savedCourierDistrict || savedDeliveryFeeZl <= 0) {
+        const deliveryPricing = await resolveWarsawDeliveryPricing(cart?.courierAddress || "");
+
+        if (!deliveryPricing.matched) {
+          return res.status(400).json({
+            ok: false,
+            field: "courierAddress",
+            error: "Не удалось определить район Варшавы по адресу. Укажите адрес точнее, например: Puławska 12, Warszawa.",
+          });
+        }
       }
     }
 
@@ -5107,9 +5112,16 @@ app.post("/orders/confirm", async (req, res) => {
 
     // 8) create order
 
-    const confirmedDeliveryPricing =
+  const confirmedDeliveryPricing =
     deliveryType === "delivery" && deliveryMethod === "courier"
-      ? await resolveWarsawDeliveryPricing(cart.courierAddress || "")
+      ? (
+          String(cart?.courierDistrict || "").trim() && Number(cart?.deliveryFeeZl || 0) > 0
+            ? {
+                districtLabel: String(cart.courierDistrict || "").trim(),
+                deliveryFeeZl: Number(cart.deliveryFeeZl || 0),
+              }
+            : await resolveWarsawDeliveryPricing(cart.courierAddress || "")
+        )
       : { districtLabel: null, deliveryFeeZl: 0 };
 
     const duplicateCreatedAfter = new Date(Date.now() - 15 * 1000);
@@ -5218,7 +5230,7 @@ app.post("/orders/confirm", async (req, res) => {
         deliveryType === "delivery" && deliveryMethod === "courier"
           ? Number(confirmedDeliveryPricing.deliveryFeeZl || cart.deliveryFeeZl || 0)
           : 0,
-          
+
       items: orderItems,
 
       payment: { status: "unpaid", amountZl: Number(totalZl.toFixed(2)) },
