@@ -4916,11 +4916,26 @@ app.post("/orders/confirm", async (req, res) => {
       bgUrl = String(prod?.cardBgUrl || "");
     }
 
-    // // 5) Собрать items snapshot в твою структуру (product -> flavors[])
-    // const productKeys = Array.from(new Set(cart.items.map((it) => String(it.productKey || "").trim()).filter(Boolean)));
+    // 5) Собрать items snapshot в твою структуру (product -> flavors[])
+    const productKeys = Array.from(
+      new Set(cart.items.map((it) => String(it.productKey || "").trim()).filter(Boolean))
+    );
 
-    // const prodByKey = new Map(products.map((p) => [String(p.productKey), p]));
-    // const byProduct = new Map(); // productKey -> row
+    const products = await Product.find(
+      { productKey: { $in: productKeys } },
+      {
+        _id: 1,
+        productKey: 1,
+        title1: 1,
+        title2: 1,
+        orderImgUrl: 1,
+        cardBgUrl: 1,
+        price: 1,
+      }
+    ).lean();
+
+    const prodByKey = new Map(products.map((p) => [String(p.productKey), p]));
+    const byProduct = new Map(); // productKey -> row
 
     for (const it of cart.items) {
       const pk = String(it.productKey || "").trim();
