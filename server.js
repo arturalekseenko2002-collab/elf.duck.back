@@ -4184,6 +4184,12 @@ app.put("/cart", async (req, res) => {
             : String(inpostDataRaw.lockerAddress || "").trim(),
       };
 
+      const inpostPricing =
+        finalCheckoutDeliveryType === "delivery" && finalCheckoutDeliveryMethod === "inpost"
+          ? resolveInpostDeliveryPricing(cleanItems, products)
+          : { packageUnits: 0, deliveryFeeZl: 0 };
+
+
     const forceCheckoutSelection = !!b.forceCheckoutSelection;
 
     // минимальная нормализация
@@ -4215,12 +4221,6 @@ app.put("/cart", async (req, res) => {
 
   const { repricedItems: smartPricedItems, smartPricingMeta } =
     repriceCartItemsWithSmartPricing(cleanItemsBase, pricingProducts);
-
-
-const inpostPricing =
-  finalCheckoutDeliveryType === "delivery" && finalCheckoutDeliveryMethod === "inpost"
-    ? resolveInpostDeliveryPricing(cleanItems, products)
-    : { packageUnits: 0, deliveryFeeZl: 0 };
 
   const referralFirstOrderDiscountEligibility =
     await getIsReferralFirstOrderDiscountEligible(telegramId, smartPricedItems);
