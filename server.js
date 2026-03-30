@@ -4257,6 +4257,17 @@ app.put("/cart", async (req, res) => {
             : String(existing?.checkoutDeliveryMethod || checkoutDeliveryMethod || "courier"))
         : "courier";
 
+            const products = await Product.find(
+      { productKey: { $in: productKeys } },
+      { _id: 1, productKey: 1, title1: 1, title2: 1, orderImgUrl: 1, cardBgUrl: 1, price: 1 }
+    ).lean();
+
+
+const inpostPricing =
+  finalCheckoutDeliveryType === "delivery" && finalCheckoutDeliveryMethod === "inpost"
+    ? resolveInpostDeliveryPricing(cleanItems, products)
+    : { packageUnits: 0, deliveryFeeZl: 0 };
+
     const finalCheckoutPickupPointId =
       forceCheckoutSelection ? checkoutPickupPointId : (prevPickup ?? checkoutPickupPointId ?? null);
 
@@ -4899,17 +4910,6 @@ app.post("/orders/confirm", async (req, res) => {
 
     // 5) Собрать items snapshot в твою структуру (product -> flavors[])
     const productKeys = Array.from(new Set(cart.items.map((it) => String(it.productKey || "").trim()).filter(Boolean)));
-
-    const products = await Product.find(
-      { productKey: { $in: productKeys } },
-      { _id: 1, productKey: 1, title1: 1, title2: 1, orderImgUrl: 1, cardBgUrl: 1, price: 1 }
-    ).lean();
-
-
-const inpostPricing =
-  finalCheckoutDeliveryType === "delivery" && finalCheckoutDeliveryMethod === "inpost"
-    ? resolveInpostDeliveryPricing(cleanItems, products)
-    : { packageUnits: 0, deliveryFeeZl: 0 };
 
     const prodByKey = new Map(products.map((p) => [String(p.productKey), p]));
     const byProduct = new Map(); // productKey -> row
