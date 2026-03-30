@@ -4216,6 +4216,12 @@ app.put("/cart", async (req, res) => {
   const { repricedItems: smartPricedItems, smartPricingMeta } =
     repriceCartItemsWithSmartPricing(cleanItemsBase, pricingProducts);
 
+
+const inpostPricing =
+  finalCheckoutDeliveryType === "delivery" && finalCheckoutDeliveryMethod === "inpost"
+    ? resolveInpostDeliveryPricing(cleanItems, products)
+    : { packageUnits: 0, deliveryFeeZl: 0 };
+
   const referralFirstOrderDiscountEligibility =
     await getIsReferralFirstOrderDiscountEligible(telegramId, smartPricedItems);
 
@@ -4255,11 +4261,6 @@ app.put("/cart", async (req, res) => {
             ? checkoutDeliveryMethod
             : String(existing?.checkoutDeliveryMethod || checkoutDeliveryMethod || "courier"))
         : "courier";
-
-    const inpostPricing =
-      finalCheckoutDeliveryType === "delivery" && finalCheckoutDeliveryMethod === "inpost"
-        ? resolveInpostDeliveryPricing(cleanItems, products)
-        : { packageUnits: 0, deliveryFeeZl: 0 };
 
     const finalCheckoutPickupPointId =
       forceCheckoutSelection ? checkoutPickupPointId : (prevPickup ?? checkoutPickupPointId ?? null);
