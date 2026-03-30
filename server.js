@@ -4184,11 +4184,6 @@ app.put("/cart", async (req, res) => {
             : String(inpostDataRaw.lockerAddress || "").trim(),
       };
 
-      const inpostPricing =
-        finalCheckoutDeliveryType === "delivery" && finalCheckoutDeliveryMethod === "inpost"
-          ? resolveInpostDeliveryPricing(cleanItems, products)
-          : { packageUnits: 0, deliveryFeeZl: 0 };
-
 
     const forceCheckoutSelection = !!b.forceCheckoutSelection;
 
@@ -4261,6 +4256,11 @@ app.put("/cart", async (req, res) => {
             ? checkoutDeliveryMethod
             : String(existing?.checkoutDeliveryMethod || checkoutDeliveryMethod || "courier"))
         : "courier";
+
+        const inpostPricing =
+  finalCheckoutDeliveryType === "delivery" && finalCheckoutDeliveryMethod === "inpost"
+    ? resolveInpostDeliveryPricing(cleanItems, products)
+    : { packageUnits: 0, deliveryFeeZl: 0 };
 
     const finalCheckoutPickupPointId =
       forceCheckoutSelection ? checkoutPickupPointId : (prevPickup ?? checkoutPickupPointId ?? null);
