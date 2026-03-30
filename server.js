@@ -4257,9 +4257,17 @@ app.put("/cart", async (req, res) => {
             : String(existing?.checkoutDeliveryMethod || checkoutDeliveryMethod || "courier"))
         : "courier";
 
-            const products = await Product.find(
-      { productKey: { $in: productKeys } },
-      { _id: 1, productKey: 1, title1: 1, title2: 1, orderImgUrl: 1, cardBgUrl: 1, price: 1 }
+    const products = await Product.find(
+      {
+        productKey: {
+          $in: [...new Set(cleanItems.map((it) => String(it?.productKey || "").trim()).filter(Boolean))],
+        },
+      },
+      {
+        productKey: 1,
+        price: 1,
+        categoryKey: 1,
+      }
     ).lean();
 
 
