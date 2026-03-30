@@ -4916,11 +4916,11 @@ app.post("/orders/confirm", async (req, res) => {
       bgUrl = String(prod?.cardBgUrl || "");
     }
 
-    // 5) Собрать items snapshot в твою структуру (product -> flavors[])
-    const productKeys = Array.from(new Set(cart.items.map((it) => String(it.productKey || "").trim()).filter(Boolean)));
+    // // 5) Собрать items snapshot в твою структуру (product -> flavors[])
+    // const productKeys = Array.from(new Set(cart.items.map((it) => String(it.productKey || "").trim()).filter(Boolean)));
 
-    const prodByKey = new Map(products.map((p) => [String(p.productKey), p]));
-    const byProduct = new Map(); // productKey -> row
+    // const prodByKey = new Map(products.map((p) => [String(p.productKey), p]));
+    // const byProduct = new Map(); // productKey -> row
 
     for (const it of cart.items) {
       const pk = String(it.productKey || "").trim();
