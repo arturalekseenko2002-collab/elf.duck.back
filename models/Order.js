@@ -94,6 +94,9 @@ const orderSchema = new mongoose.Schema(
       lockerAddress: { type: String, default: null },
     },
 
+    inpostDeliveryFeeZl: { type: Number, default: 0 },
+    inpostPackageUnits: { type: Number, default: 0 },
+
     arrivalTime: { type: String, default: null },
     deliveryTimeWindow: { type: String, default: null },
 

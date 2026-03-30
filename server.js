@@ -292,6 +292,52 @@ function normalizeDistrictChunk(input) {
     .replace(/^-+|-+$/g, "");
 }
 
+function getProductCategoryKey(product) {
+  return String(product?.categoryKey || "").trim().toLowerCase();
+}
+
+function getInpostEquivalentUnitsFromCartItems(items = [], products = []) {
+  const productByKey = new Map(
+    (Array.isArray(products) ? products : []).map((p) => [String(p?.productKey || "").trim(), p])
+  );
+
+  const totals = (Array.isArray(items) ? items : []).reduce(
+    (acc, item) => {
+      const qty = Math.max(0, Number(item?.qty || 0));
+      const product = productByKey.get(String(item?.productKey || "").trim());
+      const categoryKey = getProductCategoryKey(product);
+
+      if (categoryKey === "liquids") {
+        acc.liquids += qty;
+      } else if (categoryKey === "disposables" || categoryKey === "pods") {
+        acc.devices += qty;
+      } else if (categoryKey === "cartridges") {
+        acc.cartridges += qty;
+      }
+
+      return acc;
+    },
+    { liquids: 0, devices: 0, cartridges: 0 }
+  );
+
+  const liquidsUnits = totals.liquids * (7 / 20); // 20 жиж = 7 единиц
+  const devicesUnits = totals.devices;            // 1 курилка / 1 под = 1 единица
+  const cartridgesUnits = totals.cartridges / 4;  // 4 картриджа = 1 единица
+
+  const packageUnits = Number((liquidsUnits + devicesUnits + cartridgesUnits).toFixed(4));
+  return packageUnits;
+}
+
+function resolveInpostDeliveryPricing(items = [], products = []) {
+  const packageUnits = getInpostEquivalentUnitsFromCartItems(items, products);
+  const deliveryFeeZl = packageUnits > 7 ? 17 : 12;
+
+  return {
+    packageUnits,
+    deliveryFeeZl,
+  };
+}
+
 async function resolveWarsawDeliveryPricing(address) {
   const rawAddress = String(address || "").trim();
   if (!rawAddress) {
@@ -2121,6 +2167,12 @@ async function sendOrderCreatedNotification(order) {
       ) {
         lines.push("");
       }
+      if (Number(order.inpostDeliveryFeeZl || 0) > 0) {
+        lines.push(`🚚 <b>Стоимость доставки InPost:</b> ${Number(order.inpostDeliveryFeeZl || 0).toFixed(2)} PLN`);
+      }
+      if (Number(order.inpostPackageUnits || 0) > 0) {
+        lines.push(`📦 <b>Условные единицы:</b> ${Number(order.inpostPackageUnits || 0).toFixed(2)}`);
+      }
     }
 
     if (order.payment?.method === "cash") {
@@ -2387,6 +2439,12 @@ if (order.deliveryType === "delivery" && order.deliveryMethod === "courier") {
         order.inpostData?.lockerAddress
       ) {
         lines.push("");
+      }
+      if (Number(order?.inpostDeliveryFeeZl || 0) > 0) {
+        lines.push(`🚚 <b>Стоимость доставки InPost:</b> ${Number(order.inpostDeliveryFeeZl || 0).toFixed(2)} PLN`);
+      }
+      if (Number(order?.inpostPackageUnits || 0) > 0) {
+        lines.push(`📦 <b>Условные единицы:</b> ${Number(order.inpostPackageUnits || 0).toFixed(2)}`);
       }
     }
 
@@ -4158,6 +4216,11 @@ app.put("/cart", async (req, res) => {
   const { repricedItems: smartPricedItems, smartPricingMeta } =
     repriceCartItemsWithSmartPricing(cleanItemsBase, pricingProducts);
 
+  const inpostPricing =
+    finalCheckoutDeliveryType === "delivery" && finalCheckoutDeliveryMethod === "inpost"
+      ? resolveInpostDeliveryPricing(cleanItems, products)
+      : { packageUnits: 0, deliveryFeeZl: 0 };
+
   const referralFirstOrderDiscountEligibility =
     await getIsReferralFirstOrderDiscountEligible(telegramId, smartPricedItems);
 
@@ -4682,14 +4745,25 @@ for (const d of deltas) {
           inpostData,
           arrivalTime,
           deliveryTimeWindow,
+          
           courierDistrict:
-          finalCheckoutDeliveryType === "delivery" && finalCheckoutDeliveryMethod === "courier"
-            ? courierDistrict
-            : null,
+            finalCheckoutDeliveryType === "delivery" && finalCheckoutDeliveryMethod === "courier"
+              ? courierDistrict
+              : null,
 
           deliveryFeeZl:
             finalCheckoutDeliveryType === "delivery" && finalCheckoutDeliveryMethod === "courier"
               ? deliveryFeeZl
+              : 0,
+
+          inpostDeliveryFeeZl:
+            finalCheckoutDeliveryType === "delivery" && finalCheckoutDeliveryMethod === "inpost"
+              ? Number(inpostPricing.deliveryFeeZl || 0)
+              : 0,
+
+          inpostPackageUnits:
+            finalCheckoutDeliveryType === "delivery" && finalCheckoutDeliveryMethod === "inpost"
+              ? Number(inpostPricing.packageUnits || 0)
               : 0,
         },
       },
@@ -4773,12 +4847,17 @@ app.post("/orders/confirm", async (req, res) => {
       return sum + qty * price;
     }, 0);
 
-    const deliveryFeeZl =
+    const courierDeliveryFeeZl =
       cart.checkoutDeliveryType === "delivery" && cart.checkoutDeliveryMethod === "courier"
         ? Number(cart.deliveryFeeZl || 0)
         : 0;
 
-    const totalZl = Number((itemsTotalZl + deliveryFeeZl).toFixed(2));
+    const inpostDeliveryFeeZl =
+      cart.checkoutDeliveryType === "delivery" && cart.checkoutDeliveryMethod === "inpost"
+        ? Number(cart.inpostDeliveryFeeZl || 0)
+        : 0;
+
+    const totalZl = Number((itemsTotalZl + courierDeliveryFeeZl + inpostDeliveryFeeZl).toFixed(2));
 
     // 2) delivery mapping (из Cart -> Order)
     const deliveryType = cart.checkoutDeliveryType === "pickup" ? "pickup" : "delivery";
@@ -5112,17 +5191,25 @@ app.post("/orders/confirm", async (req, res) => {
 
     // 8) create order
 
-  const confirmedDeliveryPricing =
-    deliveryType === "delivery" && deliveryMethod === "courier"
-      ? (
-          String(cart?.courierDistrict || "").trim() && Number(cart?.deliveryFeeZl || 0) > 0
-            ? {
-                districtLabel: String(cart.courierDistrict || "").trim(),
-                deliveryFeeZl: Number(cart.deliveryFeeZl || 0),
-              }
-            : await resolveWarsawDeliveryPricing(cart.courierAddress || "")
-        )
-      : { districtLabel: null, deliveryFeeZl: 0 };
+    const confirmedDeliveryPricing =
+      deliveryType === "delivery" && deliveryMethod === "courier"
+        ? (
+            String(cart?.courierDistrict || "").trim() && Number(cart?.deliveryFeeZl || 0) > 0
+              ? {
+                  districtLabel: String(cart.courierDistrict || "").trim(),
+                  deliveryFeeZl: Number(cart.deliveryFeeZl || 0),
+                }
+              : await resolveWarsawDeliveryPricing(cart.courierAddress || "")
+          )
+        : { districtLabel: null, deliveryFeeZl: 0 };
+
+    const confirmedInpostPricing =
+      deliveryType === "delivery" && deliveryMethod === "inpost"
+        ? {
+            packageUnits: Number(cart?.inpostPackageUnits || 0),
+            deliveryFeeZl: Number(cart?.inpostDeliveryFeeZl || 0),
+          }
+        : { packageUnits: 0, deliveryFeeZl: 0 };
 
     const duplicateCreatedAfter = new Date(Date.now() - 15 * 1000);
 
@@ -5231,6 +5318,16 @@ app.post("/orders/confirm", async (req, res) => {
           ? Number(confirmedDeliveryPricing.deliveryFeeZl || cart.deliveryFeeZl || 0)
           : 0,
 
+      inpostDeliveryFeeZl:
+        deliveryType === "delivery" && deliveryMethod === "inpost"
+          ? Number(confirmedInpostPricing.deliveryFeeZl || 0)
+          : 0,
+
+      inpostPackageUnits:
+        deliveryType === "delivery" && deliveryMethod === "inpost"
+          ? Number(confirmedInpostPricing.packageUnits || 0)
+          : 0,
+
       items: orderItems,
 
       payment: { status: "unpaid", amountZl: Number(totalZl.toFixed(2)) },
@@ -5261,6 +5358,8 @@ app.post("/orders/confirm", async (req, res) => {
           courierAddress: null,
           courierDistrict: null,
           deliveryFeeZl: 0,
+          inpostDeliveryFeeZl: 0,
+          inpostPackageUnits: 0,
           inpostData: {
             fullName: null,
             phone: null,
