@@ -714,6 +714,44 @@ function recalcUserCashbackBalanceFromLedger(user) {
   return user.cashbackBalance;
 }
 
+async function grantManualCashbackToUser(user, amountZl, meta = {}) {
+  if (!user) throw new Error("USER_NOT_FOUND");
+
+  const safeAmount = Number(amountZl || 0);
+  if (!(safeAmount > 0)) {
+    throw new Error("INVALID_CASHBACK_AMOUNT");
+  }
+
+  user.cashbackLedger = Array.isArray(user.cashbackLedger) ? user.cashbackLedger : [];
+
+  const now = new Date();
+  const expiresAt = addDays(now, 30);
+
+  user.cashbackLedger.push({
+    source: "manual_admin_grant",
+    amountZl: Number(safeAmount.toFixed(2)),
+    remainingZl: Number(safeAmount.toFixed(2)),
+    earnedAt: now,
+    expiresAt,
+    orderId: null,
+    note: String(meta?.note || "").trim(),
+    grantedByTelegramId: String(meta?.grantedByTelegramId || "").trim(),
+    grantedByUsername: String(meta?.grantedByUsername || "").trim(),
+    warnedAt: null,
+    expiredAt: null,
+    expiredAmountZl: 0,
+  });
+
+  recalcUserCashbackBalanceFromLedger(user);
+  await user.save();
+
+  return {
+    cashbackBalance: Number(user.cashbackBalance || 0),
+    grantedAmountZl: Number(safeAmount.toFixed(2)),
+    expiresAt,
+  };
+}
+
 async function sendCashbackExpiringSoonNotification(user, expiringRows) {
   try {
     if (!bot || !user?.telegramId || !Array.isArray(expiringRows) || !expiringRows.length) return;
@@ -3641,6 +3679,56 @@ app.post("/admin/pickup-points", requireAdmin, async (req, res) => {
     console.error("POST /admin/pickup-points error:", e);
     if (e?.code === 11000) return res.status(409).json({ ok: false, error: "Pickup point key already exists" });
     res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+app.post("/admin/users/cashback/grant-by-username", async (req, res) => {
+  try {
+    const token = String(req.headers["x-admin-token"] || "").trim();
+    if (!token || token !== process.env.ADMIN_API_TOKEN) {
+      return res.status(401).json({ ok: false, error: "Unauthorized" });
+    }
+
+    const usernameRaw = String(req.body?.username || "").trim();
+    const username = usernameRaw.replace(/^@+/, "").trim();
+    const amountZl = Number(req.body?.amountZl || 0);
+    const note = String(req.body?.note || "").trim();
+    const grantedByTelegramId = String(req.body?.grantedByTelegramId || "").trim();
+    const grantedByUsername = String(req.body?.grantedByUsername || "").trim();
+
+    if (!username) {
+      return res.status(400).json({ ok: false, error: "USERNAME_REQUIRED" });
+    }
+
+    if (!(amountZl > 0)) {
+      return res.status(400).json({ ok: false, error: "INVALID_CASHBACK_AMOUNT" });
+    }
+
+    const user = await User.findOne({ username });
+    if (!user) {
+      return res.status(404).json({ ok: false, error: "USER_NOT_FOUND" });
+    }
+
+    const result = await grantManualCashbackToUser(user, amountZl, {
+      note,
+      grantedByTelegramId,
+      grantedByUsername,
+    });
+
+    return res.json({
+      ok: true,
+      user: {
+        telegramId: String(user.telegramId || ""),
+        username: String(user.username || ""),
+        firstName: String(user.firstName || ""),
+      },
+      cashbackBalance: Number(result.cashbackBalance || 0),
+      grantedAmountZl: Number(result.grantedAmountZl || 0),
+      expiresAt: result.expiresAt,
+    });
+  } catch (e) {
+    console.error("POST /admin/users/cashback/grant-by-username error:", e);
+    return res.status(500).json({ ok: false, error: e.message || "SERVER_ERROR" });
   }
 });
 
