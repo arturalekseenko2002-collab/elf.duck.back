@@ -1660,9 +1660,9 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
             String(flavor?.flavorLabel || flavor?.label || flavor?.flavorKey || "").trim() ||
             "Вкус";
           const qty = Math.max(1, Number(flavor?.qty || 1));
-          return `${escapeHtml(label)} ×${qty}`;
+          return `• ${escapeHtml(label)} ×${qty}`;
         })
-        .join(", ");
+        .join(" • ");
 
       return [
         `<b>${escapeHtml(productTitle)}</b> [${bucketLabel}] - ${productQty}шт.`,
