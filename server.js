@@ -249,6 +249,28 @@ function formatOrderDate(dt) {
   }
 }
 
+function buildOrderPointSearchBlob(order, pickupPoint) {
+  const rawParts = [
+    pickupPoint?.key,
+    pickupPoint?.title,
+    pickupPoint?.address,
+    pickupPoint?.name,
+    pickupPoint?.label,
+    pickupPoint?.district,
+    pickupPoint?.city,
+    order?.pickupPointTitle,
+    order?.pickupPointAddress,
+    order?.methodLabel,
+    order?.deliveryMethod,
+    order?.deliveryType,
+  ];
+
+  return rawParts
+    .map((v) => String(v || "").trim().toLowerCase())
+    .filter(Boolean)
+    .join(" | ");
+}
+
 function normalizePhotoLookupText(input) {
   return String(input || "")
     .trim()
