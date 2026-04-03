@@ -1665,7 +1665,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
         .join(", ");
 
       return [
-        `${escapeHtml(productTitle)} [${bucketLabel}] - ${productQty}шт.`,
+        `<b>${escapeHtml(productTitle)}</b> [${bucketLabel}] - ${productQty}шт.`,
         flavorsLine,
       ];
     });
