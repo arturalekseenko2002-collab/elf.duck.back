@@ -2410,8 +2410,8 @@ const pickupPoint = order?.pickupPointId
 
 const photoPoint = point || pickupPoint || null;
 
-const managerOrderPhotoUrl = getManagerOrderPhotoByPickupPoint(order, photoPoint);
-const clientOrderPhotoUrl = firstNonEmptyString(
+const managerOrderPhotoUrl = "";
+let clientOrderPhotoUrl = firstNonEmptyString(
   getCustomerOrderPhotoByPickupPoint(order, photoPoint),
   getManagerOrderPhotoByPickupPoint(order, photoPoint),
   process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT,
@@ -2517,21 +2517,11 @@ console.log("[order-photo-select]", {
   clientPhotoSource,
 });
 
-    const sent = managerOrderPhotoUrl
-      ? await bot.telegram.sendPhoto(
-          point.notificationChatId,
-          { url: managerOrderPhotoUrl },
-          {
-            caption: text,
-            parse_mode: "HTML",
-            reply_markup: initialReplyMarkup,
-          }
-        )
-      : await bot.telegram.sendMessage(point.notificationChatId, text, {
-          parse_mode: "HTML",
-          disable_web_page_preview: true,
-          reply_markup: initialReplyMarkup,
-        });
+const sent = await bot.telegram.sendMessage(point.notificationChatId, text, {
+  parse_mode: "HTML",
+  disable_web_page_preview: true,
+  reply_markup: initialReplyMarkup,
+});
 
     await Order.updateOne(
       { _id: order._id },
@@ -3014,14 +3004,21 @@ async function sendClientOrderCreatedInfo(order) {
       .replace(/\/$/, "");
 
     const orderNo = String(order.orderNo || "").trim();
-
-    // ведём на страницу заказов mini app
     const orderLink = webAppBaseUrl ? `${webAppBaseUrl}/orders` : null;
 
-    // картинка: сначала bgUrl заказа, если его нет — fallback
-    const photoUrl =
-      // String(order.bgUrl || "").trim() ||
-      "https://blush-impressive-moth-462.mypinata.cloud/ipfs/bafybeigcn4azeruhrwlkeya2mrwbc7fnoozambasxyckfyqb742khjgfaq";
+    const point = await resolveOrderNotificationPoint(order).catch(() => null);
+    const pickupPoint = order?.pickupPointId
+      ? await PickupPoint.findById(order.pickupPointId).lean().catch(() => null)
+      : null;
+
+    const photoPoint = point || pickupPoint || null;
+
+    const photoUrl = firstNonEmptyString(
+      getCustomerOrderPhotoByPickupPoint(order, photoPoint),
+      getManagerOrderPhotoByPickupPoint(order, photoPoint),
+      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT,
+      process.env.TG_ORDER_PHOTO_DEFAULT
+    );
 
     const lines = [
       `🛒 <b>ЗАКАЗ СОЗДАН</b>`,
@@ -3049,10 +3046,23 @@ async function sendClientOrderCreatedInfo(order) {
       };
     }
 
-    await bot.telegram.sendPhoto(String(order.userTelegramId), photoUrl, {
-      caption: lines.join("\n"),
-      ...extra,
-    });
+    if (photoUrl) {
+      await bot.telegram.sendPhoto(
+        String(order.userTelegramId),
+        { url: photoUrl },
+        {
+          caption: lines.join("\n"),
+          ...extra,
+        }
+      );
+      return;
+    }
+
+    await bot.telegram.sendMessage(
+      String(order.userTelegramId),
+      lines.join("\n"),
+      extra
+    );
   } catch (e) {
     console.error("sendClientOrderCreatedInfo error:", e);
   }
