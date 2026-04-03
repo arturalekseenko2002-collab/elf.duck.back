@@ -249,7 +249,7 @@ function formatOrderDate(dt) {
   }
 }
 
-function getClientOrderPhotoByPickupPoint(order, pickupPoint) {
+function getManagerOrderPhotoByPickupPoint(order, pickupPoint) {
   const deliveryType = String(order?.deliveryType || "").trim().toLowerCase();
   const deliveryMethod = String(order?.deliveryMethod || "").trim().toLowerCase();
 
@@ -293,6 +293,52 @@ function getClientOrderPhotoByPickupPoint(order, pickupPoint) {
   }
 
   return process.env.TG_ORDER_PHOTO_DEFAULT || "";
+}
+
+function getCustomerOrderPhotoByPickupPoint(order, pickupPoint) {
+  const deliveryType = String(order?.deliveryType || "").trim().toLowerCase();
+  const deliveryMethod = String(order?.deliveryMethod || "").trim().toLowerCase();
+
+  if (deliveryType === "delivery" && deliveryMethod === "courier") {
+    return process.env.TG_CLIENT_ORDER_PHOTO_COURIER || process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT || "";
+  }
+
+  if (deliveryType === "delivery" && deliveryMethod === "inpost") {
+    return process.env.TG_CLIENT_ORDER_PHOTO_INPOST || process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT || "";
+  }
+
+  const pointKey = String(
+    pickupPoint?.key ||
+    pickupPoint?.title ||
+    pickupPoint?.address ||
+    order?.pickupPointTitle ||
+    order?.pickupPointAddress ||
+    ""
+  )
+    .trim()
+    .toLowerCase();
+
+  if (pointKey.includes("praga")) {
+    return process.env.TG_CLIENT_ORDER_PHOTO_PRAGA || process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT || "";
+  }
+
+  if (pointKey.includes("mokotow") || pointKey.includes("mokotów")) {
+    return process.env.TG_CLIENT_ORDER_PHOTO_MOKOTOW || process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT || "";
+  }
+
+  if (pointKey.includes("wola")) {
+    return process.env.TG_CLIENT_ORDER_PHOTO_WOLA || process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT || "";
+  }
+
+  if (
+    pointKey.includes("srodmiescie") ||
+    pointKey.includes("śródmieście") ||
+    pointKey.includes("srodmiescie")
+  ) {
+    return process.env.TG_CLIENT_ORDER_PHOTO_SRODMIESCIE || process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT || "";
+  }
+
+  return process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT || "";
 }
 
 const WARSAW_DELIVERY_DISTRICT_PRICES = new Map([
@@ -2302,8 +2348,8 @@ const initialReplyMarkup =
         ? await PickupPoint.findById(order.pickupPointId).lean().catch(() => null)
         : null;
 
-      const managerOrderPhotoUrl = getClientOrderPhotoByPickupPoint(order, pickupPoint);
-      const clientOrderPhotoUrl = getClientOrderPhotoByPickupPoint(order, pickupPoint);
+      const managerOrderPhotoUrl = getManagerOrderPhotoByPickupPoint(order, pickupPoint);
+      const clientOrderPhotoUrl = getCustomerOrderPhotoByPickupPoint(order, pickupPoint);
 
     const sent = managerOrderPhotoUrl
       ? await bot.telegram.sendPhoto(
