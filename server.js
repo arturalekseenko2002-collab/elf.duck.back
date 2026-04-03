@@ -1660,13 +1660,15 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
             String(flavor?.flavorLabel || flavor?.label || flavor?.flavorKey || "").trim() ||
             "Вкус";
           const qty = Math.max(1, Number(flavor?.qty || 1));
-          return `• ${escapeHtml(label)} ×${qty}`;
+          return `${escapeHtml(label)} ×${qty}`;
         })
         .join(" • ");
 
+      const flavorsLineWithBullet = flavorsLine ? `• ${flavorsLine}` : "";
+
       return [
         `<b>${escapeHtml(productTitle)}</b> [${bucketLabel}] - ${productQty}шт.`,
-        flavorsLine,
+        flavorsLineWithBullet,
       ];
     });
 
