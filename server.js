@@ -249,139 +249,156 @@ function formatOrderDate(dt) {
   }
 }
 
-function buildOrderPointSearchBlob(order, pickupPoint) {
-  const rawParts = [
-    pickupPoint?.key,
-    pickupPoint?.title,
-    pickupPoint?.address,
-    pickupPoint?.name,
-    pickupPoint?.label,
-    pickupPoint?.district,
-    pickupPoint?.city,
-    order?.pickupPointTitle,
-    order?.pickupPointAddress,
-    order?.methodLabel,
-    order?.deliveryMethod,
-    order?.deliveryType,
-  ];
+function normalizePhotoLookupText(input) {
+  return String(input || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/ł/g, "l")
+    .replace(/ś/g, "s")
+    .replace(/ż/g, "z")
+    .replace(/ź/g, "z")
+    .replace(/ć/g, "c")
+    .replace(/ń/g, "n")
+    .replace(/ó/g, "o")
+    .replace(/ą/g, "a")
+    .replace(/ę/g, "e")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-  return rawParts
-    .map((v) => String(v || "").trim().toLowerCase())
-    .filter(Boolean)
-    .join(" | ");
+function firstNonEmptyString(...values) {
+  for (const value of values) {
+    const str = String(value || "").trim();
+    if (str) return str;
+  }
+  return "";
 }
 
 function getManagerOrderPhotoByPickupPoint(order, pickupPoint) {
-  const deliveryType = String(order?.deliveryType || "").trim().toLowerCase();
-  const deliveryMethod = String(order?.deliveryMethod || "").trim().toLowerCase();
+  const deliveryType = normalizePhotoLookupText(order?.deliveryType);
+  const deliveryMethod = normalizePhotoLookupText(order?.deliveryMethod);
 
-  if (deliveryType === "delivery" && deliveryMethod === "courier") {
-    return process.env.TG_ORDER_PHOTO_COURIER || process.env.TG_ORDER_PHOTO_DEFAULT || "";
+  if (deliveryType === "delivery" && deliveryMethod.includes("courier")) {
+    return firstNonEmptyString(
+      process.env.TG_ORDER_PHOTO_COURIER,
+      process.env.TG_ORDER_PHOTO_DEFAULT
+    );
   }
 
-  if (deliveryType === "delivery" && deliveryMethod === "inpost") {
-    return process.env.TG_ORDER_PHOTO_INPOST || process.env.TG_ORDER_PHOTO_DEFAULT || "";
+  if (deliveryType === "delivery" && deliveryMethod.includes("inpost")) {
+    return firstNonEmptyString(
+      process.env.TG_ORDER_PHOTO_INPOST,
+      process.env.TG_ORDER_PHOTO_DEFAULT
+    );
   }
 
-  const pointKey = buildOrderPointSearchBlob(order, pickupPoint);
+  const pointKey = normalizePhotoLookupText(buildOrderPointSearchBlob(order, pickupPoint));
 
   if (pointKey.includes("praga")) {
-    return process.env.TG_ORDER_PHOTO_PRAGA || process.env.TG_ORDER_PHOTO_DEFAULT || "";
+    return firstNonEmptyString(
+      process.env.TG_ORDER_PHOTO_PRAGA,
+      process.env.TG_ORDER_PHOTO_DEFAULT
+    );
   }
 
-  if (pointKey.includes("mokotow") || pointKey.includes("mokotów")) {
-    return process.env.TG_ORDER_PHOTO_MOKOTOW || process.env.TG_ORDER_PHOTO_DEFAULT || "";
+  if (pointKey.includes("mokotow")) {
+    return firstNonEmptyString(
+      process.env.TG_ORDER_PHOTO_MOKOTOW,
+      process.env.TG_ORDER_PHOTO_DEFAULT
+    );
   }
 
   if (pointKey.includes("wola")) {
-    return process.env.TG_ORDER_PHOTO_WOLA || process.env.TG_ORDER_PHOTO_DEFAULT || "";
+    return firstNonEmptyString(
+      process.env.TG_ORDER_PHOTO_WOLA,
+      process.env.TG_ORDER_PHOTO_DEFAULT
+    );
   }
 
   if (
     pointKey.includes("srodmiescie") ||
-    pointKey.includes("śródmieście") ||
-    pointKey.includes("srodmiescie")
+    pointKey.includes("sródmiescie") ||
+    pointKey.includes("śródmiescie")
   ) {
-    return process.env.TG_ORDER_PHOTO_SRODMIESCIE || process.env.TG_ORDER_PHOTO_DEFAULT || "";
+    return firstNonEmptyString(
+      process.env.TG_ORDER_PHOTO_SRODMIESCIE,
+      process.env.TG_ORDER_PHOTO_DEFAULT
+    );
   }
 
-  return process.env.TG_ORDER_PHOTO_DEFAULT || "";
+  return firstNonEmptyString(process.env.TG_ORDER_PHOTO_DEFAULT);
 }
 
 function getCustomerOrderPhotoByPickupPoint(order, pickupPoint) {
-  const deliveryType = String(order?.deliveryType || "").trim().toLowerCase();
-  const deliveryMethod = String(order?.deliveryMethod || "").trim().toLowerCase();
+  const deliveryType = normalizePhotoLookupText(order?.deliveryType);
+  const deliveryMethod = normalizePhotoLookupText(order?.deliveryMethod);
 
-  if (deliveryType === "delivery" && deliveryMethod === "courier") {
-    return (
-      process.env.TG_CLIENT_ORDER_PHOTO_COURIER ||
-      process.env.TG_ORDER_PHOTO_COURIER ||
-      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT ||
-      process.env.TG_ORDER_PHOTO_DEFAULT ||
-      ""
+  if (deliveryType === "delivery" && deliveryMethod.includes("courier")) {
+    return firstNonEmptyString(
+      process.env.TG_CLIENT_ORDER_PHOTO_COURIER,
+      process.env.TG_ORDER_PHOTO_COURIER,
+      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT,
+      process.env.TG_ORDER_PHOTO_DEFAULT
     );
   }
 
-  if (deliveryType === "delivery" && deliveryMethod === "inpost") {
-    return (
-      process.env.TG_CLIENT_ORDER_PHOTO_INPOST ||
-      process.env.TG_ORDER_PHOTO_INPOST ||
-      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT ||
-      process.env.TG_ORDER_PHOTO_DEFAULT ||
-      ""
+  if (deliveryType === "delivery" && deliveryMethod.includes("inpost")) {
+    return firstNonEmptyString(
+      process.env.TG_CLIENT_ORDER_PHOTO_INPOST,
+      process.env.TG_ORDER_PHOTO_INPOST,
+      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT,
+      process.env.TG_ORDER_PHOTO_DEFAULT
     );
   }
 
-  const pointKey = buildOrderPointSearchBlob(order, pickupPoint);
+  const pointKey = normalizePhotoLookupText(buildOrderPointSearchBlob(order, pickupPoint));
 
   if (pointKey.includes("praga")) {
-    return (
-      process.env.TG_CLIENT_ORDER_PHOTO_PRAGA ||
-      process.env.TG_ORDER_PHOTO_PRAGA ||
-      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT ||
-      process.env.TG_ORDER_PHOTO_DEFAULT ||
-      ""
+    return firstNonEmptyString(
+      process.env.TG_CLIENT_ORDER_PHOTO_PRAGA,
+      process.env.TG_ORDER_PHOTO_PRAGA,
+      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT,
+      process.env.TG_ORDER_PHOTO_DEFAULT
     );
   }
 
-  if (pointKey.includes("mokotow") || pointKey.includes("mokotów")) {
-    return (
-      process.env.TG_CLIENT_ORDER_PHOTO_MOKOTOW ||
-      process.env.TG_ORDER_PHOTO_MOKOTOW ||
-      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT ||
-      process.env.TG_ORDER_PHOTO_DEFAULT ||
-      ""
+  if (pointKey.includes("mokotow")) {
+    return firstNonEmptyString(
+      process.env.TG_CLIENT_ORDER_PHOTO_MOKOTOW,
+      process.env.TG_ORDER_PHOTO_MOKOTOW,
+      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT,
+      process.env.TG_ORDER_PHOTO_DEFAULT
     );
   }
 
   if (pointKey.includes("wola")) {
-    return (
-      process.env.TG_CLIENT_ORDER_PHOTO_WOLA ||
-      process.env.TG_ORDER_PHOTO_WOLA ||
-      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT ||
-      process.env.TG_ORDER_PHOTO_DEFAULT ||
-      ""
+    return firstNonEmptyString(
+      process.env.TG_CLIENT_ORDER_PHOTO_WOLA,
+      process.env.TG_ORDER_PHOTO_WOLA,
+      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT,
+      process.env.TG_ORDER_PHOTO_DEFAULT
     );
   }
 
   if (
     pointKey.includes("srodmiescie") ||
-    pointKey.includes("śródmieście") ||
-    pointKey.includes("srodmiescie")
+    pointKey.includes("sródmiescie") ||
+    pointKey.includes("śródmiescie")
   ) {
-    return (
-      process.env.TG_CLIENT_ORDER_PHOTO_SRODMIESCIE ||
-      process.env.TG_ORDER_PHOTO_SRODMIESCIE ||
-      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT ||
-      process.env.TG_ORDER_PHOTO_DEFAULT ||
-      ""
+    return firstNonEmptyString(
+      process.env.TG_CLIENT_ORDER_PHOTO_SRODMIESCIE,
+      process.env.TG_ORDER_PHOTO_SRODMIESCIE,
+      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT,
+      process.env.TG_ORDER_PHOTO_DEFAULT
     );
   }
 
-  return (
-    process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT ||
-    process.env.TG_ORDER_PHOTO_DEFAULT ||
-    ""
+  return firstNonEmptyString(
+    process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT,
+    process.env.TG_ORDER_PHOTO_DEFAULT
   );
 }
 
