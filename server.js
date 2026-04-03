@@ -1719,7 +1719,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
     `📊 <b>СТАТИСТИКА ДНЯ</b>`,
     `🏪 Склад: ${escapeHtml(pointTitle)}`,
     `📅 Дата: ${escapeHtml(dayKey)}`,
-    `———————————————————-`,
+    `——————————————————`,
     `🧾 <b>ЗАКАЗЫ :</b>`,
     ``,
   ];
@@ -1739,13 +1739,13 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
     });
   }
 
-  lines.push(`———————————————————-`);
+  lines.push(`——————————————————`);
   lines.push(`💰Касса: ${kasaTotalZl.toFixed(2)} PLN`);
   lines.push(`🪙Скидки: ${discountsTotalZl.toFixed(2)} PLN`);
   lines.push(`👨‍💼Зарплата: ${salaryTotalZl.toFixed(2)} PLN`);
   lines.push(`🫂Рефералов: ${referredFirstOrderUsers.size}`);
   lines.push(`⚙️Продано штук: ${soldPositionsQty}`);
-  lines.push(`———————————————————-`);
+  lines.push(`——————————————————`);
   lines.push(`🦆 ELF DUCK &lt;&gt; СТАТИСТИКА`);
 
   return lines.join("\n");
