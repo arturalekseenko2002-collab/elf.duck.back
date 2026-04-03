@@ -1673,22 +1673,26 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
 
   const lines = [
     `📊 <b>СТАТИСТИКА ДНЯ</b>`,
-    `🏪 <b>Склад:</b> ${escapeHtml(pointTitle)}`,
-    `📅 <b>Дата:</b> ${escapeHtml(dayKey)}`,
+    `🏪 Склад: ${escapeHtml(pointTitle)}`,
+    `📅 Дата: ${escapeHtml(dayKey)}`,
     `———————————————————-`,
     `🧾 <b>ЗАКАЗЫ :</b>`,
+    ``,
   ];
 
   if (!sortedOrders.length) {
     lines.push(`Заказов за день не было.`);
   } else {
-    for (const order of sortedOrders) {
-      lines.push(``);
+    sortedOrders.forEach((order, index) => {
       lines.push(`#${escapeHtml(order.orderNo)}  [${escapeHtml(order.clientName)}]`);
       for (const line of order.lines) {
         lines.push(line);
       }
-    }
+
+      if (index !== sortedOrders.length - 1) {
+        lines.push(``);
+      }
+    });
   }
 
   lines.push(`———————————————————-`);
