@@ -1534,51 +1534,87 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
     return [t1, t2].filter(Boolean).join(" ").trim() || "Товар";
   }
 
-  function getOrderOriginalItemsTotalZl(order) {
-    const items = Array.isArray(order?.items) ? order.items : [];
+  // function getOrderOriginalItemsTotalZl(order) {
+  //   const items = Array.isArray(order?.items) ? order.items : [];
 
-    const itemsTotal = items.reduce((sum, productRow) => {
-      const flavors = Array.isArray(productRow?.flavors) ? productRow.flavors : [];
-      const productQty = flavors.reduce(
-        (acc, flavor) => acc + Math.max(1, Number(flavor?.qty || 1)),
-        0
-      );
+  //   const itemsTotal = items.reduce((sum, productRow) => {
+  //     const flavors = Array.isArray(productRow?.flavors) ? productRow.flavors : [];
+  //     const productQty = flavors.reduce(
+  //       (acc, flavor) => acc + Math.max(1, Number(flavor?.qty || 1)),
+  //       0
+  //     );
 
-      const productBasePrice = Number(
-        productRow?.productBasePrice ||
-          productRow?.basePrice ||
-          productBasePriceMap.get(String(productRow?.productKey || "").trim()) ||
-          productRow?.price ||
-          0
-      );
+  //     const productKey = String(productRow?.productKey || "").trim();
 
-      return sum + productQty * productBasePrice;
-    }, 0);
+  //     let productBasePrice = Number(
+  //       productRow?.productBasePrice ||
+  //         productRow?.basePrice ||
+  //         productBasePriceMap.get(productKey) ||
+  //         productRow?.price ||
+  //         0
+  //     );
 
-    return Number(itemsTotal.toFixed(2));
-  }
+  //     if (!productBasePrice && flavors.length) {
+  //       const flavorBasePrices = flavors
+  //         .map((flavor) =>
+  //           Number(
+  //             flavor?.basePrice ||
+  //               flavor?.baseUnitPrice ||
+  //               flavor?.originalUnitPrice ||
+  //               0
+  //           )
+  //         )
+  //         .filter((value) => value > 0);
+
+  //       if (flavorBasePrices.length) {
+  //         productBasePrice = Math.max(...flavorBasePrices);
+  //       }
+  //     }
+
+  //     if (!productBasePrice && flavors.length) {
+  //       const flavorUnitPrices = flavors
+  //         .map((flavor) => Number(flavor?.unitPrice || 0))
+  //         .filter((value) => value > 0);
+
+  //       if (flavorUnitPrices.length) {
+  //         productBasePrice = Math.max(...flavorUnitPrices);
+  //       }
+  //     }
+
+  //     return sum + productQty * productBasePrice;
+  //   }, 0);
+
+  //   return Number(itemsTotal.toFixed(2));
+  // }
 
   function getOrderSmartDiscountTotalZl(order) {
     const items = Array.isArray(order?.items) ? order.items : [];
 
     const total = items.reduce((sum, productRow) => {
       const flavors = Array.isArray(productRow?.flavors) ? productRow.flavors : [];
+      const productKey = String(productRow?.productKey || "").trim();
 
       return (
         sum +
         flavors.reduce((acc, flavor) => {
           const qty = Math.max(1, Number(flavor?.qty || 1));
-          const basePrice = Number(
+
+          let basePrice = Number(
             flavor?.basePrice ||
               flavor?.baseUnitPrice ||
+              flavor?.originalUnitPrice ||
               productRow?.productBasePrice ||
               productRow?.basePrice ||
-              productBasePriceMap.get(String(productRow?.productKey || "").trim()) ||
+              productBasePriceMap.get(productKey) ||
               productRow?.price ||
-              flavor?.unitPrice ||
               0
           );
+
           const unitPrice = Number(flavor?.unitPrice || 0);
+
+          if (!basePrice && unitPrice > 0) {
+            basePrice = unitPrice;
+          }
 
           return acc + Math.max(0, (basePrice - unitPrice) * qty);
         }, 0)
@@ -1647,7 +1683,15 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
 
   const kasaTotalZl = Number(
     (Array.isArray(orders) ? orders : [])
-      .reduce((sum, order) => sum + getOrderOriginalItemsTotalZl(order), 0)
+      .reduce((sum, order) => {
+        const paidAfterDiscounts = Number(
+          order?.payment?.cashbackRemainingToPayZl ||
+          order?.payment?.managerDisplayAmount ||
+          order?.totalZl ||
+          0
+        );
+        return sum + paidAfterDiscounts;
+      }, 0)
       .toFixed(2)
   );
 
@@ -1664,7 +1708,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
   );
 
   const discountsTotalZl = Number((smartDiscountTotalZl + cashbackDiscountTotalZl).toFixed(2));
-  const salaryTotalZl = Number(((((kasaTotalZl - discountsTotalZl) / 100) * 16)).toFixed(2));
+  const salaryTotalZl = Number((((kasaTotalZl / 100) * 16)).toFixed(2));
 
   const pointTitle = point?.title || point?.address || point?.key || "Склад";
   const sortedOrders = [...orderBlocks].sort(
