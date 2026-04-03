@@ -2404,14 +2404,19 @@ const initialReplyMarkup =
           ],
         ],
       };
-
-      const pickupPoint = order?.pickupPointId
-        ? await PickupPoint.findById(order.pickupPointId).lean().catch(() => null)
-        : null;
+const pickupPoint = order?.pickupPointId
+  ? await PickupPoint.findById(order.pickupPointId).lean().catch(() => null)
+  : null;
 
 const photoPoint = point || pickupPoint || null;
 
 const managerOrderPhotoUrl = getManagerOrderPhotoByPickupPoint(order, photoPoint);
+const clientOrderPhotoUrl = firstNonEmptyString(
+  getCustomerOrderPhotoByPickupPoint(order, photoPoint),
+  getManagerOrderPhotoByPickupPoint(order, photoPoint),
+  process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT,
+  process.env.TG_ORDER_PHOTO_DEFAULT
+);
 
 const pointKeyRaw = String(
   photoPoint?.key ||
@@ -2425,7 +2430,6 @@ const pointKeyRaw = String(
 
 const pointKeyNormalized = normalizePhotoLookupText(pointKeyRaw);
 
-let clientOrderPhotoUrl = "";
 let clientPhotoSource = "";
 
 if (String(order?.deliveryType || "").trim().toLowerCase() === "delivery") {
@@ -2560,52 +2564,41 @@ console.log("[order-photo-select]", {
         inline_keyboard: [[{ text: "💳 Перейти к оплате", web_app: { url: `${APP_URL}/cart?orderId=${encodeURIComponent(String(order?._id || ""))}` } }]],
       };
 
-    if (clientOrderPhotoUrl) {
-      try {
-        await bot.telegram.sendPhoto(
-          safeTelegramId,
-          { url: clientOrderPhotoUrl },
-          {
-            caption: clientText,
-            parse_mode: "HTML",
-            reply_markup: clientReplyMarkup,
-          }
-        );
-
-        console.log("[client-order-photo-sent]", {
-          orderNo: String(order?.orderNo || ""),
-          safeTelegramId,
-          clientOrderPhotoUrl,
-        });
-      } catch (clientPhotoErr) {
-        console.error("[client-order-photo-failed]", {
-          orderNo: String(order?.orderNo || ""),
-          safeTelegramId,
-          clientOrderPhotoUrl,
-          error:
-            clientPhotoErr?.response?.description ||
-            clientPhotoErr?.message ||
-            String(clientPhotoErr),
-        });
-
-        await bot.telegram.sendMessage(safeTelegramId, clientText, {
-          parse_mode: "HTML",
-          disable_web_page_preview: true,
-          reply_markup: clientReplyMarkup,
-        });
-      }
-    } else {
-      console.log("[client-order-photo-empty]", {
-        orderNo: String(order?.orderNo || ""),
-        safeTelegramId,
-      });
-
-      await bot.telegram.sendMessage(safeTelegramId, clientText, {
+if (clientOrderPhotoUrl) {
+  try {
+    await bot.telegram.sendPhoto(
+      safeTelegramId,
+      { url: clientOrderPhotoUrl },
+      {
+        caption: clientText,
         parse_mode: "HTML",
-        disable_web_page_preview: true,
         reply_markup: clientReplyMarkup,
-      });
-    }
+      }
+    );
+  } catch (clientPhotoErr) {
+    console.error("sendOrderCreatedNotification client photo send failed:", {
+      orderNo: String(order?.orderNo || ""),
+      safeTelegramId,
+      clientOrderPhotoUrl,
+      error:
+        clientPhotoErr?.response?.description ||
+        clientPhotoErr?.message ||
+        String(clientPhotoErr),
+    });
+
+    await bot.telegram.sendMessage(safeTelegramId, clientText, {
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+      reply_markup: clientReplyMarkup,
+    });
+  }
+} else {
+  await bot.telegram.sendMessage(safeTelegramId, clientText, {
+    parse_mode: "HTML",
+    disable_web_page_preview: true,
+    reply_markup: clientReplyMarkup,
+  });
+}
     }
   } catch (e) {
     console.error("sendOrderCreatedNotification error:", e);
