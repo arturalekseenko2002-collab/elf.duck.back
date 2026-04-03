@@ -249,6 +249,28 @@ function formatOrderDate(dt) {
   }
 }
 
+function buildOrderPointSearchBlob(order, pickupPoint) {
+  const rawParts = [
+    pickupPoint?.key,
+    pickupPoint?.title,
+    pickupPoint?.address,
+    pickupPoint?.name,
+    pickupPoint?.label,
+    pickupPoint?.district,
+    pickupPoint?.city,
+    order?.pickupPointTitle,
+    order?.pickupPointAddress,
+    order?.methodLabel,
+    order?.deliveryMethod,
+    order?.deliveryType,
+  ];
+
+  return rawParts
+    .map((v) => String(v || "").trim().toLowerCase())
+    .filter(Boolean)
+    .join(" | ");
+}
+
 function getManagerOrderPhotoByPickupPoint(order, pickupPoint) {
   const deliveryType = String(order?.deliveryType || "").trim().toLowerCase();
   const deliveryMethod = String(order?.deliveryMethod || "").trim().toLowerCase();
@@ -261,17 +283,7 @@ function getManagerOrderPhotoByPickupPoint(order, pickupPoint) {
     return process.env.TG_ORDER_PHOTO_INPOST || process.env.TG_ORDER_PHOTO_DEFAULT || "";
   }
 
-  const pointKey = String(
-    pickupPoint?.key ||
-    pickupPoint?.title ||
-    pickupPoint?.address ||
-    order?.pickupPointTitle ||
-    order?.pickupPointAddress ||
-    order?.methodLabel ||
-    ""
-  )
-    .trim()
-    .toLowerCase();
+  const pointKey = buildOrderPointSearchBlob(order, pickupPoint);
 
   if (pointKey.includes("praga")) {
     return process.env.TG_ORDER_PHOTO_PRAGA || process.env.TG_ORDER_PHOTO_DEFAULT || "";
@@ -320,17 +332,7 @@ function getCustomerOrderPhotoByPickupPoint(order, pickupPoint) {
     );
   }
 
-  const pointKey = String(
-    pickupPoint?.key ||
-    pickupPoint?.title ||
-    pickupPoint?.address ||
-    order?.pickupPointTitle ||
-    order?.pickupPointAddress ||
-    order?.methodLabel ||
-    ""
-  )
-    .trim()
-    .toLowerCase();
+  const pointKey = buildOrderPointSearchBlob(order, pickupPoint);
 
   if (pointKey.includes("praga")) {
     return (
@@ -2394,6 +2396,19 @@ const initialReplyMarkup =
 
       const managerOrderPhotoUrl = getManagerOrderPhotoByPickupPoint(order, photoPoint);
       const clientOrderPhotoUrl = getCustomerOrderPhotoByPickupPoint(order, photoPoint);
+
+      console.log("[order-photo-select]", {
+  orderNo: String(order?.orderNo || ""),
+  deliveryType: String(order?.deliveryType || ""),
+  deliveryMethod: String(order?.deliveryMethod || ""),
+  pickupPointId: String(order?.pickupPointId || ""),
+  photoPointKey: String(photoPoint?.key || ""),
+  photoPointTitle: String(photoPoint?.title || ""),
+  photoPointAddress: String(photoPoint?.address || ""),
+  photoSearchBlob: buildOrderPointSearchBlob(order, photoPoint),
+  managerOrderPhotoUrl,
+  clientOrderPhotoUrl,
+});
 
     const sent = managerOrderPhotoUrl
       ? await bot.telegram.sendPhoto(
