@@ -300,11 +300,23 @@ function getCustomerOrderPhotoByPickupPoint(order, pickupPoint) {
   const deliveryMethod = String(order?.deliveryMethod || "").trim().toLowerCase();
 
   if (deliveryType === "delivery" && deliveryMethod === "courier") {
-    return process.env.TG_CLIENT_ORDER_PHOTO_COURIER || process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT || "";
+    return (
+      process.env.TG_CLIENT_ORDER_PHOTO_COURIER ||
+      process.env.TG_ORDER_PHOTO_COURIER ||
+      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT ||
+      process.env.TG_ORDER_PHOTO_DEFAULT ||
+      ""
+    );
   }
 
   if (deliveryType === "delivery" && deliveryMethod === "inpost") {
-    return process.env.TG_CLIENT_ORDER_PHOTO_INPOST || process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT || "";
+    return (
+      process.env.TG_CLIENT_ORDER_PHOTO_INPOST ||
+      process.env.TG_ORDER_PHOTO_INPOST ||
+      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT ||
+      process.env.TG_ORDER_PHOTO_DEFAULT ||
+      ""
+    );
   }
 
   const pointKey = String(
@@ -319,15 +331,33 @@ function getCustomerOrderPhotoByPickupPoint(order, pickupPoint) {
     .toLowerCase();
 
   if (pointKey.includes("praga")) {
-    return process.env.TG_CLIENT_ORDER_PHOTO_PRAGA || process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT || "";
+    return (
+      process.env.TG_CLIENT_ORDER_PHOTO_PRAGA ||
+      process.env.TG_ORDER_PHOTO_PRAGA ||
+      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT ||
+      process.env.TG_ORDER_PHOTO_DEFAULT ||
+      ""
+    );
   }
 
   if (pointKey.includes("mokotow") || pointKey.includes("mokotów")) {
-    return process.env.TG_CLIENT_ORDER_PHOTO_MOKOTOW || process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT || "";
+    return (
+      process.env.TG_CLIENT_ORDER_PHOTO_MOKOTOW ||
+      process.env.TG_ORDER_PHOTO_MOKOTOW ||
+      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT ||
+      process.env.TG_ORDER_PHOTO_DEFAULT ||
+      ""
+    );
   }
 
   if (pointKey.includes("wola")) {
-    return process.env.TG_CLIENT_ORDER_PHOTO_WOLA || process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT || "";
+    return (
+      process.env.TG_CLIENT_ORDER_PHOTO_WOLA ||
+      process.env.TG_ORDER_PHOTO_WOLA ||
+      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT ||
+      process.env.TG_ORDER_PHOTO_DEFAULT ||
+      ""
+    );
   }
 
   if (
@@ -335,10 +365,20 @@ function getCustomerOrderPhotoByPickupPoint(order, pickupPoint) {
     pointKey.includes("śródmieście") ||
     pointKey.includes("srodmiescie")
   ) {
-    return process.env.TG_CLIENT_ORDER_PHOTO_SRODMIESCIE || process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT || "";
+    return (
+      process.env.TG_CLIENT_ORDER_PHOTO_SRODMIESCIE ||
+      process.env.TG_ORDER_PHOTO_SRODMIESCIE ||
+      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT ||
+      process.env.TG_ORDER_PHOTO_DEFAULT ||
+      ""
+    );
   }
 
-  return process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT || "";
+  return (
+    process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT ||
+    process.env.TG_ORDER_PHOTO_DEFAULT ||
+    ""
+  );
 }
 
 const WARSAW_DELIVERY_DISTRICT_PRICES = new Map([
@@ -2738,31 +2778,87 @@ const replyMarkup =
         }
       );
     } catch (editErr) {
-      console.error("refreshManagerOrderMessage editMessageText error:", editErr);
+      const editMsg = String(editErr?.response?.description || editErr?.message || "").toLowerCase();
+
+      if (
+        editMsg.includes("there is no text in the message to edit") ||
+        editMsg.includes("message content is not modified") ||
+        editMsg.includes("message is not modified") ||
+        editMsg.includes("message can't be edited")
+      ) {
+        try {
+          await bot.telegram.editMessageCaption(
+            messageChatId,
+            messageId,
+            undefined,
+            lines.join("\n"),
+            {
+              parse_mode: "HTML",
+              reply_markup: replyMarkup,
+            }
+          );
+          return { ok: true };
+        } catch (captionErr) {
+          const captionMsg = String(
+            captionErr?.response?.description || captionErr?.message || ""
+          ).toLowerCase();
+
+          if (
+            captionMsg.includes("message is not modified") ||
+            captionMsg.includes("message content is not modified")
+          ) {
+            try {
+              await bot.telegram.editMessageReplyMarkup(
+                messageChatId,
+                messageId,
+                undefined,
+                replyMarkup
+              );
+            } catch (markupErr) {
+              const markupMsg = String(
+                markupErr?.response?.description || markupErr?.message || ""
+              ).toLowerCase();
+
+              if (!markupMsg.includes("message is not modified")) {
+                console.error("refreshManagerOrderMessage editMessageReplyMarkup error:", markupErr);
+              }
+            }
+            return { ok: true };
+          }
+
+          console.error("refreshManagerOrderMessage editMessageCaption error:", captionErr);
+        }
+      } else {
+        console.error("refreshManagerOrderMessage editMessageText error:", editErr);
+      }
 
       try {
-        await bot.telegram.editMessageReplyMarkup(messageChatId, messageId, undefined, replyMarkup);
-} catch (e) {
-  const msg = String(e?.response?.description || e?.message || "").toLowerCase();
+        await bot.telegram.editMessageReplyMarkup(
+          messageChatId,
+          messageId,
+          undefined,
+          replyMarkup
+        );
+      } catch (e) {
+        const msg = String(e?.response?.description || e?.message || "").toLowerCase();
 
-  if (msg.includes("message is not modified")) {
-    return;
-  }
-
-  console.error("refreshManagerOrderMessage editMessageReplyMarkup error:", e);
-}
+        if (!msg.includes("message is not modified")) {
+          console.error("refreshManagerOrderMessage editMessageReplyMarkup error:", e);
+        }
+      }
     }
 
     return { ok: true };
-} catch (e) {
-  const msg = String(e?.response?.description || e?.message || "").toLowerCase();
+  } catch (e) {
+    const msg = String(e?.response?.description || e?.message || "").toLowerCase();
 
-  if (msg.includes("message is not modified")) {
-    return;
+    if (msg.includes("message is not modified")) {
+      return { ok: true };
+    }
+
+    console.error("refreshManagerOrderMessage error:", e);
+    return { ok: false, reason: "EDIT_FAILED" };
   }
-
-  console.error("refreshManagerOrderMessage editMessageText error:", e);
-}
 }
 
 async function sendClientOrderCreatedInfo(order) {
