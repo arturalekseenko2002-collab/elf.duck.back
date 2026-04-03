@@ -267,6 +267,7 @@ function getManagerOrderPhotoByPickupPoint(order, pickupPoint) {
     pickupPoint?.address ||
     order?.pickupPointTitle ||
     order?.pickupPointAddress ||
+    order?.methodLabel ||
     ""
   )
     .trim()
@@ -325,6 +326,7 @@ function getCustomerOrderPhotoByPickupPoint(order, pickupPoint) {
     pickupPoint?.address ||
     order?.pickupPointTitle ||
     order?.pickupPointAddress ||
+    order?.methodLabel ||
     ""
   )
     .trim()
@@ -2388,8 +2390,10 @@ const initialReplyMarkup =
         ? await PickupPoint.findById(order.pickupPointId).lean().catch(() => null)
         : null;
 
-      const managerOrderPhotoUrl = getManagerOrderPhotoByPickupPoint(order, pickupPoint);
-      const clientOrderPhotoUrl = getCustomerOrderPhotoByPickupPoint(order, pickupPoint);
+      const photoPoint = point || pickupPoint || null;
+
+      const managerOrderPhotoUrl = getManagerOrderPhotoByPickupPoint(order, photoPoint);
+      const clientOrderPhotoUrl = getCustomerOrderPhotoByPickupPoint(order, photoPoint);
 
     const sent = managerOrderPhotoUrl
       ? await bot.telegram.sendPhoto(
