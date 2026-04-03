@@ -249,6 +249,52 @@ function formatOrderDate(dt) {
   }
 }
 
+function getClientOrderPhotoByPickupPoint(order, pickupPoint) {
+  const deliveryType = String(order?.deliveryType || "").trim().toLowerCase();
+  const deliveryMethod = String(order?.deliveryMethod || "").trim().toLowerCase();
+
+  if (deliveryType === "delivery" && deliveryMethod === "courier") {
+    return process.env.TG_ORDER_PHOTO_COURIER || process.env.TG_ORDER_PHOTO_DEFAULT || "";
+  }
+
+  if (deliveryType === "delivery" && deliveryMethod === "inpost") {
+    return process.env.TG_ORDER_PHOTO_INPOST || process.env.TG_ORDER_PHOTO_DEFAULT || "";
+  }
+
+  const pointKey = String(
+    pickupPoint?.key ||
+    pickupPoint?.title ||
+    pickupPoint?.address ||
+    order?.pickupPointTitle ||
+    order?.pickupPointAddress ||
+    ""
+  )
+    .trim()
+    .toLowerCase();
+
+  if (pointKey.includes("praga")) {
+    return process.env.TG_ORDER_PHOTO_PRAGA || process.env.TG_ORDER_PHOTO_DEFAULT || "";
+  }
+
+  if (pointKey.includes("mokotow") || pointKey.includes("mokotów")) {
+    return process.env.TG_ORDER_PHOTO_MOKOTOW || process.env.TG_ORDER_PHOTO_DEFAULT || "";
+  }
+
+  if (pointKey.includes("wola")) {
+    return process.env.TG_ORDER_PHOTO_WOLA || process.env.TG_ORDER_PHOTO_DEFAULT || "";
+  }
+
+  if (
+    pointKey.includes("srodmiescie") ||
+    pointKey.includes("śródmieście") ||
+    pointKey.includes("srodmiescie")
+  ) {
+    return process.env.TG_ORDER_PHOTO_SRODMIESCIE || process.env.TG_ORDER_PHOTO_DEFAULT || "";
+  }
+
+  return process.env.TG_ORDER_PHOTO_DEFAULT || "";
+}
+
 const WARSAW_DELIVERY_DISTRICT_PRICES = new Map([
   ["srodmiescie", { label: "Śródmieście", price: 20 }],
   ["wola", { label: "Wola", price: 20 }],
@@ -2252,11 +2298,27 @@ const initialReplyMarkup =
         ],
       };
 
-    const sent = await bot.telegram.sendMessage(point.notificationChatId, text, {
-      parse_mode: "HTML",
-      disable_web_page_preview: true,
-reply_markup: initialReplyMarkup,
-    });
+      const pickupPoint = order?.pickupPointId
+        ? await PickupPoint.findById(order.pickupPointId).lean().catch(() => null)
+        : null;
+
+      const orderPhotoUrl = getClientOrderPhotoByPickupPoint(order, pickupPoint);
+
+    const sent = orderPhotoUrl
+      ? await bot.telegram.sendPhoto(
+          point.notificationChatId,
+          { url: orderPhotoUrl },
+          {
+            caption: text,
+            parse_mode: "HTML",
+            reply_markup: initialReplyMarkup,
+          }
+        )
+      : await bot.telegram.sendMessage(point.notificationChatId, text, {
+          parse_mode: "HTML",
+          disable_web_page_preview: true,
+          reply_markup: initialReplyMarkup,
+        });
 
     await Order.updateOne(
       { _id: order._id },
