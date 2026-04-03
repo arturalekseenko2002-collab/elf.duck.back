@@ -2302,12 +2302,13 @@ const initialReplyMarkup =
         ? await PickupPoint.findById(order.pickupPointId).lean().catch(() => null)
         : null;
 
-      const orderPhotoUrl = getClientOrderPhotoByPickupPoint(order, pickupPoint);
+      const managerOrderPhotoUrl = getClientOrderPhotoByPickupPoint(order, pickupPoint);
+      const clientOrderPhotoUrl = getClientOrderPhotoByPickupPoint(order, pickupPoint);
 
-    const sent = orderPhotoUrl
+    const sent = managerOrderPhotoUrl
       ? await bot.telegram.sendPhoto(
           point.notificationChatId,
-          { url: orderPhotoUrl },
+          { url: managerOrderPhotoUrl },
           {
             caption: text,
             parse_mode: "HTML",
@@ -2329,6 +2330,46 @@ const initialReplyMarkup =
         },
       }
     );
+
+    const safeTelegramId = String(order?.userTelegramId || "").trim();
+
+    if (safeTelegramId) {
+      const clientLines = [
+        `🛒 <b>ЗАКАЗ СОЗДАН</b>`,
+        ``,
+        `🔢 <b>Номер заказа:</b> #${escapeHtml(order.orderNo)}`,
+        `💰 <b>Сумма:</b> ${managerAmountText}`,
+        ``,
+        `ℹ️ <b>Важно:</b> менеджер получит информацию о вашем заказе только после оплаты.`,
+        ``,
+        `💵 Вы также можете выбрать способ оплаты <b>Наличные</b> и оплатить заказ на месте — в этом случае менеджер тоже получит уведомление и начнёт готовить заказ.`,
+        ``,
+        `👉 Откройте страницу заказа, чтобы выбрать способ оплаты и отправить его на проверку менеджеру.`,
+      ];
+
+      const clientText = clientLines.join("\n");
+      const clientReplyMarkup = {
+        inline_keyboard: [[{ text: "💳 Перейти к оплате", web_app: { url: `${APP_URL}/cart?orderId=${encodeURIComponent(String(order?._id || ""))}` } }]],
+      };
+
+      if (clientOrderPhotoUrl) {
+        await bot.telegram.sendPhoto(
+          safeTelegramId,
+          { url: clientOrderPhotoUrl },
+          {
+            caption: clientText,
+            parse_mode: "HTML",
+            reply_markup: clientReplyMarkup,
+          }
+        );
+      } else {
+        await bot.telegram.sendMessage(safeTelegramId, clientText, {
+          parse_mode: "HTML",
+          disable_web_page_preview: true,
+          reply_markup: clientReplyMarkup,
+        });
+      }
+    }
   } catch (e) {
     console.error("sendOrderCreatedNotification error:", e);
   }
