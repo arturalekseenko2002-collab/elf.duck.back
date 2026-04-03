@@ -734,7 +734,7 @@ async function grantManualCashbackToUser(user, amountZl, meta = {}) {
     earnedAt: now,
     expiresAt,
     orderId: null,
-    note: String(meta?.note || "").trim(),
+    // note: String(meta?.note || "").trim(),
     grantedByTelegramId: String(meta?.grantedByTelegramId || "").trim(),
     grantedByUsername: String(meta?.grantedByUsername || "").trim(),
     warnedAt: null,
@@ -3692,7 +3692,7 @@ app.post("/admin/users/cashback/grant-by-username", async (req, res) => {
     const usernameRaw = String(req.body?.username || "").trim();
     const username = usernameRaw.replace(/^@+/, "").trim();
     const amountZl = Number(req.body?.amountZl || 0);
-    const note = String(req.body?.note || "").trim();
+    // const note = String(req.body?.note || "").trim();
     const grantedByTelegramId = String(req.body?.grantedByTelegramId || "").trim();
     const grantedByUsername = String(req.body?.grantedByUsername || "").trim();
 
@@ -3710,7 +3710,7 @@ app.post("/admin/users/cashback/grant-by-username", async (req, res) => {
     }
 
     const result = await grantManualCashbackToUser(user, amountZl, {
-      note,
+      // note,
       grantedByTelegramId,
       grantedByUsername,
     });
