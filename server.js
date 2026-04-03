@@ -2409,31 +2409,109 @@ const initialReplyMarkup =
         ? await PickupPoint.findById(order.pickupPointId).lean().catch(() => null)
         : null;
 
-      const photoPoint = point || pickupPoint || null;
+const photoPoint = point || pickupPoint || null;
 
-      const managerOrderPhotoUrl = getManagerOrderPhotoByPickupPoint(order, photoPoint);
-      const clientOrderPhotoUrl =
-        getCustomerOrderPhotoByPickupPoint(order, photoPoint) ||
-        getManagerOrderPhotoByPickupPoint(order, photoPoint) ||
-        firstNonEmptyString(
-          process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT,
-          process.env.TG_ORDER_PHOTO_DEFAULT
-        );
+const managerOrderPhotoUrl = getManagerOrderPhotoByPickupPoint(order, photoPoint);
 
-      console.log("[order-photo-select]", {
-        orderNo: String(order?.orderNo || ""),
-        deliveryType: String(order?.deliveryType || ""),
-        deliveryMethod: String(order?.deliveryMethod || ""),
-        pickupPointId: String(order?.pickupPointId || ""),
-        pointKey: String(point?.key || ""),
-        pointTitle: String(point?.title || ""),
-        pointAddress: String(point?.address || ""),
-        pickupPointKey: String(pickupPoint?.key || ""),
-        pickupPointTitle: String(pickupPoint?.title || ""),
-        pickupPointAddress: String(pickupPoint?.address || ""),
-        managerOrderPhotoUrl,
-        clientOrderPhotoUrl,
-      });
+const pointKeyRaw = String(
+  photoPoint?.key ||
+  photoPoint?.title ||
+  photoPoint?.address ||
+  order?.pickupPointTitle ||
+  order?.pickupPointAddress ||
+  order?.methodLabel ||
+  ""
+).trim();
+
+const pointKeyNormalized = normalizePhotoLookupText(pointKeyRaw);
+
+let clientOrderPhotoUrl = "";
+let clientPhotoSource = "";
+
+if (String(order?.deliveryType || "").trim().toLowerCase() === "delivery") {
+  const deliveryMethodNorm = normalizePhotoLookupText(order?.deliveryMethod);
+
+  if (deliveryMethodNorm.includes("courier")) {
+    clientOrderPhotoUrl = firstNonEmptyString(
+      process.env.TG_CLIENT_ORDER_PHOTO_COURIER,
+      process.env.TG_ORDER_PHOTO_COURIER,
+      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT,
+      process.env.TG_ORDER_PHOTO_DEFAULT
+    );
+    clientPhotoSource = "courier";
+  } else if (deliveryMethodNorm.includes("inpost")) {
+    clientOrderPhotoUrl = firstNonEmptyString(
+      process.env.TG_CLIENT_ORDER_PHOTO_INPOST,
+      process.env.TG_ORDER_PHOTO_INPOST,
+      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT,
+      process.env.TG_ORDER_PHOTO_DEFAULT
+    );
+    clientPhotoSource = "inpost";
+  }
+}
+
+if (!clientOrderPhotoUrl) {
+  if (pointKeyNormalized.includes("praga")) {
+    clientOrderPhotoUrl = firstNonEmptyString(
+      process.env.TG_CLIENT_ORDER_PHOTO_PRAGA,
+      process.env.TG_ORDER_PHOTO_PRAGA,
+      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT,
+      process.env.TG_ORDER_PHOTO_DEFAULT
+    );
+    clientPhotoSource = "praga";
+  } else if (pointKeyNormalized.includes("mokotow")) {
+    clientOrderPhotoUrl = firstNonEmptyString(
+      process.env.TG_CLIENT_ORDER_PHOTO_MOKOTOW,
+      process.env.TG_ORDER_PHOTO_MOKOTOW,
+      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT,
+      process.env.TG_ORDER_PHOTO_DEFAULT
+    );
+    clientPhotoSource = "mokotow";
+  } else if (pointKeyNormalized.includes("wola")) {
+    clientOrderPhotoUrl = firstNonEmptyString(
+      process.env.TG_CLIENT_ORDER_PHOTO_WOLA,
+      process.env.TG_ORDER_PHOTO_WOLA,
+      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT,
+      process.env.TG_ORDER_PHOTO_DEFAULT
+    );
+    clientPhotoSource = "wola";
+  } else if (pointKeyNormalized.includes("srodmiescie")) {
+    clientOrderPhotoUrl = firstNonEmptyString(
+      process.env.TG_CLIENT_ORDER_PHOTO_SRODMIESCIE,
+      process.env.TG_ORDER_PHOTO_SRODMIESCIE,
+      process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT,
+      process.env.TG_ORDER_PHOTO_DEFAULT
+    );
+    clientPhotoSource = "srodmiescie";
+  }
+}
+
+if (!clientOrderPhotoUrl) {
+  clientOrderPhotoUrl = firstNonEmptyString(
+    process.env.TG_CLIENT_ORDER_PHOTO_DEFAULT,
+    process.env.TG_ORDER_PHOTO_DEFAULT,
+    managerOrderPhotoUrl
+  );
+  clientPhotoSource = clientPhotoSource || "default";
+}
+
+console.log("[order-photo-select]", {
+  orderNo: String(order?.orderNo || ""),
+  deliveryType: String(order?.deliveryType || ""),
+  deliveryMethod: String(order?.deliveryMethod || ""),
+  pickupPointId: String(order?.pickupPointId || ""),
+  pointKey: String(point?.key || ""),
+  pointTitle: String(point?.title || ""),
+  pointAddress: String(point?.address || ""),
+  pickupPointKey: String(pickupPoint?.key || ""),
+  pickupPointTitle: String(pickupPoint?.title || ""),
+  pickupPointAddress: String(pickupPoint?.address || ""),
+  pointKeyRaw,
+  pointKeyNormalized,
+  managerOrderPhotoUrl,
+  clientOrderPhotoUrl,
+  clientPhotoSource,
+});
 
     const sent = managerOrderPhotoUrl
       ? await bot.telegram.sendPhoto(
