@@ -1896,6 +1896,12 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
     });
   }
 
+  const uniqueCustomersCount = new Set(
+    (Array.isArray(orders) ? orders : [])
+      .map((order) => String(order?.userTelegramId || "").trim())
+      .filter(Boolean)
+  ).size;
+
   const kasaTotalZl = Number(
     (Array.isArray(orders) ? orders : [])
       .reduce((sum, order) => {
@@ -1959,6 +1965,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
   lines.push(`🪙Скидки: ${discountsTotalZl.toFixed(2)} PLN`);
   lines.push(`👨‍💼Зарплата: ${salaryTotalZl.toFixed(2)} PLN`);
   lines.push(`🫂Рефералов: ${referredFirstOrderUsers.size}`);
+  lines.push(`👤Кол-во клиентов: ${uniqueCustomersCount}`);
   lines.push(`⚙️Продано штук: ${soldPositionsQty}`);
   lines.push(`——————————————————`);
   lines.push(`🦆 ELF DUCK &lt;&gt; СТАТИСТИКА`);
