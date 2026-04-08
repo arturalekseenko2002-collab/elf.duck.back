@@ -2124,15 +2124,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
       .toFixed(2)
   );
 
-  const referralDiscountTotalZl = Number(
-    (Array.isArray(orders) ? orders : [])
-      .reduce((sum, order) => sum + Number(order?.payment?.referralFirstOrderDiscountTotalZl || 0), 0)
-      .toFixed(2)
-  );
-
-  const discountsTotalZl = Number(
-    (smartDiscountTotalZl + cashbackDiscountTotalZl + referralDiscountTotalZl).toFixed(2)
-  );
+  const discountsTotalZl = Number((smartDiscountTotalZl + cashbackDiscountTotalZl).toFixed(2));
   const salaryTotalZl = Number((((kasaTotalZl / 100) * 16)).toFixed(2));
 
   const pointTitle = point?.title || point?.address || point?.key || "Склад";
