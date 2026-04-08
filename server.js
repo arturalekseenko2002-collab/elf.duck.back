@@ -674,6 +674,7 @@ function repriceCartItemsWithSmartPricing(items, products) {
     if (isLiquidSmartPriceProduct(product)) {
       return {
         ...it,
+        baseUnitPrice: Number(fallbackBasePrice.toFixed(2)),
         unitPrice: Number(
           Math.max(0, fallbackBasePrice - liquidDiscountPerItem).toFixed(2)
         ),
@@ -683,6 +684,7 @@ function repriceCartItemsWithSmartPricing(items, products) {
     if (isDisposableSmartPriceProduct(product)) {
       return {
         ...it,
+        baseUnitPrice: Number(fallbackBasePrice.toFixed(2)),
         unitPrice: Number(
           Math.max(0, fallbackBasePrice - disposableDiscountPerItem).toFixed(2)
         ),
@@ -692,12 +694,14 @@ function repriceCartItemsWithSmartPricing(items, products) {
     if (isCartridgeSmartPriceProduct(product)) {
       return {
         ...it,
+        baseUnitPrice: Number(fallbackBasePrice.toFixed(2)),
         unitPrice: Number(cartridgeUnitPrice.toFixed(2)),
       };
     }
 
     return {
       ...it,
+      baseUnitPrice: Number(fallbackBasePrice.toFixed(2)),
       unitPrice: Number(fallbackBasePrice.toFixed(2)),
     };
   });
@@ -847,7 +851,7 @@ function applyReferralFirstOrderDiscountToCartItems(items = [], percent = 0) {
 
   return {
     ...it,
-    baseUnitPrice: Number(oldUnitPrice.toFixed(2)),
+    baseUnitPrice: Number(it?.baseUnitPrice || oldUnitPrice || 0),
     unitPrice: newUnitPrice,
     referralFirstOrderDiscountPercent: safePercent,
     referralFirstOrderDiscountPerItem: Number((oldUnitPrice - newUnitPrice).toFixed(2)),
