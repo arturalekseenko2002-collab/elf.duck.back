@@ -8,6 +8,9 @@ const orderItemFlavorSchema = new mongoose.Schema(
     // snapshot из корзины
     unitPrice: { type: Number, default: 0, min: 0 },
     baseUnitPrice: { type: Number, default: 0, min: 0 },
+    referralFirstOrderDiscountPercent: { type: Number, default: 0, min: 0 },
+    referralFirstOrderDiscountPerItem: { type: Number, default: 0, min: 0 },
+    referralFirstOrderDiscountTotalZl: { type: Number, default: 0, min: 0 },
     flavorLabel: { type: String, default: "" },
     gradient: { type: [String], default: [] },
   },
@@ -125,6 +128,13 @@ const orderSchema = new mongoose.Schema(
 
       managerMessageChatId: { type: String, default: "" },
       managerMessageId: { type: String, default: "" },
+
+      referralUsedCode: { type: String, default: "" },
+      referralFirstOrderDiscountApplied: { type: Boolean, default: false },
+      referralFirstOrderDiscountPercent: { type: Number, default: 0, min: 0 },
+      referralFirstOrderDiscountTotalZl: { type: Number, default: 0, min: 0 },
+      subtotalBeforeReferralDiscountZl: { type: Number, default: 0, min: 0 },
+      totalBeforeReferralDiscountZl: { type: Number, default: 0, min: 0 },
     },
 
     arrivedNotifiedAt: { type: Date, default: null }, // клиент нажал "Я на месте"

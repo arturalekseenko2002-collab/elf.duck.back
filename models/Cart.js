@@ -12,6 +12,10 @@ const cartItemSchema = new mongoose.Schema(
 
     // IMPORTANT: price is stored per item (snapshot)
     unitPrice: { type: Number, default: 0, min: 0 },
+    baseUnitPrice: { type: Number, default: 0, min: 0 },
+    referralFirstOrderDiscountPercent: { type: Number, default: 0, min: 0 },
+    referralFirstOrderDiscountPerItem: { type: Number, default: 0, min: 0 },
+    referralFirstOrderDiscountTotalZl: { type: Number, default: 0, min: 0 },
 
     // UI helpers (optional)
     flavorLabel: { type: String, default: "" },
