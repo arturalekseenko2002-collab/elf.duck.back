@@ -12,7 +12,7 @@ import PickupPoint from "./models/PickupPoint.js";
 import Cart from "./models/Cart.js";
 import Order from "./models/Order.js";
 
-
+const APP_URL = String(process.env.APP_URL || process.env.WEBAPP_URL || "https://elf-duck.vercel.app").trim();
 
 let bot = null;
 
@@ -945,6 +945,33 @@ function getOrderReferralFirstOrderDiscountTotalZl(order) {
   }
 
   return 0;
+}
+
+function hasOrderReferralFirstOrderDiscount(order) {
+  if (Number(getOrderReferralFirstOrderDiscountTotalZl(order) || 0) > 0) return true;
+  if (Number(getOrderReferralFirstOrderDiscountPercent(order) || 0) > 0) return true;
+
+  const usedCode = String(
+    order?.referral?.usedCode ||
+    order?.payment?.referralUsedCode ||
+    order?.payment?.usedReferralCode ||
+    order?.usedReferralCode ||
+    ""
+  ).trim();
+
+  if (usedCode) return true;
+
+  if (String(order?.payment?.smartDiscountType || "").trim() === "referral_first_order") return true;
+  if (String(order?.payment?.discountType || "").trim() === "referral_first_order") return true;
+  if (String(order?.pricing?.discountType || "").trim() === "referral_first_order") return true;
+
+  return (Array.isArray(order?.items) ? order.items : []).some((item) => {
+    return (
+      Number(item?.referralFirstOrderDiscountTotalZl || 0) > 0 ||
+      Number(item?.referralFirstOrderDiscountPercent || 0) > 0 ||
+      Number(item?.referralFirstOrderDiscountPerItem || 0) > 0
+    );
+  });
 }
 
 function addDays(dateLike, days) {
@@ -2467,8 +2494,7 @@ async function sendOrderCreatedNotification(order) {
       ""
     ).trim();
 
-    const hasReferralFirstOrderDiscount =
-      referralFirstOrderDiscountAppliedZl > 0 || referralFirstOrderDiscountPercent > 0;
+    const hasReferralFirstOrderDiscount = hasOrderReferralFirstOrderDiscount(order);
 
     const lines = [
       `🛒 <b>ОПЛАТА ОТПРАВЛЕНА НА ПРОВЕРКУ</b>`,
@@ -2497,7 +2523,7 @@ async function sendOrderCreatedNotification(order) {
         : null,
       hasReferralFirstOrderDiscount
         ? `🎁 <b>Реферальная скидка:</b> ${referralFirstOrderDiscountPercent || 10}% на первый заказ${referralFirstOrderDiscountAppliedZl > 0 ? ` (${referralFirstOrderDiscountAppliedZl.toFixed(2)} PLN)` : ""}`
-        : null,
+        : `🎁 <b>Реферальная скидка:</b> не применялась`,
       ``,
       order?.payment?.cashbackFullyPaid
         ? `💳 <b>Статус оплаты:</b> ✅ Полностью оплачено`
@@ -2856,8 +2882,7 @@ async function refreshManagerOrderMessage(order) {
       ""
     ).trim();
 
-    const hasReferralFirstOrderDiscount =
-      referralFirstOrderDiscountAppliedZl > 0 || referralFirstOrderDiscountPercent > 0;
+    const hasReferralFirstOrderDiscount = hasOrderReferralFirstOrderDiscount(order);
 
     const managerAmountValue = Number(order?.payment?.managerDisplayAmount || 0);
     const managerAmountCurrency = String(order?.payment?.managerDisplayCurrency || "").trim();
@@ -2939,7 +2964,7 @@ async function refreshManagerOrderMessage(order) {
         : null,
       hasReferralFirstOrderDiscount
         ? `🎁 <b>Реферальная скидка:</b> ${referralFirstOrderDiscountPercent || 10}% на первый заказ${referralFirstOrderDiscountAppliedZl > 0 ? ` (${referralFirstOrderDiscountAppliedZl.toFixed(2)} PLN)` : ""}`
-        : null,
+        : `🎁 <b>Реферальная скидка:</b> не применялась`,
       ``,
       orderStatusKey === "annulled"
         ? `💳 <b>Статус оплаты:</b> ⌛️ Аннулирован из-за отсутствия подтверждения оплаты`
@@ -3248,6 +3273,24 @@ async function sendClientOrderCreatedInfo(order) {
       extra
     );
   } catch (e) {
+    const errorCode = Number(e?.response?.error_code || 0);
+    const description = String(
+      e?.response?.description || e?.description || e?.message || ""
+    );
+
+    if (
+      (errorCode === 403 && /bot was blocked by the user/i.test(description)) ||
+      (errorCode === 400 && /chat not found/i.test(description))
+    ) {
+      console.warn("sendClientOrderCreatedInfo skipped: user chat is unavailable", {
+        orderNo: order?.orderNo,
+        telegramId: String(order?.userTelegramId || ""),
+        errorCode,
+        description,
+      });
+      return;
+    }
+
     console.error("sendClientOrderCreatedInfo error:", e);
   }
 }
