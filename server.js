@@ -2118,13 +2118,21 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
       .toFixed(2)
   );
 
+  const referralDiscountTotalZl = Number(
+    (Array.isArray(orders) ? orders : [])
+      .reduce((sum, order) => sum + Number(order?.payment?.referralFirstOrderDiscountTotalZl || 0), 0)
+      .toFixed(2)
+  );
+
   const cashbackDiscountTotalZl = Number(
     (Array.isArray(orders) ? orders : [])
       .reduce((sum, order) => sum + getOrderCashbackDiscountTotalZl(order), 0)
       .toFixed(2)
   );
 
-  const discountsTotalZl = Number((smartDiscountTotalZl + cashbackDiscountTotalZl).toFixed(2));
+  const discountsTotalZl = Number(
+    (smartDiscountTotalZl + referralDiscountTotalZl + cashbackDiscountTotalZl).toFixed(2)
+  );
   const salaryTotalZl = Number((((kasaTotalZl / 100) * 16)).toFixed(2));
 
   const pointTitle = point?.title || point?.address || point?.key || "Склад";
@@ -2159,6 +2167,9 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
   lines.push(`——————————————————`);
   lines.push(`💰Касса: ${kasaTotalZl.toFixed(2)} PLN`);
   lines.push(`🪙Скидки: ${discountsTotalZl.toFixed(2)} PLN`);
+  lines.push(`- по ⚙️смарт-цене: ${smartDiscountTotalZl.toFixed(2)} PLN`);
+  lines.push(`- по 🎁реф. скидке: ${referralDiscountTotalZl.toFixed(2)} PLN`);
+  lines.push(`- по 🪙кэшбеку: ${cashbackDiscountTotalZl.toFixed(2)} PLN`);
   lines.push(`👨‍💼Зарплата: ${salaryTotalZl.toFixed(2)} PLN`);
   lines.push(`🫂Рефералов: ${referredFirstOrderUsers.size}`);
   lines.push(`👤Кол-во клиентов: ${uniqueCustomersCount}`);
