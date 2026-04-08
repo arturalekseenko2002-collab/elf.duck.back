@@ -2530,6 +2530,18 @@ async function sendOrderCreatedNotification(order) {
     const referralUsedCode = String(order?.payment?.referralUsedCode || "").trim();
     const hasReferralFirstOrderDiscount = order?.payment?.referralFirstOrderDiscountApplied === true;
 
+    let inviterLabel = "";
+    if (referralUsedCode) {
+      const inviterUser = await User.findOne(
+        { "referral.code": referralUsedCode },
+        { username: 1, firstName: 1, telegramId: 1 }
+      ).lean();
+
+      inviterLabel = inviterUser?.username
+        ? `@${String(inviterUser.username).trim()}`
+        : String(inviterUser?.firstName || "").trim() || String(inviterUser?.telegramId || "").trim();
+    }
+
     const lines = [
       `🛒 <b>ОПЛАТА ОТПРАВЛЕНА НА ПРОВЕРКУ</b>`,
       ``,
@@ -2556,7 +2568,7 @@ async function sendOrderCreatedNotification(order) {
         ? `💸 <b>Остаток к оплате:</b> ${Number(order.payment.cashbackRemainingToPayZl || 0).toFixed(2)} ${escapeHtml(order.currency || "PLN")}`
         : null,
       hasReferralFirstOrderDiscount
-        ? `🎁 <b>Реферальная скидка:</b> ${referralFirstOrderDiscountPercent || 10}% на первый заказ${referralFirstOrderDiscountAppliedZl > 0 ? ` (${referralFirstOrderDiscountAppliedZl.toFixed(2)} PLN)` : ""}${referralUsedCode ? `\n🏷 <b>Реферальный код:</b> ${escapeHtml(referralUsedCode)}` : ""}`
+        ? `🎁 <b>Реферальная скидка:</b> ${referralFirstOrderDiscountPercent || 10}% на первый заказ${referralFirstOrderDiscountAppliedZl > 0 ? ` (${referralFirstOrderDiscountAppliedZl.toFixed(2)} PLN)` : ""}${inviterLabel ? `\n👤 <b>Пригласитель:</b> ${escapeHtml(inviterLabel)}` : ""}`
         : null,
       ``,
       order?.payment?.cashbackFullyPaid
@@ -2911,6 +2923,18 @@ async function refreshManagerOrderMessage(order) {
     const referralUsedCode = String(order?.payment?.referralUsedCode || "").trim();
     const hasReferralFirstOrderDiscount = order?.payment?.referralFirstOrderDiscountApplied === true;
 
+    let inviterLabel = "";
+    if (referralUsedCode) {
+      const inviterUser = await User.findOne(
+        { "referral.code": referralUsedCode },
+        { username: 1, firstName: 1, telegramId: 1 }
+      ).lean();
+
+      inviterLabel = inviterUser?.username
+        ? `@${String(inviterUser.username).trim()}`
+        : String(inviterUser?.firstName || "").trim() || String(inviterUser?.telegramId || "").trim();
+    }
+
     const managerAmountValue = Number(order?.payment?.managerDisplayAmount || 0);
     const managerAmountCurrency = String(order?.payment?.managerDisplayCurrency || "").trim();
 
@@ -2990,7 +3014,7 @@ async function refreshManagerOrderMessage(order) {
         ? `💸 <b>Остаток к оплате:</b> ${Number(order.payment.cashbackRemainingToPayZl || 0).toFixed(2)} ${escapeHtml(order.currency || "PLN")}`
         : null,
       hasReferralFirstOrderDiscount
-        ? `🎁 <b>Реферальная скидка:</b> ${referralFirstOrderDiscountPercent || 10}% на первый заказ${referralFirstOrderDiscountAppliedZl > 0 ? ` (${referralFirstOrderDiscountAppliedZl.toFixed(2)} PLN)` : ""}${referralUsedCode ? `\n🏷 <b>Реферальный код:</b> ${escapeHtml(referralUsedCode)}` : ""}`
+        ? `🎁 <b>Реферальная скидка:</b> ${referralFirstOrderDiscountPercent || 10}% на первый заказ${referralFirstOrderDiscountAppliedZl > 0 ? ` (${referralFirstOrderDiscountAppliedZl.toFixed(2)} PLN)` : ""}${inviterLabel ? `\n👤 <b>Пригласитель:</b> ${escapeHtml(inviterLabel)}` : ""}`
         : null,
       ``,
       orderStatusKey === "annulled"
