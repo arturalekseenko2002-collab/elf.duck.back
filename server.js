@@ -1979,7 +1979,8 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
 
             if (originalBasePrice <= 0 || finalUnitPrice <= 0) {
               return flavorSum;
-            }
+            } 
+            
 
             const totalPriceDelta = Math.max(0, (originalBasePrice - finalUnitPrice) * qty);
             const smartOnlyDiscount = Math.max(0, totalPriceDelta - referralDiscountTotal);
