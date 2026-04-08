@@ -2375,6 +2375,18 @@ async function sendOrderCreatedNotification(order) {
         ? "Наличные"
         : "—";
 
+    const smartDiscountAppliedZl = Number(getOrderSmartDiscountTotalZl(order) || 0);
+
+    const referralUsedCode = String(
+      order?.referral?.usedCode ||
+      order?.payment?.referralUsedCode ||
+      user?.referral?.usedCode ||
+      ""
+    ).trim();
+
+    const hasReferralFirstOrderDiscount =
+      smartDiscountAppliedZl > 0 && Boolean(referralUsedCode);
+
     const lines = [
       `🛒 <b>ОПЛАТА ОТПРАВЛЕНА НА ПРОВЕРКУ</b>`,
       ``,
@@ -2399,6 +2411,9 @@ async function sendOrderCreatedNotification(order) {
         : null,
       order?.payment?.cashbackAppliedZl > 0 && Number(order?.payment?.cashbackRemainingToPayZl || 0) > 0
         ? `💸 <b>Остаток к оплате:</b> ${Number(order.payment.cashbackRemainingToPayZl || 0).toFixed(2)} ${escapeHtml(order.currency || "PLN")}`
+        : null,
+      hasReferralFirstOrderDiscount
+        ? `🎁 <b>Реферальная скидка:</b> 10% на первый заказ (${smartDiscountAppliedZl.toFixed(2)} PLN)`
         : null,
       ``,
       order?.payment?.cashbackFullyPaid
@@ -2748,6 +2763,18 @@ async function refreshManagerOrderMessage(order) {
         ? "Наличные"
         : "—";
 
+    const smartDiscountAppliedZl = Number(getOrderSmartDiscountTotalZl(order) || 0);
+
+    const referralUsedCode = String(
+      order?.referral?.usedCode ||
+      order?.payment?.referralUsedCode ||
+      user?.referral?.usedCode ||
+      ""
+    ).trim();
+
+    const hasReferralFirstOrderDiscount =
+      smartDiscountAppliedZl > 0 && Boolean(referralUsedCode);
+
     const managerAmountValue = Number(order?.payment?.managerDisplayAmount || 0);
     const managerAmountCurrency = String(order?.payment?.managerDisplayCurrency || "").trim();
 
@@ -2825,6 +2852,9 @@ async function refreshManagerOrderMessage(order) {
         : null,
       order?.payment?.cashbackAppliedZl > 0 && Number(order?.payment?.cashbackRemainingToPayZl || 0) > 0
         ? `💸 <b>Остаток к оплате:</b> ${Number(order.payment.cashbackRemainingToPayZl || 0).toFixed(2)} ${escapeHtml(order.currency || "PLN")}`
+        : null,
+      hasReferralFirstOrderDiscount
+        ? `🎁 <b>Реферальная скидка:</b> 10% на первый заказ (${smartDiscountAppliedZl.toFixed(2)} PLN)`
         : null,
       ``,
       orderStatusKey === "annulled"
