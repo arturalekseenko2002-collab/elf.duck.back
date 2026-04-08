@@ -2421,8 +2421,7 @@ async function sendOrderCreatedNotification(order) {
       ""
     ).trim();
 
-    const hasReferralFirstOrderDiscount =
-      referralFirstOrderDiscountAppliedZl > 0 && Boolean(referralUsedCode);
+    const hasReferralFirstOrderDiscount = referralFirstOrderDiscountAppliedZl > 0;
 
     const lines = [
       `🛒 <b>ОПЛАТА ОТПРАВЛЕНА НА ПРОВЕРКУ</b>`,
@@ -2809,8 +2808,7 @@ async function refreshManagerOrderMessage(order) {
       ""
     ).trim();
 
-    const hasReferralFirstOrderDiscount =
-      referralFirstOrderDiscountAppliedZl > 0 && Boolean(referralUsedCode);
+    const hasReferralFirstOrderDiscount = referralFirstOrderDiscountAppliedZl > 0;
 
     const managerAmountValue = Number(order?.payment?.managerDisplayAmount || 0);
     const managerAmountCurrency = String(order?.payment?.managerDisplayCurrency || "").trim();
