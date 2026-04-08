@@ -744,8 +744,8 @@ async function getIsReferralFirstOrderDiscountEligible(telegramId, cartItems = [
   const totalBeforeDiscount = Number(
     (Array.isArray(cartItems) ? cartItems : []).reduce((sum, it) => {
       const qty = Math.max(1, Number(it?.qty || 1));
-      const unitPrice = Number(it?.unitPrice || 0);
-      return sum + qty * unitPrice;
+      const baseUnitPrice = Number(it?.baseUnitPrice || it?.unitPrice || 0);
+      return sum + qty * baseUnitPrice;
     }, 0).toFixed(2)
   );
 
@@ -1961,22 +1961,33 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
 
   function getOrderSmartDiscountTotalZl(order) {
     return Number(
-      (Array.isArray(order?.items) ? order.items : []).reduce((acc, item) => {
-        const itemFlavors = Array.isArray(item?.flavors) ? item.flavors : [];
+      (Array.isArray(order?.items) ? order.items : []).reduce((orderSum, item) => {
+        const flavors = Array.isArray(item?.flavors) ? item.flavors : [];
 
         return (
-          acc +
-          itemFlavors.reduce((sum, flavor) => {
+          orderSum +
+          flavors.reduce((flavorSum, flavor) => {
             const qty = Math.max(1, Number(flavor?.qty || 1));
-            const basePrice = Number(flavor?.baseUnitPrice || 0);
-            const unitPrice = Number(flavor?.unitPrice || 0);
 
-            const totalDiscount = Math.max(0, (basePrice - unitPrice) * qty);
-            const referralDiscount = Number(flavor?.referralFirstOrderDiscountTotalZl || 0);
+            const originalBasePrice = Number(
+              flavor?.baseUnitPrice ||
+              flavor?.originalUnitPrice ||
+              flavor?.initialUnitPrice ||
+              flavor?.regularUnitPrice ||
+              0
+            );
 
-            const smartOnlyDiscount = Math.max(0, totalDiscount - referralDiscount);
+            const finalUnitPrice = Number(flavor?.unitPrice || 0);
+            const referralDiscountTotal = Number(flavor?.referralFirstOrderDiscountTotalZl || 0);
 
-            return sum + smartOnlyDiscount;
+            if (originalBasePrice <= 0 || finalUnitPrice <= 0) {
+              return flavorSum;
+            }
+
+            const totalPriceDelta = Math.max(0, (originalBasePrice - finalUnitPrice) * qty);
+            const smartOnlyDiscount = Math.max(0, totalPriceDelta - referralDiscountTotal);
+
+            return flavorSum + smartOnlyDiscount;
           }, 0)
         );
       }, 0).toFixed(2)
