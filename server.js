@@ -865,6 +865,43 @@ function applyReferralFirstOrderDiscountToCartItems(items = [], percent = 0) {
   };
 }
 
+function getOrderReferralFirstOrderDiscountTotalZl(order) {
+  const fromPayment = Number(order?.payment?.referralFirstOrderDiscountTotalZl || 0);
+  if (fromPayment > 0) return Number(fromPayment.toFixed(2));
+
+  const fromItems = Number(
+    (Array.isArray(order?.items) ? order.items : []).reduce((sum, item) => {
+      return sum + Number(item?.referralFirstOrderDiscountTotalZl || 0);
+    }, 0).toFixed(2)
+  );
+
+  if (fromItems > 0) return fromItems;
+
+  const referralPercent = Number(order?.payment?.referralFirstOrderDiscountPercent || 0);
+  if (referralPercent > 0) {
+    const itemsTotalBeforeDiscount = Number(
+      (Array.isArray(order?.items) ? order.items : []).reduce((sum, item) => {
+        const qty = Math.max(1, Number(item?.qty || 1));
+        const unitPrice = Number(item?.unitPrice || 0);
+        const itemDiscountPerItem = Number(item?.referralFirstOrderDiscountPerItem || 0);
+        return sum + qty * (unitPrice + itemDiscountPerItem);
+      }, 0).toFixed(2)
+    );
+
+    const discountedTotal = Number(
+      (Array.isArray(order?.items) ? order.items : []).reduce((sum, item) => {
+        const qty = Math.max(1, Number(item?.qty || 1));
+        const unitPrice = Number(item?.unitPrice || 0);
+        return sum + qty * unitPrice;
+      }, 0).toFixed(2)
+    );
+
+    return Number((itemsTotalBeforeDiscount - discountedTotal).toFixed(2));
+  }
+
+  return 0;
+}
+
 function addDays(dateLike, days) {
   const dt = new Date(dateLike || Date.now());
   dt.setDate(dt.getDate() + Number(days || 0));
@@ -2375,7 +2412,7 @@ async function sendOrderCreatedNotification(order) {
         ? "Наличные"
         : "—";
 
-    const smartDiscountAppliedZl = Number(getOrderSmartDiscountTotalZl(order) || 0);
+    const referralFirstOrderDiscountAppliedZl = Number(getOrderReferralFirstOrderDiscountTotalZl(order) || 0);
 
     const referralUsedCode = String(
       order?.referral?.usedCode ||
@@ -2385,7 +2422,7 @@ async function sendOrderCreatedNotification(order) {
     ).trim();
 
     const hasReferralFirstOrderDiscount =
-      smartDiscountAppliedZl > 0 && Boolean(referralUsedCode);
+      referralFirstOrderDiscountAppliedZl > 0 && Boolean(referralUsedCode);
 
     const lines = [
       `🛒 <b>ОПЛАТА ОТПРАВЛЕНА НА ПРОВЕРКУ</b>`,
@@ -2413,7 +2450,7 @@ async function sendOrderCreatedNotification(order) {
         ? `💸 <b>Остаток к оплате:</b> ${Number(order.payment.cashbackRemainingToPayZl || 0).toFixed(2)} ${escapeHtml(order.currency || "PLN")}`
         : null,
       hasReferralFirstOrderDiscount
-        ? `🎁 <b>Реферальная скидка:</b> 10% на первый заказ (${smartDiscountAppliedZl.toFixed(2)} PLN)`
+        ? `🎁 <b>Реферальная скидка:</b> 10% на первый заказ (${referralFirstOrderDiscountAppliedZl.toFixed(2)} PLN)`
         : null,
       ``,
       order?.payment?.cashbackFullyPaid
@@ -2763,7 +2800,7 @@ async function refreshManagerOrderMessage(order) {
         ? "Наличные"
         : "—";
 
-    const smartDiscountAppliedZl = Number(getOrderSmartDiscountTotalZl(order) || 0);
+    const referralFirstOrderDiscountAppliedZl = Number(getOrderReferralFirstOrderDiscountTotalZl(order) || 0);
 
     const referralUsedCode = String(
       order?.referral?.usedCode ||
@@ -2773,7 +2810,7 @@ async function refreshManagerOrderMessage(order) {
     ).trim();
 
     const hasReferralFirstOrderDiscount =
-      smartDiscountAppliedZl > 0 && Boolean(referralUsedCode);
+      referralFirstOrderDiscountAppliedZl > 0 && Boolean(referralUsedCode);
 
     const managerAmountValue = Number(order?.payment?.managerDisplayAmount || 0);
     const managerAmountCurrency = String(order?.payment?.managerDisplayCurrency || "").trim();
@@ -2854,7 +2891,7 @@ async function refreshManagerOrderMessage(order) {
         ? `💸 <b>Остаток к оплате:</b> ${Number(order.payment.cashbackRemainingToPayZl || 0).toFixed(2)} ${escapeHtml(order.currency || "PLN")}`
         : null,
       hasReferralFirstOrderDiscount
-        ? `🎁 <b>Реферальная скидка:</b> 10% на первый заказ (${smartDiscountAppliedZl.toFixed(2)} PLN)`
+        ? `🎁 <b>Реферальная скидка:</b> 10% на первый заказ (${referralFirstOrderDiscountAppliedZl.toFixed(2)} PLN)`
         : null,
       ``,
       orderStatusKey === "annulled"
