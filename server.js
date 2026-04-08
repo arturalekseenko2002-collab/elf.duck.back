@@ -1956,40 +1956,27 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
   // }
 
   function getOrderSmartDiscountTotalZl(order) {
-    const items = Array.isArray(order?.items) ? order.items : [];
+    return Number(
+      (Array.isArray(order?.items) ? order.items : []).reduce((acc, item) => {
+        const itemFlavors = Array.isArray(item?.flavors) ? item.flavors : [];
 
-    const total = items.reduce((sum, productRow) => {
-      const flavors = Array.isArray(productRow?.flavors) ? productRow.flavors : [];
-      const productKey = String(productRow?.productKey || "").trim();
+        return (
+          acc +
+          itemFlavors.reduce((sum, flavor) => {
+            const qty = Math.max(1, Number(flavor?.qty || 1));
+            const basePrice = Number(flavor?.baseUnitPrice || 0);
+            const unitPrice = Number(flavor?.unitPrice || 0);
 
-      return (
-        sum +
-        flavors.reduce((acc, flavor) => {
-          const qty = Math.max(1, Number(flavor?.qty || 1));
+            const totalDiscount = Math.max(0, (basePrice - unitPrice) * qty);
+            const referralDiscount = Number(flavor?.referralFirstOrderDiscountTotalZl || 0);
 
-          let basePrice = Number(
-            flavor?.basePrice ||
-              flavor?.baseUnitPrice ||
-              flavor?.originalUnitPrice ||
-              productRow?.productBasePrice ||
-              productRow?.basePrice ||
-              productBasePriceMap.get(productKey) ||
-              productRow?.price ||
-              0
-          );
+            const smartOnlyDiscount = Math.max(0, totalDiscount - referralDiscount);
 
-          const unitPrice = Number(flavor?.unitPrice || 0);
-
-          if (!basePrice && unitPrice > 0) {
-            basePrice = unitPrice;
-          }
-
-          return acc + Math.max(0, (basePrice - unitPrice) * qty);
-        }, 0)
-      );
-    }, 0);
-
-    return Number(total.toFixed(2));
+            return sum + smartOnlyDiscount;
+          }, 0)
+        );
+      }, 0).toFixed(2)
+    );
   }
 
   function getOrderCashbackDiscountTotalZl(order) {
