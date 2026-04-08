@@ -1967,16 +1967,13 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
         return (
           orderSum +
           flavors.reduce((flavorSum, flavor) => {
+            const explicitSmartDiscount = Number(flavor?.smartDiscountTotalZl || 0);
+            if (explicitSmartDiscount > 0) {
+              return flavorSum + explicitSmartDiscount;
+            }
+
             const qty = Math.max(1, Number(flavor?.qty || 1));
-
-            const originalBasePrice = Number(
-              flavor?.baseUnitPrice ||
-              flavor?.originalUnitPrice ||
-              flavor?.initialUnitPrice ||
-              flavor?.regularUnitPrice ||
-              0
-            );
-
+            const originalBasePrice = Number(flavor?.baseUnitPrice || 0);
             const finalUnitPrice = Number(flavor?.unitPrice || 0);
             const referralDiscountTotal = Number(flavor?.referralFirstOrderDiscountTotalZl || 0);
 
@@ -5784,6 +5781,18 @@ app.post("/orders/confirm", async (req, res) => {
       const flavorLabel = String(it.flavorLabel || "");
       const gradient = Array.isArray(it.gradient) ? it.gradient.slice(0, 2) : [];
 
+      const originalBaseUnitPrice = Number(it?.baseUnitPrice || 0);
+      const referralFirstOrderDiscountPerItem = Number(it?.referralFirstOrderDiscountPerItem || 0);
+      const referralFirstOrderDiscountTotalZl = Number(it?.referralFirstOrderDiscountTotalZl || 0);
+
+      const smartDiscountPerItem = Number(
+        Math.max(0, originalBaseUnitPrice - unitPrice - referralFirstOrderDiscountPerItem).toFixed(2)
+      );
+
+      const smartDiscountTotalZl = Number(
+        Math.max(0, smartDiscountPerItem * qty).toFixed(2)
+      );
+
       const prod = prodByKey.get(pk);
       if (!prod?._id) continue; // если товар не найден — пропускаем
 
@@ -5809,22 +5818,31 @@ app.post("/orders/confirm", async (req, res) => {
           flavorKey: fk,
           qty,
           unitPrice,
-          baseUnitPrice: Number(it?.baseUnitPrice || baseUnitPrice || unitPrice || 0),
+          baseUnitPrice: Number(originalBaseUnitPrice || baseUnitPrice || unitPrice || 0),
+          smartDiscountPerItem,
+          smartDiscountTotalZl,
           referralFirstOrderDiscountPercent: Number(it?.referralFirstOrderDiscountPercent || 0),
-          referralFirstOrderDiscountPerItem: Number(it?.referralFirstOrderDiscountPerItem || 0),
-          referralFirstOrderDiscountTotalZl: Number(it?.referralFirstOrderDiscountTotalZl || 0),
+          referralFirstOrderDiscountPerItem,
+          referralFirstOrderDiscountTotalZl,
           flavorLabel,
           gradient,
         });
       } else {
         prev.qty += qty;
         if (unitPrice) prev.unitPrice = unitPrice;
-        if (baseUnitPrice) prev.baseUnitPrice = Number(it?.baseUnitPrice || baseUnitPrice || unitPrice || 0);
-        prev.referralFirstOrderDiscountPercent = Number(it?.referralFirstOrderDiscountPercent || prev.referralFirstOrderDiscountPercent || 0);
-        prev.referralFirstOrderDiscountPerItem = Number(it?.referralFirstOrderDiscountPerItem || prev.referralFirstOrderDiscountPerItem || 0);
-        prev.referralFirstOrderDiscountTotalZl = Number(
-          (Number(prev.referralFirstOrderDiscountTotalZl || 0) + Number(it?.referralFirstOrderDiscountTotalZl || 0)).toFixed(2)
+        if (baseUnitPrice) prev.baseUnitPrice = Number(originalBaseUnitPrice || baseUnitPrice || unitPrice || 0);
+
+        prev.smartDiscountPerItem = Number(smartDiscountPerItem || prev.smartDiscountPerItem || 0);
+        prev.smartDiscountTotalZl = Number(
+          (Number(prev.smartDiscountTotalZl || 0) + Number(smartDiscountTotalZl || 0)).toFixed(2)
         );
+
+        prev.referralFirstOrderDiscountPercent = Number(it?.referralFirstOrderDiscountPercent || prev.referralFirstOrderDiscountPercent || 0);
+        prev.referralFirstOrderDiscountPerItem = Number(referralFirstOrderDiscountPerItem || prev.referralFirstOrderDiscountPerItem || 0);
+        prev.referralFirstOrderDiscountTotalZl = Number(
+          (Number(prev.referralFirstOrderDiscountTotalZl || 0) + Number(referralFirstOrderDiscountTotalZl || 0)).toFixed(2)
+        );
+
         if (flavorLabel) prev.flavorLabel = flavorLabel;
         if (gradient.length) prev.gradient = gradient;
       }

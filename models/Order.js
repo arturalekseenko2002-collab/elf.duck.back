@@ -8,6 +8,8 @@ const orderItemFlavorSchema = new mongoose.Schema(
     // snapshot из корзины
     unitPrice: { type: Number, default: 0, min: 0 },
     baseUnitPrice: { type: Number, default: 0, min: 0 },
+    smartDiscountPerItem: { type: Number, default: 0, min: 0 },
+    smartDiscountTotalZl: { type: Number, default: 0, min: 0 },
     referralFirstOrderDiscountPercent: { type: Number, default: 0, min: 0 },
     referralFirstOrderDiscountPerItem: { type: Number, default: 0, min: 0 },
     referralFirstOrderDiscountTotalZl: { type: Number, default: 0, min: 0 },
