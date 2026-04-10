@@ -2652,7 +2652,7 @@ async function processDailyPointStats() {
       if (DAILY_STATS_RUNTIME_SENT.has(dedupeKey)) continue;
 
       const match = getOrderPointMatch(point);
-      const orders = await Order.find(
+      const orders = await Order.find( //wefv
         {
           ...match,
           createdAt: { $gte: ordersSince },
