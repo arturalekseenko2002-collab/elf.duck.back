@@ -2434,6 +2434,18 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
       .toFixed(2)
   );
 
+  const inpostDeliveryFeesTotalZl = Number(
+    (Array.isArray(orders) ? orders : [])
+      .reduce((sum, order) => {
+        const isInpostDelivery =
+          String(order?.deliveryType || "").trim() === "delivery" &&
+          String(order?.deliveryMethod || "").trim() === "inpost";
+
+        return sum + (isInpostDelivery ? Number(order?.inpostDeliveryFeeZl || 0) : 0);
+      }, 0)
+      .toFixed(2)
+  );
+
   const discountsTotalZl = Number(
     (smartDiscountTotalZl + referralDiscountTotalZl + cashbackDiscountTotalZl).toFixed(2)
   );
@@ -2485,6 +2497,15 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
 
   if (isCourierStatsPoint) {
     lines.push(`🚚Доставка: ${courierDeliveryFeesTotalZl.toFixed(2)} PLN`);
+  }
+
+  const isInpostStatsPoint =
+    pointKeyNorm === "delivery-2" ||
+    pointTitleNorm.includes("inpost") ||
+    pointAddressNorm.includes("inpost");
+
+  if (isInpostStatsPoint) {
+    lines.push(`📦Доставка InPost: ${inpostDeliveryFeesTotalZl.toFixed(2)} PLN`);
   }
 
   lines.push(`🪙Скидки: ${discountsTotalZl.toFixed(2)} PLN`);
@@ -2649,6 +2670,7 @@ async function processDailyPointStats() {
           deliveryType: 1,
           deliveryMethod: 1,
           deliveryFeeZl: 1,
+          inpostDeliveryFeeZl: 1,
         }
       ).lean();
 
