@@ -2564,6 +2564,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
     }
   }
 
+  /*
   if (!sortedOrders.length) {
     lines.push(`Заказов за день не было.`);
   } else {
@@ -2578,6 +2579,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
       }
     });
   }
+  */
 
   lines.push(`——————————————————`);
   lines.push(`💰Касса: ${kasaTotalZl.toFixed(2)} PLN`);
