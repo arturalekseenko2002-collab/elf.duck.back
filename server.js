@@ -700,6 +700,93 @@ async function resolveWarsawDeliveryPricing(address) {
   };
 }
 
+function getWarsawDateKey() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Warsaw",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+function getWarsawNowMinutes() {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Warsaw",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date());
+
+  const hh = Number(parts.find((p) => p.type === "hour")?.value || 0);
+  const mm = Number(parts.find((p) => p.type === "minute")?.value || 0);
+
+  return hh * 60 + mm;
+}
+
+function timeToMinutes(hhmm) {
+  const [h, m] = String(hhmm || "0:0").split(":").map(Number);
+  return h * 60 + m;
+}
+
+function getTodayScheduleForPickupPoint(point) {
+  const dateKey = getWarsawDateKey();
+  return point?.scheduleByDate?.[dateKey] || null;
+}
+
+function getPointOpenStateNow(point) {
+  const schedule = getTodayScheduleForPickupPoint(point);
+
+  if (!schedule) {
+    return {
+      isOpen: false,
+      reason: "NO_SCHEDULE",
+      openFrom: "",
+      openTo: "",
+    };
+  }
+
+  if (schedule?.isOpen === false || schedule?.closed === true || schedule?.isActive === false) {
+    return {
+      isOpen: false,
+      reason: "CLOSED_TODAY",
+      openFrom: String(schedule?.openFrom || "").trim(),
+      openTo: String(schedule?.openTo || "").trim(),
+    };
+  }
+
+  const openFrom = String(schedule?.openFrom || schedule?.from || "").trim();
+  const openTo = String(schedule?.openTo || schedule?.to || "").trim();
+
+  if (!openFrom || !openTo) {
+    return {
+      isOpen: false,
+      reason: "NO_HOURS",
+      openFrom,
+      openTo,
+    };
+  }
+
+  const nowMinutes = getWarsawNowMinutes();
+  const fromMinutes = timeToMinutes(openFrom);
+  const toMinutes = timeToMinutes(openTo);
+
+  if (nowMinutes < fromMinutes || nowMinutes > toMinutes) {
+    return {
+      isOpen: false,
+      reason: "OUTSIDE_HOURS",
+      openFrom,
+      openTo,
+    };
+  }
+
+  return {
+    isOpen: true,
+    reason: "OPEN",
+    openFrom,
+    openTo,
+  };
+}
+
 const LIQUIDS_CATEGORY_KEYS = new Set(["liquids"]);
 const DISPOSABLES_CATEGORY_KEYS = new Set(["disposables"]);
 const CARTRIDGES_CATEGORY_KEYS = new Set(["cartridges"]);
@@ -5834,6 +5921,51 @@ app.post("/orders/confirm", async (req, res) => {
         : null;
 
     const pickupPointId = deliveryType === "pickup" ? (cart.checkoutPickupPointId || null) : null;
+
+    let schedulePoint = null;
+
+    if (deliveryType === "pickup" && pickupPointId) {
+      schedulePoint = await PickupPoint.findById(
+        pickupPointId,
+        { title: 1, address: 1, key: 1, scheduleByDate: 1 }
+      ).lean();
+    } else if (deliveryType === "delivery" && deliveryMethod === "courier") {
+      schedulePoint = await PickupPoint.findOne(
+        { key: { $in: ["delivery", "delivery,"] } },
+        { title: 1, address: 1, key: 1, scheduleByDate: 1 }
+      ).lean();
+    } else if (deliveryType === "delivery" && deliveryMethod === "inpost") {
+      schedulePoint = await PickupPoint.findOne(
+        { key: { $in: ["delivery-2", "delivery-2,"] } },
+        { title: 1, address: 1, key: 1, scheduleByDate: 1 }
+      ).lean();
+    }
+
+    if (schedulePoint) {
+      const openState = getPointOpenStateNow(schedulePoint);
+
+      if (!openState.isOpen) {
+        const pointLabel =
+          String(schedulePoint?.title || "").trim() ||
+          String(schedulePoint?.address || "").trim() ||
+          (deliveryType === "delivery" && deliveryMethod === "courier"
+            ? "Доставка курьером"
+            : deliveryType === "delivery" && deliveryMethod === "inpost"
+            ? "Доставка InPost"
+            : "Точка самовывоза");
+
+        const scheduleText =
+          openState.openFrom && openState.openTo
+            ? `График сегодня: ${openState.openFrom}–${openState.openTo}.`
+            : `График на сегодня не настроен.`;
+
+        return res.status(400).json({
+          ok: false,
+          field: "schedule",
+          error: `${pointLabel} сейчас не принимает заказы. ${scheduleText}`,
+        });
+      }
+    }
 
     // 3) methodLabel (готовая строка для UI)
     let methodLabel = "";
