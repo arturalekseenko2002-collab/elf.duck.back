@@ -2539,6 +2539,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
   } else {
     for (const product of aggregatedProducts) {
       lines.push(`🦆 ${product.title} — ${product.totalQty} шт.`);
+      lines.push("");
 
       const tierLine = tierOrder
         .filter((tier) => (product.tierBuckets.get(tier) || 0) > 0)
@@ -2550,7 +2551,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
       }
 
       lines.push("");
-      lines.push("Вкусы:");
+      // lines.push("Вкусы:");
 
       const sortedFlavors = Array.from(product.flavors.entries()).sort(
         (a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ru")
