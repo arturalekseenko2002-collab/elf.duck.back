@@ -7751,21 +7751,28 @@ try {
         }
       }
 
-      try {
-        const safeTelegramId = String(order?.userTelegramId || "").trim();
+    try {
+      const safeTelegramId = String(order?.userTelegramId || "").trim();
 
-        if (bot && safeTelegramId) {
-          const orderNo = escapeHtml(order?.orderNo || "—");
+      if (bot && safeTelegramId) {
+        const orderNo = escapeHtml(order?.orderNo || "—");
+        const notifyPoint = await resolveOrderNotificationPoint(freshDeliveredOrder || order).catch(() => null);
 
-          const courierUsernameRaw = String(
-            order?.courierUsername || order?.courier?.username || ""
-          ).trim();
+        const courierUsernameRaw = String(
+          notifyPoint?.managerUsername ||
+          notifyPoint?.courierUsername ||
+          freshDeliveredOrder?.courierUsername ||
+          freshDeliveredOrder?.courier?.username ||
+          order?.courierUsername ||
+          order?.courier?.username ||
+          ""
+        ).trim();
 
-          const courierUsername = courierUsernameRaw
-            ? (courierUsernameRaw.startsWith("@")
-                ? courierUsernameRaw
-                : `@${courierUsernameRaw}`)
-            : "—";
+        const courierUsername = courierUsernameRaw
+          ? (courierUsernameRaw.startsWith("@")
+              ? courierUsernameRaw
+              : `@${courierUsernameRaw}`)
+          : "—";
 
           await bot.telegram.sendMessage(
             safeTelegramId,
