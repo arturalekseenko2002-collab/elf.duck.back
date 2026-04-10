@@ -7755,49 +7755,39 @@ try {
       const safeTelegramId = String(order?.userTelegramId || "").trim();
 
       if (bot && safeTelegramId) {
-const orderNo = escapeHtml(order?.orderNo || "—");
-const notifyPoint = await resolveOrderNotificationPoint(freshDeliveredOrder || order).catch(() => null);
 
-const pointManagerTelegramId = String(
-  Array.isArray(notifyPoint?.allowedAdminTelegramIds)
-    ? notifyPoint.allowedAdminTelegramIds[0] || ""
-    : ""
-).trim();
+        const orderNo = escapeHtml(order?.orderNo || "—");
+        const notifyPoint = await resolveOrderNotificationPoint(freshDeliveredOrder || order).catch(() => null);
 
-const pointManagerUser = pointManagerTelegramId
-  ? await User.findOne(
-      { telegramId: pointManagerTelegramId },
-      { telegramId: 1, username: 1, firstName: 1 }
-    ).lean()
-  : null;
+        const pointManagerTelegramId = String(
+          Array.isArray(notifyPoint?.allowedAdminTelegramIds)
+            ? notifyPoint.allowedAdminTelegramIds[0] || ""
+            : ""
+        ).trim();
 
-const courierUsernameRaw = String(
-  pointManagerUser?.username ||
-  notifyPoint?.managerUsername ||
-  notifyPoint?.courierUsername ||
-  freshDeliveredOrder?.courierUsername ||
-  freshDeliveredOrder?.courier?.username ||
-  order?.courierUsername ||
-  order?.courier?.username ||
-  ""
-).trim();
+        const pointManagerUser = pointManagerTelegramId
+          ? await User.findOne(
+              { telegramId: pointManagerTelegramId },
+              { telegramId: 1, username: 1, firstName: 1 }
+            ).lean()
+          : null;
 
-const courierUsername = courierUsernameRaw
-  ? (courierUsernameRaw.startsWith("@")
-      ? courierUsernameRaw
-      : `@${courierUsernameRaw}`)
-  : "—";
+        const courierUsernameRaw = String(
+          pointManagerUser?.username ||
+          notifyPoint?.managerUsername ||
+          notifyPoint?.courierUsername ||
+          freshDeliveredOrder?.courierUsername ||
+          freshDeliveredOrder?.courier?.username ||
+          order?.courierUsername ||
+          order?.courier?.username ||
+          ""
+        ).trim();
 
-console.log("mgr_order_delivered notify username", {
-  orderNo: String(order?.orderNo || ""),
-  pointManagerTelegramId,
-  pointManagerUsername: String(pointManagerUser?.username || ""),
-  pointManagerFirstName: String(pointManagerUser?.firstName || ""),
-  pointFieldManagerUsername: String(notifyPoint?.managerUsername || ""),
-  pointFieldCourierUsername: String(notifyPoint?.courierUsername || ""),
-  orderCourierUsername: String(order?.courierUsername || ""),
-  finalCourierUsernameRaw: courierUsernameRaw,
-});
+        const courierUsername = courierUsernameRaw
+          ? (courierUsernameRaw.startsWith("@")
+              ? courierUsernameRaw
+              : `@${courierUsernameRaw}`)
+          : "—";
 
           await bot.telegram.sendMessage(
             safeTelegramId,
