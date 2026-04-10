@@ -7774,6 +7774,14 @@ try {
               : `@${courierUsernameRaw}`)
           : "—";
 
+console.log("mgr_order_delivered notify username", {
+  orderNo: String(order?.orderNo || ""),
+  pointManagerUsername: String(notifyPoint?.managerUsername || ""),
+  pointCourierUsername: String(notifyPoint?.courierUsername || ""),
+  orderCourierUsername: String(order?.courierUsername || ""),
+  finalCourierUsernameRaw: courierUsernameRaw,
+});
+
           await bot.telegram.sendMessage(
             safeTelegramId,
             [
