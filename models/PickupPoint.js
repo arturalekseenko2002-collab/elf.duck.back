@@ -29,9 +29,29 @@ const PickupPointSchema = new mongoose.Schema(
       of: new mongoose.Schema(
         {
           isOpen: { type: Boolean, default: true },
-          from: { type: String, default: "" }, // "10:00"
-          to: { type: String, default: "" },   // "22:00"
-          note: { type: String, default: "" }, // "выходной"
+
+          from: { type: String, default: "" },
+          to: { type: String, default: "" },
+
+          openFrom: { type: String, default: "" },
+          openTo: { type: String, default: "" },
+
+          periods: {
+            type: [
+              new mongoose.Schema(
+                {
+                  openFrom: { type: String, default: "" },
+                  openTo: { type: String, default: "" },
+                  from: { type: String, default: "" },
+                  to: { type: String, default: "" },
+                },
+                { _id: false }
+              ),
+            ],
+            default: [],
+          },
+
+          note: { type: String, default: "" },
         },
         { _id: false }
       ),
