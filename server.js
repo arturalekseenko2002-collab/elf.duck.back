@@ -2462,6 +2462,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
     `🏪 Склад: ${escapeHtml(pointTitle)}`,
     `📅 Дата: ${escapeHtml(dayKey)}`,
     `——————————————————`,
+    ``,
     `🧾 <b>ЗАКАЗЫ :</b>`,
     ``,
   ];
@@ -2585,6 +2586,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
   */
 
   lines.push(`——————————————————`);
+  lines.push(``);
   lines.push(`💰Касса: ${kasaTotalZl.toFixed(2)} PLN`);
 
   const pointKeyNorm = String(point?.key || "").trim().toLowerCase().replace(/,+$/, "");
@@ -2619,6 +2621,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
   lines.push(`🫂Рефералов: ${referredFirstOrderUsers.size}`);
   lines.push(`👤Кол-во клиентов: ${uniqueCustomersCount}`);
   lines.push(`⚙️Продано штук: ${soldPositionsQty}`);
+  lines.push(``);
   lines.push(`——————————————————`);
   lines.push(`🦆 ELF DUCK &lt;&gt; СТАТИСТИКА`);
 
