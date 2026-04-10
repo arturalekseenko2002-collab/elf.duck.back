@@ -2471,7 +2471,9 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
 
   lines.push(`——————————————————`);
   lines.push(`💰Касса: ${kasaTotalZl.toFixed(2)} PLN`);
-  lines.push(`🚚Доставка: ${courierDeliveryFeesTotalZl.toFixed(2)} PLN`);
+  String(point?.key || "").trim().toLowerCase().replace(/,+$/, "") === "delivery"
+  ? `🚚Доставка: ${courierDeliveryFeesTotalZl.toFixed(2)} PLN`
+  : null;
   lines.push(`🪙Скидки: ${discountsTotalZl.toFixed(2)} PLN`);
   lines.push(`- по ⚙️смарт-цене: ${smartDiscountTotalZl.toFixed(2)} PLN`);
   lines.push(`- по 🎁реф. скидке: ${referralDiscountTotalZl.toFixed(2)} PLN`);
