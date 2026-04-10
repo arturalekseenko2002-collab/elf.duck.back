@@ -2631,6 +2631,9 @@ async function processDailyPointStats() {
           items: 1,
           cashbackZl: 1,
           createdAt: 1,
+          deliveryType: 1,
+          deliveryMethod: 1,
+          deliveryFeeZl: 1,
         }
       ).lean();
 
