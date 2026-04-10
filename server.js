@@ -2466,6 +2466,104 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
     ``,
   ];
 
+  const productStatsMap = new Map();
+
+  for (const order of Array.isArray(orders) ? orders : []) {
+    for (const row of Array.isArray(order?.items) ? order.items : []) {
+      const productKey = String(row?.productKey || "").trim();
+      const productTitle =
+        [row?.productTitle1, row?.productTitle2]
+          .filter(Boolean)
+          .join(" ")
+          .trim() || productKey || "Товар";
+
+      const statsKey = productKey || productTitle;
+      if (!statsKey) continue;
+
+      let bucket = productStatsMap.get(statsKey);
+      if (!bucket) {
+        bucket = {
+          title: productTitle,
+          totalQty: 0,
+          tierBuckets: new Map(),
+          flavors: new Map(),
+        };
+        productStatsMap.set(statsKey, bucket);
+      }
+
+      const flavors = Array.isArray(row?.flavors) ? row.flavors : [];
+
+      for (const flavor of flavors) {
+        const qty = Math.max(0, Number(flavor?.qty || 0));
+        if (!qty) continue;
+
+        bucket.totalQty += qty;
+
+        const smartDiscountPerItem = Number(flavor?.smartDiscountPerItem || 0);
+
+        const tierLabel = (() => {
+          if (smartDiscountPerItem >= 15) return "[5]";
+          if (smartDiscountPerItem >= 10) return "[3-4]";
+          if (smartDiscountPerItem >= 5) return "[2]";
+          return "[1]";
+        })();
+
+        bucket.tierBuckets.set(
+          tierLabel,
+          (bucket.tierBuckets.get(tierLabel) || 0) + qty
+        );
+
+        const flavorLabel = String(
+          flavor?.flavorLabel || flavor?.flavorKey || "Вкус"
+        ).trim();
+
+        if (flavorLabel) {
+          bucket.flavors.set(
+            flavorLabel,
+            (bucket.flavors.get(flavorLabel) || 0) + qty
+          );
+        }
+      }
+    }
+  }
+
+  const tierOrder = ["[5]", "[3-4]", "[2]", "[1]"];
+
+  const aggregatedProducts = Array.from(productStatsMap.values()).sort(
+    (a, b) => b.totalQty - a.totalQty || a.title.localeCompare(b.title, "ru")
+  );
+
+  if (!aggregatedProducts.length) {
+    lines.push("—");
+    lines.push("");
+  } else {
+    for (const product of aggregatedProducts) {
+      lines.push(`🦆 ${product.title} — ${product.totalQty} шт.`);
+
+      const tierLine = tierOrder
+        .filter((tier) => (product.tierBuckets.get(tier) || 0) > 0)
+        .map((tier) => `${tier} ${product.tierBuckets.get(tier)}`)
+        .join(" | ");
+
+      if (tierLine) {
+        lines.push(tierLine);
+      }
+
+      lines.push("");
+      lines.push("Вкусы:");
+
+      const sortedFlavors = Array.from(product.flavors.entries()).sort(
+        (a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ru")
+      );
+
+      for (const [flavorLabel, qty] of sortedFlavors) {
+        lines.push(`${flavorLabel} ×${qty}`);
+      }
+
+      lines.push("");
+    }
+  }
+
   if (!sortedOrders.length) {
     lines.push(`Заказов за день не было.`);
   } else {
