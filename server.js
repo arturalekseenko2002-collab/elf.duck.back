@@ -2538,7 +2538,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
     lines.push("");
   } else {
     for (const product of aggregatedProducts) {
-      lines.push(`🦆 ${product.title} — ${product.totalQty} шт.`);
+      lines.push(`🦆 <b>${escapeHtml(product.title)} — ${product.totalQty} шт.</b>`);
       lines.push("");
 
       const tierLine = tierOrder
