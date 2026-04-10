@@ -7805,6 +7805,7 @@ console.log("mgr_order_delivered notify username", {
               `🚚 <b>КУРЬЕР ПРИБЫЛ НА АДРЕС</b>`,
               ``,
               `Курьер прибыл по заказу <b>#${orderNo}</b>.`,
+              ``,
               `📲 <b>Связь с курьером:</b> ${escapeHtml(courierUsername)}`,
             ].join("\n"),
             {
