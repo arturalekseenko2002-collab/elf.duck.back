@@ -749,41 +749,82 @@ function getPointOpenStateNow(point) {
     return {
       isOpen: false,
       reason: "CLOSED_TODAY",
-      openFrom: String(schedule?.openFrom || "").trim(),
-      openTo: String(schedule?.openTo || "").trim(),
+      openFrom: "",
+      openTo: "",
     };
   }
 
-  const openFrom = String(schedule?.openFrom || schedule?.from || "").trim();
-  const openTo = String(schedule?.openTo || schedule?.to || "").trim();
+  const normalizePeriod = (raw) => {
+    if (!raw || typeof raw !== "object") return null;
 
-  if (!openFrom || !openTo) {
+    const from = String(
+      raw?.openFrom ?? raw?.from ?? raw?.start ?? raw?.startTime ?? raw?.timeFrom ?? ""
+    ).trim();
+
+    const to = String(
+      raw?.openTo ?? raw?.to ?? raw?.end ?? raw?.endTime ?? raw?.timeTo ?? ""
+    ).trim();
+
+    if (!from || !to) return null;
+
+    return { openFrom: from, openTo: to };
+  };
+
+  const periodsRaw =
+    (Array.isArray(schedule?.periods) && schedule.periods) ||
+    (Array.isArray(schedule?.timePeriods) && schedule.timePeriods) ||
+    (Array.isArray(schedule?.ranges) && schedule.ranges) ||
+    (Array.isArray(schedule?.slots) && schedule.slots) ||
+    [];
+
+  const normalizedPeriods = periodsRaw
+    .map(normalizePeriod)
+    .filter(Boolean)
+    .sort((a, b) => timeToMinutes(a.openFrom) - timeToMinutes(b.openFrom));
+
+  const fallbackOpenFrom = String(schedule?.openFrom || schedule?.from || "").trim();
+  const fallbackOpenTo = String(schedule?.openTo || schedule?.to || "").trim();
+
+  if (!normalizedPeriods.length && fallbackOpenFrom && fallbackOpenTo) {
+    normalizedPeriods.push({
+      openFrom: fallbackOpenFrom,
+      openTo: fallbackOpenTo,
+    });
+  }
+
+  if (!normalizedPeriods.length) {
     return {
       isOpen: false,
       reason: "NO_HOURS",
-      openFrom,
-      openTo,
+      openFrom: "",
+      openTo: "",
     };
   }
 
   const nowMinutes = getWarsawNowMinutes();
-  const fromMinutes = timeToMinutes(openFrom);
-  const toMinutes = timeToMinutes(openTo);
 
-  if (nowMinutes < fromMinutes || nowMinutes > toMinutes) {
+  const activePeriod = normalizedPeriods.find((period) => {
+    const fromMinutes = timeToMinutes(period.openFrom);
+    const toMinutes = timeToMinutes(period.openTo);
+    return nowMinutes >= fromMinutes && nowMinutes <= toMinutes;
+  });
+
+  if (activePeriod) {
     return {
-      isOpen: false,
-      reason: "OUTSIDE_HOURS",
-      openFrom,
-      openTo,
+      isOpen: true,
+      reason: "OPEN",
+      openFrom: activePeriod.openFrom,
+      openTo: activePeriod.openTo,
+      periods: normalizedPeriods,
     };
   }
 
   return {
-    isOpen: true,
-    reason: "OPEN",
-    openFrom,
-    openTo,
+    isOpen: false,
+    reason: "OUTSIDE_HOURS",
+    openFrom: normalizedPeriods[0]?.openFrom || "",
+    openTo: normalizedPeriods[normalizedPeriods.length - 1]?.openTo || "",
+    periods: normalizedPeriods,
   };
 }
 
@@ -5955,7 +5996,11 @@ app.post("/orders/confirm", async (req, res) => {
             : "Точка самовывоза");
 
         const scheduleText =
-          openState.openFrom && openState.openTo
+          Array.isArray(openState?.periods) && openState.periods.length
+            ? `График сегодня: ${openState.periods
+                .map((p) => `${p.openFrom}–${p.openTo}`)
+                .join(", ")}.`
+            : openState.openFrom && openState.openTo
             ? `График сегодня: ${openState.openFrom}–${openState.openTo}.`
             : `График на сегодня не настроен.`;
 
