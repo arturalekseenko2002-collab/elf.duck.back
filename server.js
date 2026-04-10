@@ -6348,11 +6348,6 @@ app.post("/orders/confirm", async (req, res) => {
       stockReleasedAt: null,
     });
 
-    await sendClientOrderCreatedInfo(created);
-    await startPaymentReminder(created);
-
-    // await sendOrderCreatedNotification(created);
-
     // 9) clear cart
     await Cart.updateOne(
       { telegramId },
@@ -6380,7 +6375,21 @@ app.post("/orders/confirm", async (req, res) => {
       }
     );
 
-    return res.json({ ok: true, order: created });
+    res.json({ ok: true, order: created });
+
+    Promise.resolve()
+      .then(() => sendClientOrderCreatedInfo(created))
+      .catch((e) => console.error("sendClientOrderCreatedInfo post-response error:", e));
+
+    Promise.resolve()
+      .then(() => startPaymentReminder(created))
+      .catch((e) => console.error("startPaymentReminder post-response error:", e));
+
+    // Promise.resolve()
+    //   .then(() => sendOrderCreatedNotification(created))
+    //   .catch((e) => console.error("sendOrderCreatedNotification post-response error:", e));
+
+    return;
   } catch (e) {
     console.error("POST /orders/confirm error:", e);
     return res.status(500).json({ ok: false, error: "Server error" });
