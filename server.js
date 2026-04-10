@@ -5727,16 +5727,17 @@ app.post("/orders/confirm", async (req, res) => {
     const telegramId = String(req.body?.telegramId || "").trim();
     if (!telegramId) return res.status(400).json({ ok: false, error: "telegramId is required" });
 
-    console.time("orders/confirm load cart");
-    const cart = await Cart.findOne({ telegramId }).lean();
-    console.timeEnd("orders/confirm load cart");
+  console.time("orders/confirm load cart+user");
 
-    console.time("orders/confirm load user");
-    const user = await User.findOne(
+  const [cart, user] = await Promise.all([
+    Cart.findOne({ telegramId }).lean(),
+    User.findOne(
       { telegramId },
       { telegramId: 1, referral: 1 }
-    ).lean();
-    console.timeEnd("orders/confirm load user");
+    ).lean(),
+  ]);
+
+  console.timeEnd("orders/confirm load cart+user");
 
     const referralDiscountMeta = {
       applied: Array.isArray(cart?.items)
