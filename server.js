@@ -828,6 +828,65 @@ function getPointOpenStateNow(point) {
   };
 }
 
+function isTimeWindowInsidePointSchedule(point, timeWindow) {
+  const schedule = getTodayScheduleForPickupPoint(point);
+  const rawWindow = String(timeWindow || "").trim();
+
+  if (!schedule || !rawWindow) return false;
+  if (schedule?.isOpen === false || schedule?.closed === true || schedule?.isActive === false) {
+    return false;
+  }
+
+  const match = rawWindow.match(/^(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})$/);
+  if (!match) return false;
+
+  const windowFrom = timeToMinutes(match[1]);
+  const windowTo = timeToMinutes(match[2]);
+  if (windowTo <= windowFrom) return false;
+
+  const periodsRaw =
+    (Array.isArray(schedule?.periods) && schedule.periods) ||
+    (Array.isArray(schedule?.timePeriods) && schedule.timePeriods) ||
+    (Array.isArray(schedule?.ranges) && schedule.ranges) ||
+    (Array.isArray(schedule?.slots) && schedule.slots) ||
+    [];
+
+  const normalizedPeriods = periodsRaw
+    .map((raw) => {
+      const from = String(
+        raw?.openFrom ?? raw?.from ?? raw?.start ?? raw?.startTime ?? raw?.timeFrom ?? ""
+      ).trim();
+
+      const to = String(
+        raw?.openTo ?? raw?.to ?? raw?.end ?? raw?.endTime ?? raw?.timeTo ?? ""
+      ).trim();
+
+      if (!from || !to) return null;
+      return { openFrom: from, openTo: to };
+    })
+    .filter(Boolean)
+    .sort((a, b) => timeToMinutes(a.openFrom) - timeToMinutes(b.openFrom));
+
+  const fallbackOpenFrom = String(schedule?.openFrom || schedule?.from || "").trim();
+  const fallbackOpenTo = String(schedule?.openTo || schedule?.to || "").trim();
+
+  if (!normalizedPeriods.length && fallbackOpenFrom && fallbackOpenTo) {
+    normalizedPeriods.push({
+      openFrom: fallbackOpenFrom,
+      openTo: fallbackOpenTo,
+    });
+  }
+
+  if (!normalizedPeriods.length) return false;
+
+  return normalizedPeriods.some((period) => {
+    const periodFrom = timeToMinutes(period.openFrom);
+    const periodTo = timeToMinutes(period.openTo);
+
+    return windowFrom >= periodFrom && windowTo <= periodTo;
+  });
+}
+
 const LIQUIDS_CATEGORY_KEYS = new Set(["liquids"]);
 const DISPOSABLES_CATEGORY_KEYS = new Set(["disposables"]);
 const CARTRIDGES_CATEGORY_KEYS = new Set(["cartridges"]);
@@ -6007,27 +6066,46 @@ app.post("/orders/confirm", async (req, res) => {
     }
 
     if (schedulePoint) {
+      const isCourierDelivery =
+        deliveryType === "delivery" && deliveryMethod === "courier";
+
       const openState = getPointOpenStateNow(schedulePoint);
 
-      if (!openState.isOpen) {
+      const courierWindowFitsSchedule = isCourierDelivery
+        ? isTimeWindowInsidePointSchedule(schedulePoint, cart?.deliveryTimeWindow)
+        : false;
+
+      if (
+        (isCourierDelivery && !courierWindowFitsSchedule) ||
+        (!isCourierDelivery && !openState.isOpen)
+      ) {
         const pointLabel =
           String(schedulePoint?.title || "").trim() ||
           String(schedulePoint?.address || "").trim() ||
           (deliveryType === "delivery" && deliveryMethod === "courier"
-            ? "Доставка курьером"
+            ? "Курьер"
             : deliveryType === "delivery" && deliveryMethod === "inpost"
-            ? "Доставка InPost"
+            ? "InPost"
             : "Точка самовывоза");
 
         const scheduleText =
-          openState.openFrom && openState.openTo
+          Array.isArray(openState?.periods) && openState.periods.length
+            ? `График сегодня: ${openState.periods
+                .map((p) => `${p.openFrom}–${p.openTo}`)
+                .join(", ")}.`
+            : openState.openFrom && openState.openTo
             ? `График сегодня: ${openState.openFrom}–${openState.openTo}.`
             : `График на сегодня не настроен.`;
+
+        const selectedWindowText =
+          isCourierDelivery && String(cart?.deliveryTimeWindow || "").trim()
+            ? ` Выбранный промежуток: ${String(cart.deliveryTimeWindow).trim()}.`
+            : "";
 
         return res.status(400).json({
           ok: false,
           field: "schedule",
-          error: `${pointLabel} сейчас не принимает заказы. ${scheduleText}`,
+          error: `${pointLabel} сейчас не принимает заказы. ${scheduleText}${selectedWindowText}`,
         });
       }
     }
