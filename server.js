@@ -2471,9 +2471,22 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
 
   lines.push(`——————————————————`);
   lines.push(`💰Касса: ${kasaTotalZl.toFixed(2)} PLN`);
-  String(point?.key || "").trim().toLowerCase().replace(/,+$/, "") === "delivery"
-  ? `🚚Доставка: ${courierDeliveryFeesTotalZl.toFixed(2)} PLN`
-  : null;
+
+  const pointKeyNorm = String(point?.key || "").trim().toLowerCase().replace(/,+$/, "");
+  const pointTitleNorm = normalizePhotoLookupText(point?.title || "");
+  const pointAddressNorm = normalizePhotoLookupText(point?.address || "");
+
+  const isCourierStatsPoint =
+    pointKeyNorm === "delivery" ||
+    pointTitleNorm.includes("kurier") ||
+    pointTitleNorm.includes("courier") ||
+    pointAddressNorm.includes("kurier") ||
+    pointAddressNorm.includes("courier");
+
+  if (isCourierStatsPoint) {
+    lines.push(`🚚Доставка: ${courierDeliveryFeesTotalZl.toFixed(2)} PLN`);
+  }
+
   lines.push(`🪙Скидки: ${discountsTotalZl.toFixed(2)} PLN`);
   lines.push(`- по ⚙️смарт-цене: ${smartDiscountTotalZl.toFixed(2)} PLN`);
   lines.push(`- по 🎁реф. скидке: ${referralDiscountTotalZl.toFixed(2)} PLN`);
