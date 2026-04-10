@@ -2545,7 +2545,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
       const tierLine = tierOrder
         .filter((tier) => (product.tierBuckets.get(tier) || 0) > 0)
         .map((tier) => `${tier} ${product.tierBuckets.get(tier)}`)
-        .join(" <> ");
+        .join(" &lt;&gt; ");
 
       if (tierLine) {
         lines.push(tierLine);
