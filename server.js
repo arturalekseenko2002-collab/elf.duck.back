@@ -524,6 +524,25 @@ async function resolveWarsawDeliveryPricing(address) {
     };
   }
 
+  const normalizeLooseText = (input) =>
+    String(input || "")
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/ł/g, "l")
+      .replace(/ś/g, "s")
+      .replace(/ż/g, "z")
+      .replace(/ź/g, "z")
+      .replace(/ć/g, "c")
+      .replace(/ń/g, "n")
+      .replace(/ó/g, "o")
+      .replace(/ą/g, "a")
+      .replace(/ę/g, "e")
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
   const matchDistrictFromText = (input) => {
     const normalizedAddress = normalizeDistrictChunk(input);
 
@@ -546,14 +565,33 @@ async function resolveWarsawDeliveryPricing(address) {
     };
   };
 
-  const directMatch = matchDistrictFromText(rawAddress);
-  if (directMatch.matched) {
-    return directMatch;
+  const normalizedRaw = normalizeLooseText(rawAddress);
+  const inputTokens = normalizedRaw
+    .split(" ")
+    .filter(
+      (token) =>
+        token.length >= 3 &&
+        token !== "warszawa" &&
+        token !== "warsaw" &&
+        token !== "poland" &&
+        token !== "polska"
+    );
+
+  const inputNumberTokens = normalizedRaw.match(/\b\d+[a-z]?\b/g) || [];
+
+  const looksLikeDistrictOnly =
+    inputTokens.length <= 2 && inputNumberTokens.length === 0;
+
+  if (looksLikeDistrictOnly) {
+    const directMatch = matchDistrictFromText(rawAddress);
+    if (directMatch.matched) {
+      return directMatch;
+    }
   }
 
   try {
     const query = encodeURIComponent(`${rawAddress}, Warszawa, Poland`);
-    const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=1&q=${query}`;
+    const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=5&q=${query}`;
 
     const response = await fetch(url, {
       headers: {
@@ -563,24 +601,91 @@ async function resolveWarsawDeliveryPricing(address) {
     });
 
     const data = await response.json().catch(() => []);
-    const first = Array.isArray(data) ? data[0] : null;
-    const addr = first?.address || {};
+    const rows = Array.isArray(data) ? data : [];
 
-    const districtCandidates = [
-      addr.city_district,
-      addr.suburb,
-      addr.borough,
-      addr.quarter,
-      addr.neighbourhood,
-      addr.city,
-      addr.town,
-      addr.municipality,
-    ].filter(Boolean);
+    for (const row of rows) {
+      const addr = row?.address || {};
 
-    for (const candidate of districtCandidates) {
-      const matched = matchDistrictFromText(candidate);
-      if (matched.matched) {
-        return matched;
+      const cityBlob = normalizeLooseText(
+        [
+          addr.city,
+          addr.town,
+          addr.village,
+          addr.municipality,
+          addr.state,
+          row?.display_name,
+        ]
+          .filter(Boolean)
+          .join(" ")
+      );
+
+      if (!cityBlob.includes("warszawa") && !cityBlob.includes("warsaw")) {
+        continue;
+      }
+
+      const locationBlob = normalizeLooseText(
+        [
+          addr.road,
+          addr.pedestrian,
+          addr.footway,
+          addr.path,
+          addr.cycleway,
+          addr.house_number,
+          addr.house,
+          addr.building,
+          row?.display_name,
+        ]
+          .filter(Boolean)
+          .join(" ")
+      );
+
+      const houseNumber = normalizeLooseText(addr.house_number || "");
+
+      const hasMeaningfulAddress = Boolean(
+        (addr.road || addr.pedestrian || addr.footway || addr.path || addr.cycleway) &&
+          (addr.house_number || addr.house || addr.building)
+      );
+
+      if (!hasMeaningfulAddress) {
+        continue;
+      }
+
+      const matchedWordTokens = inputTokens.filter((token) =>
+        locationBlob.includes(token)
+      );
+
+      const requiredMatches = inputTokens.length <= 1 ? 1 : Math.min(2, inputTokens.length);
+
+      if (matchedWordTokens.length < requiredMatches) {
+        continue;
+      }
+
+      if (inputNumberTokens.length > 0) {
+        const numberMatched = inputNumberTokens.some(
+          (token) =>
+            houseNumber === token ||
+            locationBlob.includes(` ${token} `) ||
+            locationBlob.endsWith(` ${token}`)
+        );
+
+        if (!numberMatched) {
+          continue;
+        }
+      }
+
+      const districtCandidates = [
+        addr.city_district,
+        addr.suburb,
+        addr.borough,
+        addr.quarter,
+        addr.neighbourhood,
+      ].filter(Boolean);
+
+      for (const candidate of districtCandidates) {
+        const matched = matchDistrictFromText(candidate);
+        if (matched.matched) {
+          return matched;
+        }
       }
     }
   } catch (e) {
