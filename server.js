@@ -4746,11 +4746,35 @@ app.patch("/admin/pickup-points/:id", requireAdmin, async (req, res) => {
           : {};
 
       Object.entries(patch).forEach(([dateKey, value]) => {
+        const periods = Array.isArray(value?.periods)
+          ? value.periods
+              .map((period) => ({
+                openFrom: String(period?.openFrom || period?.from || "").trim(),
+                openTo: String(period?.openTo || period?.to || "").trim(),
+                from: String(period?.from || period?.openFrom || "").trim(),
+                to: String(period?.to || period?.openTo || "").trim(),
+              }))
+              .filter((period) => period.openFrom && period.openTo)
+          : [];
+
         currentSchedule[dateKey] = {
           isOpen: Boolean(value?.isOpen),
-          from: String(value?.from || ""),
-          to: String(value?.to || ""),
-          note: String(value?.note || ""),
+          from: String(value?.from || value?.openFrom || periods[0]?.openFrom || "").trim(),
+          to: String(
+            value?.to ||
+            value?.openTo ||
+            periods[periods.length - 1]?.openTo ||
+            ""
+          ).trim(),
+          openFrom: String(value?.openFrom || value?.from || periods[0]?.openFrom || "").trim(),
+          openTo: String(
+            value?.openTo ||
+            value?.to ||
+            periods[periods.length - 1]?.openTo ||
+            ""
+          ).trim(),
+          periods,
+          note: String(value?.note || "").trim(),
         };
       });
 
@@ -5996,11 +6020,7 @@ app.post("/orders/confirm", async (req, res) => {
             : "Точка самовывоза");
 
         const scheduleText =
-          Array.isArray(openState?.periods) && openState.periods.length
-            ? `График сегодня: ${openState.periods
-                .map((p) => `${p.openFrom}–${p.openTo}`)
-                .join(", ")}.`
-            : openState.openFrom && openState.openTo
+          openState.openFrom && openState.openTo
             ? `График сегодня: ${openState.openFrom}–${openState.openTo}.`
             : `График на сегодня не настроен.`;
 
