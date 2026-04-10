@@ -7743,18 +7743,18 @@ try {
             ],
           });
         }
-        } catch (e) {
-          const msg = String(e?.response?.description || e?.message || "").toLowerCase();
+      } catch (e) {
+        const msg = String(e?.response?.description || e?.message || "").toLowerCase();
 
-          if (msg.includes("message is not modified")) {
-            return;
-          }
-
+        if (!msg.includes("message is not modified")) {
           console.error("mgr_order_delivered main message markup error:", e);
         }
+      }
 
       try {
-        if (bot && order?.userTelegramId) {
+        const safeTelegramId = String(order?.userTelegramId || "").trim();
+
+        if (bot && safeTelegramId) {
           const orderNo = escapeHtml(order?.orderNo || "—");
 
           const courierUsernameRaw = String(
@@ -7768,7 +7768,7 @@ try {
             : "—";
 
           await bot.telegram.sendMessage(
-            String(order.userTelegramId),
+            safeTelegramId,
             [
               `🚚 <b>КУРЬЕР ПРИБЫЛ НА АДРЕС</b>`,
               ``,
@@ -7780,9 +7780,21 @@ try {
               disable_web_page_preview: true,
             }
           );
+        } else {
+          console.warn("mgr_order_delivered client notify skipped:", {
+            hasBot: Boolean(bot),
+            safeTelegramId,
+            orderId: String(order?._id || ""),
+            orderNo: String(order?.orderNo || ""),
+          });
         }
       } catch (e) {
-        console.error("mgr_order_delivered client notify error:", e);
+        console.error("mgr_order_delivered client notify error:", {
+          orderId: String(order?._id || ""),
+          orderNo: String(order?.orderNo || ""),
+          userTelegramId: String(order?.userTelegramId || ""),
+          error: e?.response?.description || e?.message || String(e),
+        });
       }
 
       await ctx.answerCbQuery("Клиент уведомлен о прибытии курьера");
