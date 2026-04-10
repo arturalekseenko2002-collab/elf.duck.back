@@ -5722,16 +5722,21 @@ for (const d of deltas) {
 });
 
 app.post("/orders/confirm", async (req, res) => {
+  console.time("orders/confirm total");
   try {
     const telegramId = String(req.body?.telegramId || "").trim();
     if (!telegramId) return res.status(400).json({ ok: false, error: "telegramId is required" });
 
+    console.time("orders/confirm load cart");
     const cart = await Cart.findOne({ telegramId }).lean();
+    console.timeEnd("orders/confirm load cart");
 
+    console.time("orders/confirm load user");
     const user = await User.findOne(
       { telegramId },
       { telegramId: 1, referral: 1 }
     ).lean();
+    console.timeEnd("orders/confirm load user");
 
     const referralDiscountMeta = {
       applied: Array.isArray(cart?.items)
@@ -5877,6 +5882,7 @@ app.post("/orders/confirm", async (req, res) => {
     const prodByKey = new Map(products.map((p) => [String(p.productKey), p]));
     const byProduct = new Map(); // productKey -> row
 
+    console.time("orders/confirm build order items");
     for (const it of cart.items) {
       const pk = String(it.productKey || "").trim();
       const fk = String(it.flavorKey || "").trim();
@@ -5963,6 +5969,7 @@ app.post("/orders/confirm", async (req, res) => {
       cardBgUrl: row.cardBgUrl,
       flavors: Array.from(row.flavorsMap.values()),
     }));
+    console.timeEnd("orders/confirm build order items");
 
     // ================= STOCK CHECK (avoid context mismatch) =================
     // IMPORTANT: use THE SAME stock context logic as /cart reservations.
@@ -6233,6 +6240,7 @@ app.post("/orders/confirm", async (req, res) => {
       })),
     });
 
+    console.time("orders/confirm duplicate check");
     const recentDuplicateCandidates = await Order.find(
       {
         userTelegramId: telegramId,
@@ -6285,10 +6293,12 @@ app.post("/orders/confirm", async (req, res) => {
       return existingFingerprint === currentOrderFingerprint;
     });
 
+    console.timeEnd("orders/confirm duplicate check");
     if (duplicateOrder) {
       return res.json({ ok: true, order: duplicateOrder, duplicate: true });
     }
     
+    console.time("orders/confirm create order")
     const created = await Order.create({
       userTelegramId: telegramId,
 
@@ -6349,6 +6359,7 @@ app.post("/orders/confirm", async (req, res) => {
     });
 
     // 9) clear cart
+    console.time("orders/confirm clear cart");
     await Cart.updateOne(
       { telegramId },
       {
@@ -6374,7 +6385,9 @@ app.post("/orders/confirm", async (req, res) => {
         },
       }
     );
+    console.timeEnd("orders/confirm clear cart");
 
+    console.timeEnd("orders/confirm total");
     res.json({ ok: true, order: created });
 
     Promise.resolve()
