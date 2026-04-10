@@ -2422,9 +2422,22 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
       .toFixed(2)
   );
 
+  const courierDeliveryFeesTotalZl = Number(
+    (Array.isArray(orders) ? orders : [])
+      .reduce((sum, order) => {
+        const isCourierDelivery =
+          String(order?.deliveryType || "").trim() === "delivery" &&
+          String(order?.deliveryMethod || "").trim() === "courier";
+
+        return sum + (isCourierDelivery ? Number(order?.deliveryFeeZl || 0) : 0);
+      }, 0)
+      .toFixed(2)
+  );
+
   const discountsTotalZl = Number(
     (smartDiscountTotalZl + referralDiscountTotalZl + cashbackDiscountTotalZl).toFixed(2)
   );
+  
   const salaryTotalZl = Number((((kasaTotalZl / 100) * 16)).toFixed(2));
 
   const pointTitle = point?.title || point?.address || point?.key || "Склад";
@@ -2458,6 +2471,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
 
   lines.push(`——————————————————`);
   lines.push(`💰Касса: ${kasaTotalZl.toFixed(2)} PLN`);
+  lines.push(`🚚Доставка: ${courierDeliveryFeesTotalZl.toFixed(2)} PLN`);
   lines.push(`🪙Скидки: ${discountsTotalZl.toFixed(2)} PLN`);
   lines.push(`- по ⚙️смарт-цене: ${smartDiscountTotalZl.toFixed(2)} PLN`);
   lines.push(`- по 🎁реф. скидке: ${referralDiscountTotalZl.toFixed(2)} PLN`);
