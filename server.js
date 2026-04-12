@@ -6834,9 +6834,9 @@ app.post("/orders/confirm", async (req, res) => {
       .then(() => startPaymentReminder(created))
       .catch((e) => console.error("startPaymentReminder post-response error:", e));
 
-    // Promise.resolve()
-    //   .then(() => sendOrderCreatedNotification(created))
-    //   .catch((e) => console.error("sendOrderCreatedNotification post-response error:", e));
+    Promise.resolve()
+      .then(() => sendOrderCreatedNotification(created))
+      .catch((e) => console.error("sendOrderCreatedNotification post-response error:", e));
 
     return;
   } catch (e) {
