@@ -2513,6 +2513,30 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
       .toFixed(2)
   );
 
+  const courierDeliveryFeesTotalZl = Number(
+    (Array.isArray(orders) ? orders : [])
+      .reduce((sum, order) => {
+        const isCourierDelivery =
+          String(order?.deliveryType || "").trim() === "delivery" &&
+          String(order?.deliveryMethod || "").trim() === "courier";
+
+        return sum + (isCourierDelivery ? Number(order?.deliveryFeeZl || 0) : 0);
+      }, 0)
+      .toFixed(2)
+  );
+
+  const inpostDeliveryFeesTotalZl = Number(
+    (Array.isArray(orders) ? orders : [])
+      .reduce((sum, order) => {
+        const isInpostDelivery =
+          String(order?.deliveryType || "").trim() === "delivery" &&
+          String(order?.deliveryMethod || "").trim() === "inpost";
+
+        return sum + (isInpostDelivery ? Number(order?.inpostDeliveryFeeZl || 0) : 0);
+      }, 0)
+      .toFixed(2)
+  );
+
   const deliveryFeesTotalZl = Number(
     (courierDeliveryFeesTotalZl + inpostDeliveryFeesTotalZl).toFixed(2)
   );
@@ -2539,29 +2563,29 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
       .toFixed(2)
   );
 
-  const courierDeliveryFeesTotalZl = Number(
-    (Array.isArray(orders) ? orders : [])
-      .reduce((sum, order) => {
-        const isCourierDelivery =
-          String(order?.deliveryType || "").trim() === "delivery" &&
-          String(order?.deliveryMethod || "").trim() === "courier";
+  // const courierDeliveryFeesTotalZl = Number(
+  //   (Array.isArray(orders) ? orders : [])
+  //     .reduce((sum, order) => {
+  //       const isCourierDelivery =
+  //         String(order?.deliveryType || "").trim() === "delivery" &&
+  //         String(order?.deliveryMethod || "").trim() === "courier";
 
-        return sum + (isCourierDelivery ? Number(order?.deliveryFeeZl || 0) : 0);
-      }, 0)
-      .toFixed(2)
-  );
+  //       return sum + (isCourierDelivery ? Number(order?.deliveryFeeZl || 0) : 0);
+  //     }, 0)
+  //     .toFixed(2)
+  // );
 
-  const inpostDeliveryFeesTotalZl = Number(
-    (Array.isArray(orders) ? orders : [])
-      .reduce((sum, order) => {
-        const isInpostDelivery =
-          String(order?.deliveryType || "").trim() === "delivery" &&
-          String(order?.deliveryMethod || "").trim() === "inpost";
+  // const inpostDeliveryFeesTotalZl = Number(
+  //   (Array.isArray(orders) ? orders : [])
+  //     .reduce((sum, order) => {
+  //       const isInpostDelivery =
+  //         String(order?.deliveryType || "").trim() === "delivery" &&
+  //         String(order?.deliveryMethod || "").trim() === "inpost";
 
-        return sum + (isInpostDelivery ? Number(order?.inpostDeliveryFeeZl || 0) : 0);
-      }, 0)
-      .toFixed(2)
-  );
+  //       return sum + (isInpostDelivery ? Number(order?.inpostDeliveryFeeZl || 0) : 0);
+  //     }, 0)
+  //     .toFixed(2)
+  // );
 
   const discountsTotalZl = Number(
     (smartDiscountTotalZl + referralDiscountTotalZl + cashbackDiscountTotalZl).toFixed(2)
