@@ -447,6 +447,10 @@ const WARSAW_DELIVERY_DISTRICT_PRICES = new Map([
   ["wesola", { label: "Wesoła", price: 25 }],
 ]);
 
+const FREE_COURIER_DELIVERY_THRESHOLD_ZL = Number(
+  process.env.FREE_COURIER_DELIVERY_THRESHOLD_ZL
+);
+
 function normalizeDistrictChunk(input) {
   return String(input || "")
     .trim()
@@ -513,15 +517,18 @@ function resolveInpostDeliveryPricing(items = [], products = []) {
   };
 }
 
-async function resolveWarsawDeliveryPricing(address) {
+async function resolveWarsawDeliveryPricing(address, itemsSubtotalZl = 0) {
   const rawAddress = String(address || "").trim();
   if (!rawAddress) {
-    return {
-      districtKey: "",
-      districtLabel: null,
-      deliveryFeeZl: 0,
-      matched: false,
-    };
+      const subtotal = Number(itemsSubtotalZl || 0);
+      const isFreeDelivery = subtotal >= FREE_COURIER_DELIVERY_THRESHOLD_ZL;
+
+      return {
+        districtKey: key,
+        districtLabel: meta.label,
+        deliveryFeeZl: isFreeDelivery ? 0 : Number(meta.price || 0),
+        matched: true,
+      };
   }
 
   const normalizeLooseText = (input) =>
@@ -551,7 +558,7 @@ async function resolveWarsawDeliveryPricing(address) {
         return {
           districtKey: key,
           districtLabel: meta.label,
-          deliveryFeeZl: Number(meta.price || 0),
+          deliveryFeeZl: itemsSubtotalZl >= 200 ? 0 : Number(meta.price || 0),
           matched: true,
         };
       }
@@ -6143,6 +6150,12 @@ app.post("/orders/confirm", async (req, res) => {
       return res.status(400).json({ ok: false, error: "Cart is empty" });
     }
 
+    const itemsTotalZl = cart.items.reduce((sum, it) => {
+      const qty = Math.max(1, Number(it.qty || 1));
+      const price = Number(it.unitPrice || 0);
+      return sum + qty * price;
+    }, 0);
+
     if (cart.checkoutDeliveryType === "delivery" && cart.checkoutDeliveryMethod === "courier") {
       if (!String(cart?.courierAddress || "").trim()) {
         return res.status(400).json({
@@ -6166,7 +6179,10 @@ app.post("/orders/confirm", async (req, res) => {
       const savedDeliveryFeeZl = Number(cart?.deliveryFeeZl || 0);
 
       if (!savedCourierDistrict || savedDeliveryFeeZl <= 0) {
-        const deliveryPricing = await resolveWarsawDeliveryPricing(cart?.courierAddress || "");
+        const deliveryPricing = await resolveWarsawDeliveryPricing(
+          cart?.courierAddress || "",
+          itemsTotalZl
+        );
 
         if (!deliveryPricing.matched) {
           return res.status(400).json({
@@ -6179,11 +6195,11 @@ app.post("/orders/confirm", async (req, res) => {
     }
 
     // 1) total
-    const itemsTotalZl = cart.items.reduce((sum, it) => {
-      const qty = Math.max(1, Number(it.qty || 1));
-      const price = Number(it.unitPrice || 0);
-      return sum + qty * price;
-    }, 0);
+    // const itemsTotalZl = cart.items.reduce((sum, it) => {
+    //   const qty = Math.max(1, Number(it.qty || 1));
+    //   const price = Number(it.unitPrice || 0);
+    //   return sum + qty * price;
+    // }, 0);
 
     const courierDeliveryFeeZl =
       cart.checkoutDeliveryType === "delivery" && cart.checkoutDeliveryMethod === "courier"
@@ -6642,7 +6658,10 @@ app.post("/orders/confirm", async (req, res) => {
                   districtLabel: String(cart.courierDistrict || "").trim(),
                   deliveryFeeZl: Number(cart.deliveryFeeZl || 0),
                 }
-              : await resolveWarsawDeliveryPricing(cart.courierAddress || "")
+                : await resolveWarsawDeliveryPricing(
+                  cart.courierAddress || "",
+                  itemsTotalZl
+                )
           )
         : { districtLabel: null, deliveryFeeZl: 0 };
 
