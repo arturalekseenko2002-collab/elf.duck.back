@@ -448,7 +448,7 @@ const WARSAW_DELIVERY_DISTRICT_PRICES = new Map([
 ]);
 
 const FREE_COURIER_DELIVERY_THRESHOLD_ZL = Number(
-  process.env.FREE_COURIER_DELIVERY_THRESHOLD_ZL
+  process.env.FREE_COURIER_DELIVERY_THRESHOLD_ZL || 200
 );
 
 function normalizeDistrictChunk(input) {
