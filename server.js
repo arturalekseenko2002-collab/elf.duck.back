@@ -519,17 +519,14 @@ function resolveInpostDeliveryPricing(items = [], products = []) {
 
 async function resolveWarsawDeliveryPricing(address, itemsSubtotalZl = 0) {
   const rawAddress = String(address || "").trim();
-  if (!rawAddress) {
-      const subtotal = Number(itemsSubtotalZl || 0);
-      const isFreeDelivery = subtotal >= FREE_COURIER_DELIVERY_THRESHOLD_ZL;
-
+    if (!rawAddress) {
       return {
-        districtKey: key,
-        districtLabel: meta.label,
-        deliveryFeeZl: isFreeDelivery ? 0 : Number(meta.price || 0),
-        matched: true,
+        districtKey: "",
+        districtLabel: null,
+        deliveryFeeZl: 0,
+        matched: false,
       };
-  }
+    }
 
   const normalizeLooseText = (input) =>
     String(input || "")
@@ -555,10 +552,13 @@ async function resolveWarsawDeliveryPricing(address, itemsSubtotalZl = 0) {
 
     for (const [key, meta] of WARSAW_DELIVERY_DISTRICT_PRICES.entries()) {
       if (normalizedAddress.includes(key)) {
+        const subtotal = Number(itemsSubtotalZl || 0);
+        const isFreeDelivery = subtotal >= FREE_COURIER_DELIVERY_THRESHOLD_ZL;
+
         return {
           districtKey: key,
           districtLabel: meta.label,
-          deliveryFeeZl: itemsSubtotalZl >= 200 ? 0 : Number(meta.price || 0),
+          deliveryFeeZl: isFreeDelivery ? 0 : Number(meta.price || 0),
           matched: true,
         };
       }
