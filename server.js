@@ -6201,9 +6201,13 @@ app.post("/orders/confirm", async (req, res) => {
     //   return sum + qty * price;
     // }, 0);
 
+    const isFreeCourierDelivery = itemsTotalZl >= FREE_COURIER_DELIVERY_THRESHOLD_ZL;
+
     const courierDeliveryFeeZl =
       cart.checkoutDeliveryType === "delivery" && cart.checkoutDeliveryMethod === "courier"
-        ? Number(cart.deliveryFeeZl || 0)
+        ? (isFreeCourierDelivery
+            ? 0
+            : Number(confirmedDeliveryPricing?.deliveryFeeZl || cart.deliveryFeeZl || 0))
         : 0;
 
     const inpostDeliveryFeeZl =
