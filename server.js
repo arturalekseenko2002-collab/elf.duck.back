@@ -6055,7 +6055,7 @@ for (const d of deltas) {
 
           deliveryFeeZl:
             finalCheckoutDeliveryType === "delivery" && finalCheckoutDeliveryMethod === "courier"
-              ? deliveryFeeZl
+              ? Number(deliveryPricing?.deliveryFeeZl || 0)
               : 0,
 
           inpostDeliveryFeeZl:
@@ -6201,7 +6201,7 @@ app.post("/orders/confirm", async (req, res) => {
     //   return sum + qty * price;
     // }, 0);
 
-    const isFreeCourierDelivery = itemsTotalZl >= FREE_COURIER_DELIVERY_THRESHOLD_ZL;
+    // const isFreeCourierDelivery = itemsTotalZl >= FREE_COURIER_DELIVERY_THRESHOLD_ZL;
 
     const courierDeliveryFeeZl =
       cart.checkoutDeliveryType === "delivery" && cart.checkoutDeliveryMethod === "courier"
@@ -6216,6 +6216,11 @@ app.post("/orders/confirm", async (req, res) => {
         : 0;
 
     const totalZl = Number((itemsTotalZl + courierDeliveryFeeZl + inpostDeliveryFeeZl).toFixed(2));
+
+    const orderDeliveryFeeZl =
+      deliveryType === "delivery" && deliveryMethod === "courier"
+        ? Number(courierDeliveryFeeZl || 0)
+        : 0;
 
     // 2) delivery mapping (из Cart -> Order)
     const deliveryType = cart.checkoutDeliveryType === "pickup" ? "pickup" : "delivery";
@@ -6654,15 +6659,21 @@ app.post("/orders/confirm", async (req, res) => {
 
     // 8) create order
 
+    const isFreeCourierDelivery =
+      itemsTotalZl >= FREE_COURIER_DELIVERY_THRESHOLD_ZL;
+
     const confirmedDeliveryPricing =
       deliveryType === "delivery" && deliveryMethod === "courier"
         ? (
-            String(cart?.courierDistrict || "").trim() && Number(cart?.deliveryFeeZl || 0) > 0
+            String(cart?.courierDistrict || "").trim() &&
+            (Number(cart?.deliveryFeeZl || 0) > 0 || isFreeCourierDelivery)
               ? {
                   districtLabel: String(cart.courierDistrict || "").trim(),
-                  deliveryFeeZl: Number(cart.deliveryFeeZl || 0),
+                  deliveryFeeZl: isFreeCourierDelivery
+                    ? 0
+                    : Number(cart.deliveryFeeZl || 0),
                 }
-                : await resolveWarsawDeliveryPricing(
+              : await resolveWarsawDeliveryPricing(
                   cart.courierAddress || "",
                   itemsTotalZl
                 )
@@ -6784,7 +6795,9 @@ app.post("/orders/confirm", async (req, res) => {
 
       deliveryFeeZl:
         deliveryType === "delivery" && deliveryMethod === "courier"
-          ? Number(confirmedDeliveryPricing.deliveryFeeZl || cart.deliveryFeeZl || 0)
+          ? (isFreeCourierDelivery
+              ? 0
+              : Number(confirmedDeliveryPricing.deliveryFeeZl || cart.deliveryFeeZl || 0))
           : 0,
 
       inpostDeliveryFeeZl:
