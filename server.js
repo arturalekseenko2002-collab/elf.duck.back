@@ -97,6 +97,20 @@ function getTrustedTelegramIdFromRequest(req) {
   return { ok: true, reason: "OK", telegramId: String(auth.telegramId || "").trim(), user: auth.user || null };
 }
 
+function requireTrustedTelegramUser(req, res) {
+  const auth = getTrustedTelegramIdFromRequest(req);
+
+  if (!auth.ok) {
+    res.status(401).json({
+      ok: false,
+      error: auth.reason || "UNAUTHORIZED",
+    });
+    return null;
+  }
+
+  return auth;
+}
+
 let bot = null;
 
 const app = express();
@@ -105,7 +119,12 @@ const app = express();
 const corsOptions = {
   origin: (origin, cb) => cb(null, true),
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "x-admin-token"],
+  allowedHeaders: [
+  "Content-Type",
+  "x-admin-token",
+  "x-telegram-init-data",
+  "x-telegram-webapp-init-data",
+],
 };
 
 app.use(cors(corsOptions));
@@ -4456,8 +4475,19 @@ app.get("/ping", (_, res) => res.json({ ok: true }));
 // регистрируем юзера из mini-app
 app.post("/register-user", async (req, res) => {
   try {
-    const { telegramId, username, firstName, lastName, photoUrl, ref } = req.body || {};
-    const normalizedRef = String(ref || "").replace(/^ref_/, "").trim();
+        const auth = requireTrustedTelegramUser(req, res);
+    if (!auth) return;
+
+    const telegramId = String(auth.telegramId || "").trim();
+    const tgUser = auth.user || {};
+
+    const username = String(tgUser.username || "").trim() || null;
+    const firstName = String(tgUser.first_name || "").trim() || null;
+    const lastName = String(tgUser.last_name || "").trim() || null;
+    const photoUrl = String(tgUser.photo_url || "").trim() || null;
+
+    const normalizedRef = String(req.body?.ref || "").replace(/^ref_/, "").trim();
+  
     if (!telegramId) {
       return res.status(400).json({ ok: false, error: "telegramId is required" });
     }
@@ -4549,7 +4579,10 @@ app.get("/cart/summary", async (req, res) => {
 
 app.get("/referral/status", async (req, res) => {
   try {
-    const telegramId = String(req.query.telegramId || "").trim();
+    const auth = requireTrustedTelegramUser(req, res);
+    if (!auth) return;
+
+    const telegramId = String(auth.telegramId || "").trim();
     if (!telegramId) {
       return res.status(400).json({ ok: false, error: "telegramId is required" });
     }
@@ -4724,7 +4757,10 @@ app.post("/referral/claim", async (req, res) => {
 // ==== Public: get favorites by telegramId ====
 app.get("/favorites", async (req, res) => {
   try {
-    const telegramId = String(req.query.telegramId || "").trim();
+    const auth = requireTrustedTelegramUser(req, res);
+    if (!auth) return;
+
+    const telegramId = String(auth.telegramId || "").trim();
     if (!telegramId) {
       return res.status(400).json({ ok: false, error: "telegramId is required" });
     }
@@ -4746,7 +4782,10 @@ app.get("/favorites", async (req, res) => {
 // ===== Public: toggle favorite product =====
 app.post("/favorites/toggle", async (req, res) => {
   try {
-    const telegramId = String(req.body?.telegramId || "").trim();
+    const auth = requireTrustedTelegramUser(req, res);
+    if (!auth) return;
+
+    const telegramId = String(auth.telegramId || "").trim();
     const productKey = String(req.body?.productKey || "").trim();
 
     if (!telegramId) {
@@ -5264,7 +5303,10 @@ app.get("/products", async (req, res) => {
 // ===== Public: get cart by telegramId =====
 app.get("/cart", async (req, res) => {
   try {
-    const telegramId = String(req.query.telegramId || "").trim();
+    const auth = requireTrustedTelegramUser(req, res);
+    if (!auth) return;
+
+    const telegramId = String(auth.telegramId || "").trim();
     if (!telegramId) {
       return res.status(400).json({ ok: false, error: "telegramId is required" });
     }
@@ -5348,7 +5390,10 @@ app.get("/cart", async (req, res) => {
 
 app.delete("/cart/item", async (req, res) => {
   try {
-    const telegramId = String(req.body?.telegramId || "").trim();
+    const auth = requireTrustedTelegramUser(req, res);
+    if (!auth) return;
+
+    const telegramId = String(auth.telegramId || "").trim();
     const itemKey = String(req.body?.itemKey || "").trim();
 
     if (!telegramId) {
@@ -6193,7 +6238,10 @@ for (const d of deltas) {
 app.post("/orders/confirm", async (req, res) => {
   console.time("orders/confirm total");
   try {
-    const telegramId = String(req.body?.telegramId || "").trim();
+    const auth = requireTrustedTelegramUser(req, res);
+    if (!auth) return;
+
+    const telegramId = String(auth.telegramId || "").trim();
     if (!telegramId) return res.status(400).json({ ok: false, error: "telegramId is required" });
 
   console.time("orders/confirm load cart+user");
@@ -6985,7 +7033,10 @@ app.post("/orders/confirm", async (req, res) => {
 app.post("/orders/:id/cancel", async (req, res) => {
   try {
     const orderId = String(req.params.id || "").trim();
-    const telegramId = String(req.body?.telegramId || "").trim();
+    const auth = requireTrustedTelegramUser(req, res);
+    if (!auth) return;
+
+    const telegramId = String(auth.telegramId || "").trim();
 
     if (!orderId) {
       return res.status(400).json({ ok: false, error: "orderId is required" });
@@ -7061,7 +7112,10 @@ app.post("/orders/:id/cancel", async (req, res) => {
 // ===== Repeat order (create new order from existing snapshot) =====
 app.post("/orders/repeat", async (req, res) => {
   try {
-    const telegramId = String(req.body?.telegramId || "").trim();
+    const auth = requireTrustedTelegramUser(req, res);
+    if (!auth) return;
+
+    const telegramId = String(auth.telegramId || "").trim();
     const orderNo = req.body?.orderNo ? String(req.body.orderNo).trim() : null;
     const orderId = req.body?.orderId ? String(req.body.orderId).trim() : null;
 
@@ -7260,7 +7314,10 @@ app.post("/orders/repeat", async (req, res) => {
 
 app.get("/orders", async (req, res) => {
   try {
-    const telegramId = String(req.query.telegramId || "").trim();
+    const auth = requireTrustedTelegramUser(req, res);
+    if (!auth) return;
+
+    const telegramId = String(auth.telegramId || "").trim();
     if (!telegramId) return res.status(400).json({ ok: false, error: "telegramId is required" });
 
     const orders = await Order.find({ userTelegramId: telegramId }).sort({ createdAt: -1 }).lean();
@@ -7390,7 +7447,10 @@ app.post("/orders/:id/apply-cashback", async (req, res) => {
 
 app.post("/orders/:id/arrived-at-pickup", async (req, res) => {
   try {
-    const telegramId = String(req.body?.telegramId || "").trim();
+    const auth = requireTrustedTelegramUser(req, res);
+    if (!auth) return;
+
+    const telegramId = String(auth.telegramId || "").trim();
     const { id } = req.params;
 
     if (!telegramId) {
@@ -7424,7 +7484,10 @@ app.post("/orders/:id/arrived-at-pickup", async (req, res) => {
 
 app.post("/orders/:id/payment-check", async (req, res) => {
   try {
-    const telegramId = String(req.body?.telegramId || "").trim();
+    const auth = requireTrustedTelegramUser(req, res);
+    if (!auth) return;
+
+    const telegramId = String(auth.telegramId || "").trim();
     const { id } = req.params;
 
     if (!telegramId) {
