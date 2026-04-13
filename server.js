@@ -1794,10 +1794,10 @@ async function annulOrderBecauseNoPaymentConfirm(order, options = {}) {
 
     if (!freshOrder.stockCommittedAt && !freshOrder.stockReleasedAt) {
       try {
-        await releaseReservedStockForOrder(freshOrder);
+        await releaseOrderReservedStock(freshOrder);
         freshOrder.stockReleasedAt = new Date();
       } catch (releaseErr) {
-        console.error("annulOrderBecauseNoPaymentConfirm releaseReservedStockForOrder error:", releaseErr);
+        console.error("annulOrderBecauseNoPaymentConfirm releaseOrderReservedStock error:", releaseErr);
       }
     }
 
