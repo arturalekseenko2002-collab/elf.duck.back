@@ -6174,11 +6174,41 @@ app.post("/orders/confirm", async (req, res) => {
       }
     }
 
-    if (cart.checkoutDeliveryType === "delivery" && cart.checkoutDeliveryMethod === "courier") {
+    // 1) delivery mapping (из Cart -> Order)
+    const deliveryType = cart.checkoutDeliveryType === "pickup" ? "pickup" : "delivery";
+    const deliveryMethod =
+      deliveryType === "delivery"
+        ? (cart.checkoutDeliveryMethod === "inpost"
+            ? "inpost"
+            : (cart.checkoutDeliveryMethod === "courier" ? "courier" : null))
+        : null;
+
+    const isFreeCourierDelivery =
+      itemsTotalZl >= FREE_COURIER_DELIVERY_THRESHOLD_ZL;
+
+    const confirmedDeliveryPricing =
+      deliveryType === "delivery" && deliveryMethod === "courier"
+        ? (
+            String(cart?.courierDistrict || "").trim() &&
+            (Number(cart?.deliveryFeeZl || 0) > 0 || isFreeCourierDelivery)
+              ? {
+                  districtLabel: String(cart.courierDistrict || "").trim(),
+                  deliveryFeeZl: isFreeCourierDelivery
+                    ? 0
+                    : Number(cart.deliveryFeeZl || 0),
+                }
+              : await resolveWarsawDeliveryPricing(
+                  cart.courierAddress || "",
+                  itemsTotalZl
+                )
+          )
+        : { districtLabel: null, deliveryFeeZl: 0 };
+
+    if (deliveryType === "delivery" && deliveryMethod === "courier") {
       const savedCourierDistrict = String(cart?.courierDistrict || "").trim();
       const savedDeliveryFeeZl = Number(cart?.deliveryFeeZl || 0);
 
-      if (!savedCourierDistrict || savedDeliveryFeeZl <= 0) {
+      if (!savedCourierDistrict || (!isFreeCourierDelivery && savedDeliveryFeeZl <= 0)) {
         const deliveryPricing = await resolveWarsawDeliveryPricing(
           cart?.courierAddress || "",
           itemsTotalZl
@@ -6194,24 +6224,15 @@ app.post("/orders/confirm", async (req, res) => {
       }
     }
 
-    // 1) total
-    // const itemsTotalZl = cart.items.reduce((sum, it) => {
-    //   const qty = Math.max(1, Number(it.qty || 1));
-    //   const price = Number(it.unitPrice || 0);
-    //   return sum + qty * price;
-    // }, 0);
-
-    // const isFreeCourierDelivery = itemsTotalZl >= FREE_COURIER_DELIVERY_THRESHOLD_ZL;
-
     const courierDeliveryFeeZl =
-      cart.checkoutDeliveryType === "delivery" && cart.checkoutDeliveryMethod === "courier"
+      deliveryType === "delivery" && deliveryMethod === "courier"
         ? (isFreeCourierDelivery
             ? 0
             : Number(confirmedDeliveryPricing?.deliveryFeeZl || cart.deliveryFeeZl || 0))
         : 0;
 
     const inpostDeliveryFeeZl =
-      cart.checkoutDeliveryType === "delivery" && cart.checkoutDeliveryMethod === "inpost"
+      deliveryType === "delivery" && deliveryMethod === "inpost"
         ? Number(cart.inpostDeliveryFeeZl || 0)
         : 0;
 
@@ -6221,13 +6242,6 @@ app.post("/orders/confirm", async (req, res) => {
       deliveryType === "delivery" && deliveryMethod === "courier"
         ? Number(courierDeliveryFeeZl || 0)
         : 0;
-
-    // 2) delivery mapping (из Cart -> Order)
-    const deliveryType = cart.checkoutDeliveryType === "pickup" ? "pickup" : "delivery";
-    const deliveryMethod =
-      deliveryType === "delivery"
-        ? (cart.checkoutDeliveryMethod === "inpost" ? "inpost" : (cart.checkoutDeliveryMethod === "courier" ? "courier" : null))
-        : null;
 
     const pickupPointId = deliveryType === "pickup" ? (cart.checkoutPickupPointId || null) : null;
 
@@ -6659,26 +6673,26 @@ app.post("/orders/confirm", async (req, res) => {
 
     // 8) create order
 
-    const isFreeCourierDelivery =
-      itemsTotalZl >= FREE_COURIER_DELIVERY_THRESHOLD_ZL;
+    // const isFreeCourierDelivery =
+    //   itemsTotalZl >= FREE_COURIER_DELIVERY_THRESHOLD_ZL;
 
-    const confirmedDeliveryPricing =
-      deliveryType === "delivery" && deliveryMethod === "courier"
-        ? (
-            String(cart?.courierDistrict || "").trim() &&
-            (Number(cart?.deliveryFeeZl || 0) > 0 || isFreeCourierDelivery)
-              ? {
-                  districtLabel: String(cart.courierDistrict || "").trim(),
-                  deliveryFeeZl: isFreeCourierDelivery
-                    ? 0
-                    : Number(cart.deliveryFeeZl || 0),
-                }
-              : await resolveWarsawDeliveryPricing(
-                  cart.courierAddress || "",
-                  itemsTotalZl
-                )
-          )
-        : { districtLabel: null, deliveryFeeZl: 0 };
+    // const confirmedDeliveryPricing =
+    //   deliveryType === "delivery" && deliveryMethod === "courier"
+    //     ? (
+    //         String(cart?.courierDistrict || "").trim() &&
+    //         (Number(cart?.deliveryFeeZl || 0) > 0 || isFreeCourierDelivery)
+    //           ? {
+    //               districtLabel: String(cart.courierDistrict || "").trim(),
+    //               deliveryFeeZl: isFreeCourierDelivery
+    //                 ? 0
+    //                 : Number(cart.deliveryFeeZl || 0),
+    //             }
+    //           : await resolveWarsawDeliveryPricing(
+    //               cart.courierAddress || "",
+    //               itemsTotalZl
+    //             )
+    //       )
+    //     : { districtLabel: null, deliveryFeeZl: 0 };
 
     const confirmedInpostPricing =
       deliveryType === "delivery" && deliveryMethod === "inpost"
@@ -6793,12 +6807,7 @@ app.post("/orders/confirm", async (req, res) => {
           ? (confirmedDeliveryPricing.districtLabel || cart.courierDistrict || null)
           : null,
 
-      deliveryFeeZl:
-        deliveryType === "delivery" && deliveryMethod === "courier"
-          ? (isFreeCourierDelivery
-              ? 0
-              : Number(confirmedDeliveryPricing.deliveryFeeZl || cart.deliveryFeeZl || 0))
-          : 0,
+      deliveryFeeZl: orderDeliveryFeeZl,
 
       inpostDeliveryFeeZl:
         deliveryType === "delivery" && deliveryMethod === "inpost"
