@@ -7458,6 +7458,41 @@ app.patch("/admin/orders/:id/payment-status", requireAdmin, async (req, res) => 
     };
 
     await order.save();
+    if (
+      status === "paid" &&
+      String(order?.deliveryType || "") === "delivery" &&
+      String(order?.deliveryMethod || "") === "courier"
+    ) {
+      const deliveryPromptChatId = String(
+        order?.payment?.managerMessageChatId || ""
+      ).trim();
+
+      const deliveryPromptMessageIds = Array.isArray(order?.managerArrivalMessageIds)
+        ? order.managerArrivalMessageIds
+            .map((id) => String(id || "").trim())
+            .filter(Boolean)
+        : [];
+
+      if (bot && deliveryPromptChatId && deliveryPromptMessageIds.length) {
+        for (const msgId of deliveryPromptMessageIds) {
+          try {
+            await bot.telegram.deleteMessage(deliveryPromptChatId, Number(msgId));
+          } catch (e) {
+            console.error("delete courier delivery prompt on paid error:", {
+              orderNo: order?.orderNo,
+              chatId: deliveryPromptChatId,
+              msgId,
+              error: e?.message || e,
+            });
+          }
+        }
+      }
+
+      if (deliveryPromptMessageIds.length) {
+        order.managerArrivalMessageIds = [];
+        await order.save();
+      }
+    }
     return res.json({ ok: true, order });
   } catch (e) {
     console.error("PATCH /admin/orders/:id/payment-status error:", e);
