@@ -2411,6 +2411,14 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
       .toFixed(2)
   );
 
+  const deliveryFeesTotalZl = Number(
+    (courierDeliveryFeesTotalZl + inpostDeliveryFeesTotalZl).toFixed(2)
+  );
+
+  const kasaNetTotalZl = Number(
+    Math.max(0, kasaTotalZl - deliveryFeesTotalZl).toFixed(2)
+  );
+
   const smartDiscountTotalZl = Number(
     (Array.isArray(orders) ? orders : [])
       .reduce((sum, order) => sum + getOrderSmartDiscountTotalZl(order), 0)
@@ -2594,7 +2602,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
 
   lines.push(`——————————————————`);
   lines.push(``);
-  lines.push(`💰Касса: ${kasaTotalZl.toFixed(2)} PLN`);
+  lines.push(`💰Касса: ${kasaNetTotalZl.toFixed(2)} PLN`);
 
   const pointKeyNorm = String(point?.key || "").trim().toLowerCase().replace(/,+$/, "");
   const pointTitleNorm = normalizePhotoLookupText(point?.title || "");
@@ -2621,7 +2629,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
   }
 
   lines.push(`🪙Скидки: ${discountsTotalZl.toFixed(2)} PLN`);
-  lines.push(`- по ⚙️смарт-цене: ${smartDiscountTotalZl.toFixed(2)} PLN`);
+  // lines.push(`- по ⚙️смарт-цене: ${smartDiscountTotalZl.toFixed(2)} PLN`);
   lines.push(`- по 🎁реф. скидке: ${referralDiscountTotalZl.toFixed(2)} PLN`);
   lines.push(`- по 🪙кэшбеку: ${cashbackDiscountTotalZl.toFixed(2)} PLN`);
   lines.push(`👨‍💼Зарплата: ${salaryTotalZl.toFixed(2)} PLN`);
