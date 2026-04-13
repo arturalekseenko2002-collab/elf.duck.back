@@ -13,6 +13,89 @@ import Cart from "./models/Cart.js";
 import Order from "./models/Order.js";
 
 const APP_URL = String(process.env.APP_URL || process.env.WEBAPP_URL || "https://elf-duck.vercel.app").trim();
+const TELEGRAM_BOT_TOKEN = String(process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || "").trim();
+const TELEGRAM_INIT_DATA_TTL_SEC = Number(process.env.TELEGRAM_INIT_DATA_TTL_SEC || 3600);
+
+function buildTelegramInitDataCheckString(params) {
+  return [...params.entries()]
+    .filter(([key]) => key !== "hash")
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+}
+
+function verifyTelegramInitData(initDataRaw) {
+  const raw = String(initDataRaw || "").trim();
+  if (!raw || !TELEGRAM_BOT_TOKEN) return { ok: false, reason: "NO_INIT_DATA" };
+
+  const params = new URLSearchParams(raw);
+  const hash = String(params.get("hash") || "").trim().toLowerCase();
+  if (!hash) return { ok: false, reason: "NO_HASH" };
+
+  const authDate = Number(params.get("auth_date") || 0);
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (!authDate || Math.abs(nowSec - authDate) > TELEGRAM_INIT_DATA_TTL_SEC) {
+    return { ok: false, reason: "INIT_DATA_EXPIRED" };
+  }
+
+  const secretKey = crypto
+    .createHmac("sha256", "WebAppData")
+    .update(TELEGRAM_BOT_TOKEN)
+    .digest();
+
+  const dataCheckString = buildTelegramInitDataCheckString(params);
+  const computedHash = crypto
+    .createHmac("sha256", secretKey)
+    .update(dataCheckString)
+    .digest("hex")
+    .toLowerCase();
+
+  if (computedHash !== hash) {
+    return { ok: false, reason: "HASH_MISMATCH" };
+  }
+
+  let user = null;
+  try {
+    user = JSON.parse(String(params.get("user") || "null"));
+  } catch {
+    user = null;
+  }
+
+  const telegramId = String(user?.id || "").trim();
+  if (!telegramId) {
+    return { ok: false, reason: "NO_USER_ID" };
+  }
+
+  return {
+    ok: true,
+    telegramId,
+    user,
+    authDate,
+    queryId: String(params.get("query_id") || "").trim(),
+  };
+}
+
+function getTelegramAuthFromRequest(req) {
+  const candidates = [
+    req.headers["x-telegram-init-data"],
+    req.headers["x-telegram-webapp-init-data"],
+    req.body?.initData,
+    req.body?.telegramInitData,
+  ];
+
+  for (const candidate of candidates) {
+    const checked = verifyTelegramInitData(candidate);
+    if (checked.ok) return checked;
+  }
+
+  return { ok: false, reason: "UNAUTHORIZED_TELEGRAM_WEBAPP" };
+}
+
+function getTrustedTelegramIdFromRequest(req) {
+  const auth = getTelegramAuthFromRequest(req);
+  if (!auth.ok) return { ok: false, reason: auth.reason, telegramId: "" };
+  return { ok: true, reason: "OK", telegramId: String(auth.telegramId || "").trim(), user: auth.user || null };
+}
 
 let bot = null;
 
