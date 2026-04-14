@@ -2483,6 +2483,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
   //       return sum + (isInpostDelivery ? Number(order?.inpostDeliveryFeeZl || 0) : 0);
   //     }, 0)
   //     .toFixed(2)
+  //
   // );
 
   const discountsTotalZl = Number(
