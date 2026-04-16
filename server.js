@@ -100,7 +100,7 @@ function attachReferralToRewardGroup(ownerUser, referredTelegramId) {
     ownerUser.markModified("referral.rewardGroups");
   }
 
-  return true;
+  return true; // успешно прикрепили реферала к группе
 }
 
 function getReferralDisplayName(user) {
