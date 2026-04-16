@@ -79,4 +79,6 @@ const productSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+productSchema.index({ categoryKey: 1 });
+
 export default mongoose.models.Product || mongoose.model("Product", productSchema);

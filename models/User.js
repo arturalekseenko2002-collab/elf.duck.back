@@ -57,4 +57,6 @@ const userSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+userSchema.index({ "referral.usedCode": 1 });
+
 export default mongoose.model("User", userSchema);

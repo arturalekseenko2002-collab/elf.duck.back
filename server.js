@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import mongoose from "mongoose";
 import cors from "cors";
+import compression from "compression";
 import { Telegraf, Markup } from "telegraf";
 import crypto from "crypto";
 
@@ -27,6 +28,7 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
+app.use(compression());
 app.use(express.json());
 
 // MongoDB
@@ -517,6 +519,9 @@ function resolveInpostDeliveryPricing(items = [], products = []) {
   };
 }
 
+const _nominatimCache = new Map();
+const NOMINATIM_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
 async function resolveWarsawDeliveryPricing(address, itemsSubtotalZl = 0) {
   const rawAddress = String(address || "").trim();
     if (!rawAddress) {
@@ -527,6 +532,17 @@ async function resolveWarsawDeliveryPricing(address, itemsSubtotalZl = 0) {
         matched: false,
       };
     }
+
+  const cacheKey = rawAddress.toLowerCase();
+  const cached = _nominatimCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < NOMINATIM_CACHE_TTL) {
+    const subtotal = Number(itemsSubtotalZl || 0);
+    const isFree = subtotal >= FREE_COURIER_DELIVERY_THRESHOLD_ZL;
+    return {
+      ...cached.result,
+      deliveryFeeZl: cached.result.matched && isFree ? 0 : cached.result.deliveryFeeZl,
+    };
+  }
 
   const normalizeLooseText = (input) =>
     String(input || "")
@@ -691,6 +707,7 @@ async function resolveWarsawDeliveryPricing(address, itemsSubtotalZl = 0) {
       for (const candidate of districtCandidates) {
         const matched = matchDistrictFromText(candidate);
         if (matched.matched) {
+          _nominatimCache.set(cacheKey, { ts: Date.now(), result: matched });
           return matched;
         }
       }
@@ -699,12 +716,14 @@ async function resolveWarsawDeliveryPricing(address, itemsSubtotalZl = 0) {
     console.error("resolveWarsawDeliveryPricing geocode error:", e);
   }
 
-  return {
+  const fallback = {
     districtKey: "",
     districtLabel: null,
     deliveryFeeZl: 0,
     matched: false,
   };
+  _nominatimCache.set(cacheKey, { ts: Date.now(), result: fallback });
+  return fallback;
 }
 
 function getWarsawDateKey() {
