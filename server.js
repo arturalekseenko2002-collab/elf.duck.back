@@ -8044,12 +8044,20 @@ if (TG_BOT_TOKEN) {
             ? { text: "📦 ЗАКАЗ ОТПРАВЛЕН", callback_data: `mgr_order_shipped:${order._id}` }
             : { text: "🚚 ЗАКАЗ ДОСТАВЛЕН", callback_data: `mgr_order_delivered:${order._id}` };
 
+          const deliveryDetails = [];
+          if (!isInpost && order?.courierAddress) deliveryDetails.push(`📍 <b>Адрес:</b> ${escapeHtml(order.courierAddress)}`);
+          if (!isInpost && order?.deliveryTimeWindow) deliveryDetails.push(`🕒 <b>Время:</b> ${escapeHtml(order.deliveryTimeWindow)}`);
+          if (isInpost && order?.inpostData?.lockerAddress) deliveryDetails.push(`📦 <b>Пачкомат:</b> ${escapeHtml(order.inpostData.lockerAddress)}`);
+          if (isInpost && order?.inpostData?.fullName) deliveryDetails.push(`👤 <b>Получатель:</b> ${escapeHtml(order.inpostData.fullName)}`);
+          if (order.comment) deliveryDetails.push(`💬 <b>Комментарий:</b> ${escapeHtml(order.comment)}`);
+
           if (managerChatId && managerMessageId) {
             const sent = await bot.telegram.sendMessage(
               managerChatId,
               [
                 deliveryTitle,
                 ``,
+                ...(deliveryDetails.length ? [...deliveryDetails, ``] : []),
                 deliveryText,
               ].join("\n"),
               {
