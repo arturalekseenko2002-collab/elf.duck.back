@@ -100,7 +100,7 @@ function attachReferralToRewardGroup(ownerUser, referredTelegramId) {
     ownerUser.markModified("referral.rewardGroups");
   }
 
-  return true; // успешно прикрепили реферала к группе
+  return true;
 }
 
 function getReferralDisplayName(user) {
@@ -3140,6 +3140,11 @@ async function sendOrderCreatedNotification(order) {
       }
     }
 
+    if (order.comment) {
+      lines.push(`💬 <b>Комментарий:</b> ${escapeHtml(order.comment)}`);
+      lines.push("");
+    }
+
     if (order.payment?.method === "cash") {
       if (order.payment?.cashChangeType === "need_change" && order.payment?.cashAmount) {
         lines.push(`💵 <b>Сдача:</b> ${escapeHtml(order.payment.cashAmount)} zł`);
@@ -3601,6 +3606,11 @@ if (order.deliveryType === "delivery" && order.deliveryMethod === "courier") {
       if (Number(order?.inpostPackageUnits || 0) > 0) {
         lines.push(`📦 <b>Условные единицы:</b> ${Number(order.inpostPackageUnits || 0).toFixed(2)}`);
       }
+    }
+
+    if (order.comment) {
+      lines.push(`💬 <b>Комментарий:</b> ${escapeHtml(order.comment)}`);
+      lines.push("");
     }
 
     if (order.payment?.method === "cash") {
@@ -5508,6 +5518,11 @@ app.put("/cart", async (req, res) => {
       };
 
 
+    const comment =
+      b.comment === null || b.comment === undefined
+        ? null
+        : String(b.comment || "").trim().slice(0, 500) || null;
+
     const forceCheckoutSelection = !!b.forceCheckoutSelection;
 
     // минимальная нормализация
@@ -6099,7 +6114,8 @@ for (const d of deltas) {
           inpostData,
           arrivalTime,
           deliveryTimeWindow,
-          
+          comment,
+
           courierDistrict:
             finalCheckoutDeliveryType === "delivery" && finalCheckoutDeliveryMethod === "courier"
               ? courierDistrict
@@ -6851,6 +6867,7 @@ app.post("/orders/confirm", async (req, res) => {
 
       arrivalTime: cart.arrivalTime ?? null,
       deliveryTimeWindow: cart.deliveryTimeWindow ?? null,
+      comment: cart.comment ?? null,
       courierAddress: cart.courierAddress ?? null,
       inpostData: cart.inpostData ?? {},
 
@@ -6903,6 +6920,7 @@ app.post("/orders/confirm", async (req, res) => {
           checkoutPickupPointId: null,
           arrivalTime: null,
           deliveryTimeWindow: null,
+          comment: null,
           courierAddress: null,
           courierDistrict: null,
           deliveryFeeZl: 0,
