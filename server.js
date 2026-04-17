@@ -4499,8 +4499,7 @@ app.post("/admin/courier/customer-message", requireAdmin, async (req, res) => {
     const pickupPointId = String(req.body?.pickupPointId || "").trim();
     const usernameRaw = String(req.body?.username || "").trim();
     const textRaw = String(req.body?.text || "").trim();
-    const photoUrl = String(req.body?.photoUrl || "").trim();
-    const buttonTextRaw = String(req.body?.buttonText || "").trim();
+    const photoFileId = String(req.body?.photoFileId || "").trim();
     const managerTelegramId = String(req.body?.managerTelegramId || "").trim();
     const managerUsernameRaw = String(req.body?.managerUsername || "")
       .trim()
@@ -4523,9 +4522,11 @@ app.post("/admin/courier/customer-message", requireAdmin, async (req, res) => {
       return res.status(400).json({ ok: false, error: "TEXT_REQUIRED" });
     }
 
-    if (!managerUsernameRaw) {
-      return res.status(400).json({ ok: false, error: "MANAGER_USERNAME_REQUIRED" });
-    }
+    // if (!managerUsernameRaw) {
+    //   return res.status(400).json({ ok: false, error: "MANAGER_USERNAME_REQUIRED" });
+    // }
+
+    const managerUsername = "elfduck_dostawa"
 
     const pickupPoint = await PickupPoint.findById(
       pickupPointId,
@@ -4558,17 +4559,17 @@ app.post("/admin/courier/customer-message", requireAdmin, async (req, res) => {
       return res.status(404).json({ ok: false, error: "USER_NOT_FOUND" });
     }
 
-    const buttonText = buttonTextRaw || "Связаться с курьером";
-    const managerUrl = `https://t.me/${managerUsernameRaw}`;
+    const buttonText = "Связаться";
+    const managerUrl = "https://t.me/elfduck_dostawa";
     const safeText = escapeHtml(textRaw);
     const replyMarkup = {
       inline_keyboard: [[{ text: buttonText, url: managerUrl }]],
     };
 
-    if (photoUrl) {
+    if (photoFileId) {
       await bot.telegram.sendPhoto(
         String(user.telegramId),
-        { url: photoUrl },
+        photoFileId,
         {
           caption: safeText.slice(0, 1024),
           parse_mode: "HTML",
@@ -4591,7 +4592,7 @@ app.post("/admin/courier/customer-message", requireAdmin, async (req, res) => {
       ok: true,
       sentToTelegramId: String(user.telegramId),
       sentToUsername: String(user.username || username),
-      managerUsername: managerUsernameRaw,
+      managerUsername,
     });
   } catch (e) {
     console.error("POST /admin/courier/customer-message error:", e);
