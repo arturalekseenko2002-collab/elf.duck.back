@@ -877,7 +877,7 @@ function getWarsawNowMinutes() {
 }
 
 function timeToMinutes(hhmm) {
-  const [h, m] = String(hhmm || "0:0").split(":").map(Number);
+  const [h, m] = String(hhmm || "0:0").split(":").map(Number); //
   return h * 60 + m;
 }
 
