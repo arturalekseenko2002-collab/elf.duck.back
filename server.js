@@ -684,15 +684,20 @@ async function resolveWarsawDeliveryPricing(address, itemsSubtotalZl = 0) {
 
   const inputNumberTokens = normalizedRaw.match(/\b\d+[a-z]?\b/g) || [];
 
-  const looksLikeDistrictOnly =
-    inputTokens.length <= 2 && inputNumberTokens.length === 0;
+  // const looksLikeDistrictOnly =
+  //   inputTokens.length <= 2 && inputNumberTokens.length === 0;
 
-  if (looksLikeDistrictOnly) {
-    const directMatch = matchDistrictFromText(rawAddress);
-    if (directMatch.matched) {
-      return directMatch;
-    }
-  }
+  // if (looksLikeDistrictOnly) {
+  //   const directMatch = matchDistrictFromText(rawAddress);
+  //   if (directMatch.matched) {
+  //     return directMatch;
+  //   }
+  // }
+
+  const directMatch = matchDistrictFromText(rawAddress);
+if (directMatch.matched) {
+  return directMatch;
+}
 
   try {
     const query = encodeURIComponent(`${rawAddress}, Warszawa, Poland`);
