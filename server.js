@@ -453,32 +453,6 @@ const FREE_COURIER_DELIVERY_THRESHOLD_ZL = Number(
   process.env.FREE_COURIER_DELIVERY_THRESHOLD_ZL || 200
 );
 
-const WARSAW_CENTER_COORDS = {
-  lat: 52.2297,
-  lon: 21.0122,
-};
-
-const WARSAW_SUBURB_MAX_DISTANCE_KM = Number(
-  process.env.WARSAW_SUBURB_MAX_DISTANCE_KM || 20
-);
-
-const WARSAW_SUBURB_DELIVERY_PRICE_ZL = Number(
-  process.env.WARSAW_SUBURB_DELIVERY_PRICE_ZL || 25
-);
-
-function haversineDistanceKm(lat1, lon1, lat2, lon2) {
-  const toRad = (deg) => (Number(deg || 0) * Math.PI) / 180;
-  const R = 6371;
-  const dLat = toRad(Number(lat2 || 0) - Number(lat1 || 0));
-  const dLon = toRad(Number(lon2 || 0) - Number(lon1 || 0));
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-}
-
 const SYNCED_PICKUP_POINT_KEY_GROUPS = [
   new Set(["r-dmie-cie", "delivery-2"]),
 ];
@@ -783,10 +757,6 @@ async function resolveWarsawDeliveryPricing(address, itemsSubtotalZl = 0) {
         addr.borough,
         addr.quarter,
         addr.neighbourhood,
-        addr.town,
-        addr.village,
-        addr.municipality,
-        addr.county,
       ].filter(Boolean);
 
       for (const candidate of districtCandidates) {
@@ -795,48 +765,6 @@ async function resolveWarsawDeliveryPricing(address, itemsSubtotalZl = 0) {
           _nominatimCache.set(cacheKey, { ts: Date.now(), result: matched });
           return matched;
         }
-      }
-
-      const rowLat = Number(row?.lat);
-      const rowLon = Number(row?.lon);
-      if (!Number.isFinite(rowLat) || !Number.isFinite(rowLon)) {
-        continue;
-      }
-
-      const distanceKm = haversineDistanceKm(
-        WARSAW_CENTER_COORDS.lat,
-        WARSAW_CENTER_COORDS.lon,
-        rowLat,
-        rowLon,
-      );
-
-      if (distanceKm <= WARSAW_SUBURB_MAX_DISTANCE_KM) {
-        const subtotal = Number(itemsSubtotalZl || 0);
-        const isFreeDelivery = subtotal >= FREE_COURIER_DELIVERY_THRESHOLD_ZL;
-
-        const suburbLabel =
-          String(
-            addr.town ||
-            addr.village ||
-            addr.suburb ||
-            addr.city_district ||
-            addr.municipality ||
-            addr.county ||
-            row?.display_name ||
-            ""
-          ).trim() || "Strefa podwarszawska";
-
-        const matchedSuburb = {
-          districtKey: normalizeDistrictChunk(suburbLabel) || "warsaw-suburb",
-          districtLabel: suburbLabel,
-          deliveryFeeZl: isFreeDelivery ? 0 : WARSAW_SUBURB_DELIVERY_PRICE_ZL,
-          matched: true,
-          isSuburbZone: true,
-          distanceKm: Number(distanceKm.toFixed(2)),
-        };
-
-        _nominatimCache.set(cacheKey, { ts: Date.now(), result: matchedSuburb });
-        return matchedSuburb;
       }
     }
   } catch (e) {
@@ -877,7 +805,7 @@ function getWarsawNowMinutes() {
 }
 
 function timeToMinutes(hhmm) {
-  const [h, m] = String(hhmm || "0:0").split(":").map(Number); //
+  const [h, m] = String(hhmm || "0:0").split(":").map(Number);
   return h * 60 + m;
 }
 
