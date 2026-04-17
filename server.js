@@ -5835,10 +5835,10 @@ const inpostPricing =
       const ppObj = toObjId(pickupPointId);
       if (!ppObj) return;
 
+      if (!Number.isFinite(delta) || delta <= 0) return;
+
       const linkedPointIds = await getLinkedContextIds(ppObj);
       const pointIdsToCheck = linkedPointIds.length ? linkedPointIds : [ppObj];
-
-      if (!Number.isFinite(delta) || delta <= 0) return;
 
       const fkNorm = normFlavorKey(flavorKey);
       const fkCandidates = Array.from(
@@ -5924,11 +5924,10 @@ const inpostPricing =
         telegramId,
         productKey,
         flavorKey,
-        pickupPointId: String(ppObj),
+        pickupPointIds: pointIdsToApply.map((id) => String(id)),
         delta,
         fkCandidates,
       });
-
       const session = await mongoose.startSession();
       const MAX_RETRIES = 3;
 
@@ -5948,18 +5947,20 @@ const inpostPricing =
 
               if (!fl) return;
 
-              let row = (fl.stockByPickupPoint || []).find(
-                (s) => String(s?.pickupPointId) === String(ppObj)
+              const rowsByPointId = new Map(
+                (fl.stockByPickupPoint || []).map((row) => [String(row?.pickupPointId || ""), row])
               );
 
-              // 2) если строки склада нет — создаём (важно для delta > 0)
-              if (!row) {
+              // 2) если строки склада нет — создаём для всех синхронизированных точек
+              for (const pointId of pointIdsToApply) {
+                if (rowsByPointId.has(String(pointId))) continue;
+
                 await Product.updateOne(
                   { productKey, "flavors.flavorKey": { $in: fkCandidates } },
                   {
                     $push: {
                       "flavors.$[f].stockByPickupPoint": {
-                        pickupPointId: ppObj,
+                        pickupPointId: pointId,
                         totalQty: 0,
                         reservedQty: 0,
                       },
@@ -5970,24 +5971,28 @@ const inpostPricing =
                     arrayFilters: [{ "f.flavorKey": { $in: fkCandidates } }],
                   }
                 );
-
-                // перечитываем строку после push
-                const prod2 = await Product.findOne(
-                  { productKey, "flavors.flavorKey": { $in: fkCandidates } },
-                  { flavors: 1 }
-                ).session(session).lean();
-
-                const fl2 = (prod2?.flavors || []).find((f) =>
-                  fkCandidates.includes(String(f?.flavorKey || "").trim())
-                );
-
-                row = (fl2?.stockByPickupPoint || []).find(
-                  (s) => String(s?.pickupPointId) === String(ppObj)
-                );
               }
 
-              const total = Number(row?.totalQty || 0);
-              const reserved = Number(row?.reservedQty || 0);
+              const prod2 = await Product.findOne(
+                { productKey, "flavors.flavorKey": { $in: fkCandidates } },
+                { flavors: 1 }
+              ).session(session).lean();
+
+              const fl2 = (prod2?.flavors || []).find((f) =>
+                fkCandidates.includes(String(f?.flavorKey || "").trim())
+              );
+
+              const linkedRows = (fl2?.stockByPickupPoint || []).filter((row) =>
+                pointIdsToApply.some((pointId) => String(row?.pickupPointId) === String(pointId))
+              );
+
+              const total = linkedRows.length
+                ? Math.min(...linkedRows.map((row) => Number(row?.totalQty || 0)))
+                : 0;
+
+              const reserved = linkedRows.length
+                ? Math.max(...linkedRows.map((row) => Number(row?.reservedQty || 0)))
+                : 0;
 
               // 3) ГАРД: не даём зарезервировать больше доступного
               if (delta > 0) {
@@ -5997,7 +6002,7 @@ const inpostPricing =
                   err.meta = {
                     productKey,
                     flavorKey: fkCandidates[0],
-                    pickupPointId: String(ppObj),
+                    pickupPointIds: pointIdsToApply.map((pointId) => String(pointId)),
                     total,
                     reserved,
                     delta,
@@ -6006,12 +6011,13 @@ const inpostPricing =
                 }
               }
 
-              // 4) инкремент резерва
+            // 4) инкремент резерва на всех синхронизированных точках
+            for (const pointId of pointIdsToApply) {
               await Product.updateOne(
                 {
                   productKey,
                   "flavors.flavorKey": { $in: fkCandidates },
-                  "flavors.stockByPickupPoint.pickupPointId": ppObj,
+                  "flavors.stockByPickupPoint.pickupPointId": pointId,
                 },
                 {
                   $inc: {
@@ -6022,12 +6028,14 @@ const inpostPricing =
                   session,
                   arrayFilters: [
                     { "f.flavorKey": { $in: fkCandidates } },
-                    { "s.pickupPointId": ppObj },
+                    { "s.pickupPointId": pointId },
                   ],
                 }
               );
+            }
 
-              // 5) защита от отрицательного резерва (на всякий случай)
+            // 5) защита от отрицательного резерва / синхронизация reserve <= total
+            for (const pointId of pointIdsToApply) {
               await Product.updateOne(
                 { productKey },
                 [
@@ -6050,12 +6058,29 @@ const inpostPricing =
                                         as: "s",
                                         in: {
                                           $cond: [
-                                            { $eq: ["$$s.pickupPointId", ppObj] },
+                                            { $eq: ["$$s.pickupPointId", pointId] },
                                             {
-                                              $mergeObjects: [
-                                                "$$s",
-                                                { reservedQty: { $max: [0, "$$s.reservedQty"] } },
-                                              ],
+                                              $let: {
+                                                vars: {
+                                                  safeTotal: {
+                                                    $max: [0, { $ifNull: ["$$s.totalQty", 0] }],
+                                                  },
+                                                  safeReservedRaw: {
+                                                    $max: [0, { $ifNull: ["$$s.reservedQty", 0] }],
+                                                  },
+                                                },
+                                                in: {
+                                                  $mergeObjects: [
+                                                    "$$s",
+                                                    {
+                                                      totalQty: "$$safeTotal",
+                                                      reservedQty: {
+                                                        $min: ["$$safeReservedRaw", "$$safeTotal"],
+                                                      },
+                                                    },
+                                                  ],
+                                                },
+                                              },
                                             },
                                             "$$s",
                                           ],
@@ -6075,7 +6100,8 @@ const inpostPricing =
                 ],
                 { session }
               );
-            });
+            }
+          });
 
             // успех — выходим из retry loop
             return;
