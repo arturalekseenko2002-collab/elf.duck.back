@@ -2560,8 +2560,12 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
   //
   // );
 
+  // const discountsTotalZl = Number(
+  //   (smartDiscountTotalZl + referralDiscountTotalZl + cashbackDiscountTotalZl).toFixed(2)
+  // );
+
   const discountsTotalZl = Number(
-    (smartDiscountTotalZl + referralDiscountTotalZl + cashbackDiscountTotalZl).toFixed(2)
+    (referralDiscountTotalZl + cashbackDiscountTotalZl).toFixed(2)
   );
   
   const salaryTotalZl = Number((((kasaTotalZl / 100) * 16)).toFixed(2));
