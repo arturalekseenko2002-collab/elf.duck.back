@@ -453,6 +453,61 @@ const FREE_COURIER_DELIVERY_THRESHOLD_ZL = Number(
   process.env.FREE_COURIER_DELIVERY_THRESHOLD_ZL || 200
 );
 
+const SYNCED_PICKUP_POINT_KEY_GROUPS = [
+  new Set(["r-dmie-cie", "delivery-2"]),
+];
+
+function normalizePickupPointKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/,+$/, "");
+}
+
+function getSyncedPickupPointKeysByKey(pointKey) {
+  const safeKey = normalizePickupPointKey(pointKey);
+  if (!safeKey) return [safeKey].filter(Boolean);
+
+  for (const group of SYNCED_PICKUP_POINT_KEY_GROUPS) {
+    if (group.has(safeKey)) {
+      return Array.from(group.values());
+    }
+  }
+
+  return [safeKey];
+}
+
+async function getSyncedPickupPointIdsByAnyPoint(input) {
+  const raw = String(input || "").trim();
+  if (!raw) return [];
+
+  const byId = mongoose.isValidObjectId(raw)
+    ? await PickupPoint.findById(raw, { _id: 1, key: 1 }).lean()
+    : null;
+
+  const point =
+    byId ||
+    (await PickupPoint.findOne(
+      { key: { $in: [raw, `${raw},`, normalizePickupPointKey(raw)] } },
+      { _id: 1, key: 1 }
+    ).lean());
+
+  if (!point?._id) return [];
+
+  const syncedKeys = getSyncedPickupPointKeysByKey(point.key || raw);
+
+  const syncedPoints = await PickupPoint.find(
+    { key: { $in: syncedKeys.flatMap((key) => [key, `${key},`]) } },
+    { _id: 1, key: 1 }
+  ).lean();
+
+  const ids = syncedPoints
+    .map((row) => String(row?._id || "").trim())
+    .filter(Boolean);
+
+  return ids.length ? Array.from(new Set(ids)) : [String(point._id)];
+}
+
 function normalizeDistrictChunk(input) {
   return String(input || "")
     .trim()
@@ -4004,36 +4059,34 @@ async function startPaymentReminder(order) {
   }
 }
 
-async function resolveOrderReservePickupPointId(order) {
-  if (!order) return null;
+async function resolveOrderReservePickupPointIds(order) {
+  if (!order) return [];
 
   if (order.deliveryType === "pickup" && order.pickupPointId) {
-    return order.pickupPointId;
+    return await getSyncedPickupPointIdsByAnyPoint(order.pickupPointId);
   }
 
   if (order.deliveryType === "delivery") {
     const deliveryKey = order.deliveryMethod === "inpost" ? "delivery-2" : "delivery";
-    const point = await PickupPoint.findOne(
-      { key: { $in: [deliveryKey, `${deliveryKey},`] } },
-      { _id: 1 }
-    ).lean();
-
-    return point?._id || null;
+    return await getSyncedPickupPointIdsByAnyPoint(deliveryKey);
   }
 
-  return null;
+  return [];
 }
 
 async function releaseOrderReservedStock(order) {
   if (!order || order.stockReleasedAt) return false;
 
-  const pickupPointId = await resolveOrderReservePickupPointId(order);
-  if (!pickupPointId) return false;
+  const pickupPointIds = await resolveOrderReservePickupPointIds(order);
+  if (!pickupPointIds.length) return false;
 
-  const pointObjId =
-    pickupPointId instanceof mongoose.Types.ObjectId
-      ? pickupPointId
-      : new mongoose.Types.ObjectId(String(pickupPointId));
+  const pointObjIds = pickupPointIds
+    .map((pickupPointId) =>
+      pickupPointId instanceof mongoose.Types.ObjectId
+        ? pickupPointId
+        : new mongoose.Types.ObjectId(String(pickupPointId))
+    )
+    .filter(Boolean);
 
   const normFlavorKey = (v) => String(v || "").trim().replace(/,+$/, "");
 
@@ -4049,6 +4102,8 @@ async function releaseOrderReservedStock(order) {
       const fkCandidates = Array.from(
         new Set([String(fl.flavorKey || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean))
       );
+
+      for (const pointObjId of pointObjIds) {
 
       // 1) уменьшаем reservedQty
       await Product.updateOne(
@@ -4122,6 +4177,7 @@ async function releaseOrderReservedStock(order) {
         ]
       );
     }
+    }
   }
 
   return true;
@@ -4130,13 +4186,16 @@ async function releaseOrderReservedStock(order) {
 async function commitOrderStock(order) {
   if (!order || order.stockCommittedAt) return false;
 
-  const pickupPointId = await resolveOrderReservePickupPointId(order);
-  if (!pickupPointId) return false;
+  const pickupPointIds = await resolveOrderReservePickupPointIds(order);
+  if (!pickupPointIds.length) return false;
 
-  const pointObjId =
-    pickupPointId instanceof mongoose.Types.ObjectId
-      ? pickupPointId
-      : new mongoose.Types.ObjectId(String(pickupPointId));
+  const pointObjIds = pickupPointIds
+    .map((pickupPointId) =>
+      pickupPointId instanceof mongoose.Types.ObjectId
+        ? pickupPointId
+        : new mongoose.Types.ObjectId(String(pickupPointId))
+    )
+    .filter(Boolean);
 
   const normFlavorKey = (v) => String(v || "").trim().replace(/,+$/, "");
 
@@ -4152,6 +4211,7 @@ async function commitOrderStock(order) {
       const fkCandidates = Array.from(
         new Set([String(fl.flavorKey || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean))
       );
+    for (const pointObjId of pointObjIds) {
 
       // 1) totalQty -= qty, reservedQty -= qty
       await Product.updateOne(
@@ -4239,6 +4299,7 @@ async function commitOrderStock(order) {
           },
         ]
       );
+    }
     }
   }
 
@@ -5688,6 +5749,12 @@ const inpostPricing =
       return null;
     };
 
+    const getLinkedContextIds = async (contextId) => {
+      if (!contextId) return [];
+      const ids = await getSyncedPickupPointIdsByAnyPoint(contextId);
+      return ids.map((id) => toObjId(id)).filter(Boolean);
+    };
+
     const prevContextId = stockContextIdFor({
       type: prevType,
       method: prevMethod,
@@ -5755,70 +5822,80 @@ const inpostPricing =
     const normFlavorKey = (v) => String(v || "").trim().replace(/,+$/, "");
 
     const checkReserveAvailable = async ({ productKey, flavorKey, pickupPointId, delta }) => {
-    const normId = (v) => String(v || "").trim().replace(/,+$/, "");
-    const toObjId = (v) => {
-      if (v instanceof mongoose.Types.ObjectId) return v;
-      if (v && typeof v === "object" && mongoose.isValidObjectId(String(v))) {
-        return new mongoose.Types.ObjectId(String(v));
+        const normId = (v) => String(v || "").trim().replace(/,+$/, "");
+        const toObjId = (v) => {
+          if (v instanceof mongoose.Types.ObjectId) return v;
+          if (v && typeof v === "object" && mongoose.isValidObjectId(String(v))) {
+            return new mongoose.Types.ObjectId(String(v));
+          }
+          const s = normId(v);
+          return mongoose.isValidObjectId(s) ? new mongoose.Types.ObjectId(s) : null;
+        };
+
+      const ppObj = toObjId(pickupPointId);
+      if (!ppObj) return;
+
+      const linkedPointIds = await getLinkedContextIds(ppObj);
+      const pointIdsToCheck = linkedPointIds.length ? linkedPointIds : [ppObj];
+
+      if (!Number.isFinite(delta) || delta <= 0) return;
+
+      const fkNorm = normFlavorKey(flavorKey);
+      const fkCandidates = Array.from(
+        new Set([String(flavorKey || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean))
+      );
+
+      const prod = await Product.findOne(
+        { productKey, "flavors.flavorKey": { $in: fkCandidates } },
+        { flavors: 1 }
+      ).lean();
+
+      const fl = (prod?.flavors || []).find((f) =>
+        fkCandidates.includes(String(f?.flavorKey || "").trim())
+      );
+
+      if (!fl) {
+        const err = new Error("RESERVE_CONFLICT");
+        err.meta = {
+          productKey,
+          flavorKey: fkCandidates[0],
+          pickupPointId: String(ppObj),
+          total: 0,
+          reserved: 0,
+          delta,
+          reason: "FLAVOR_NOT_FOUND",
+        };
+        throw err;
       }
-      const s = normId(v);
-      return mongoose.isValidObjectId(s) ? new mongoose.Types.ObjectId(s) : null;
+
+      const stockRows = (fl.stockByPickupPoint || []).filter((s) =>
+        pointIdsToCheck.some((pointId) => String(s?.pickupPointId) === String(pointId))
+      );
+
+      const total = stockRows.length
+        ? Math.min(...stockRows.map((row) => Number(row?.totalQty || 0)))
+        : 0;
+
+      const reserved = stockRows.length
+        ? Math.max(...stockRows.map((row) => Number(row?.reservedQty || 0)))
+        : 0;
+
+      const available = Math.max(0, total - reserved);
+
+      if (available < delta) {
+        const err = new Error("RESERVE_CONFLICT");
+        err.meta = {
+          productKey,
+          flavorKey: fkCandidates[0],
+          pickupPointId: String(ppObj),
+          total,
+          reserved,
+          delta,
+          reason: "NOT_ENOUGH_AVAILABLE",
+        };
+        throw err;
+      }
     };
-
-  const ppObj = toObjId(pickupPointId);
-  if (!ppObj) return;
-  if (!Number.isFinite(delta) || delta <= 0) return;
-
-  const fkNorm = normFlavorKey(flavorKey);
-  const fkCandidates = Array.from(
-    new Set([String(flavorKey || "").trim(), fkNorm, `${fkNorm},`].filter(Boolean))
-  );
-
-  const prod = await Product.findOne(
-    { productKey, "flavors.flavorKey": { $in: fkCandidates } },
-    { flavors: 1 }
-  ).lean();
-
-  const fl = (prod?.flavors || []).find((f) =>
-    fkCandidates.includes(String(f?.flavorKey || "").trim())
-  );
-
-  if (!fl) {
-    const err = new Error("RESERVE_CONFLICT");
-    err.meta = {
-      productKey,
-      flavorKey: fkCandidates[0],
-      pickupPointId: String(ppObj),
-      total: 0,
-      reserved: 0,
-      delta,
-      reason: "FLAVOR_NOT_FOUND",
-    };
-    throw err;
-  }
-
-  const row = (fl.stockByPickupPoint || []).find(
-    (s) => String(s?.pickupPointId) === String(ppObj)
-  );
-
-  const total = Number(row?.totalQty || 0);
-  const reserved = Number(row?.reservedQty || 0);
-  const available = Math.max(0, total - reserved);
-
-  if (available < delta) {
-    const err = new Error("RESERVE_CONFLICT");
-    err.meta = {
-      productKey,
-      flavorKey: fkCandidates[0],
-      pickupPointId: String(ppObj),
-      total,
-      reserved,
-      delta,
-      reason: "NOT_ENOUGH_AVAILABLE",
-    };
-    throw err;
-  }
-};
 
     const applyReservedDelta = async ({ productKey, flavorKey, pickupPointId, delta }) => {
       const normId = (v) => String(v || "").trim().replace(/,+$/, "");
@@ -5834,6 +5911,9 @@ const inpostPricing =
       const ppObj = toObjId(pickupPointId);
       if (!ppObj) return;
       if (!Number.isFinite(delta) || delta === 0) return;
+
+      const linkedPointIds = await getLinkedContextIds(ppObj);
+      const pointIdsToApply = linkedPointIds.length ? linkedPointIds : [ppObj];
 
       const fkNorm = normFlavorKey(flavorKey);
       const fkCandidates = Array.from(
@@ -6612,11 +6692,21 @@ app.post("/orders/confirm", async (req, res) => {
         continue;
       }
 
-      const row = (flavor.stockByPickupPoint || []).find((s) => String(s.pickupPointId) === String(contextId));
-      const total = Number(row?.totalQty || 0);
-      const reserved = Number(row?.reservedQty || 0);
+      const syncedContextIds = await getSyncedPickupPointIdsByAnyPoint(contextId);
+      const pointIdsToCheck = syncedContextIds.length ? syncedContextIds : [String(contextId)];
 
-      // self-check: add back myQty so we don't block ourselves
+      const stockRows = (flavor.stockByPickupPoint || []).filter((s) =>
+        pointIdsToCheck.includes(String(s?.pickupPointId || ""))
+      );
+
+      const total = stockRows.length
+        ? Math.min(...stockRows.map((row) => Number(row?.totalQty || 0)))
+        : 0;
+
+      const reserved = stockRows.length
+        ? Math.max(...stockRows.map((row) => Number(row?.reservedQty || 0)))
+        : 0;
+
       const effectiveHave = Math.max(0, total - reserved + myQty);
 
       if (effectiveHave < myQty) {
@@ -6627,7 +6717,7 @@ app.post("/orders/confirm", async (req, res) => {
           have: effectiveHave,
           total,
           reserved,
-          contextId: String(contextId),
+          syncedContextIds: pointIdsToCheck,
           reason: "not_enough_stock",
         });
       }
@@ -7750,23 +7840,36 @@ app.patch("/admin/products/:id/flavors/:flavorId/stock", requireAdmin, async (re
 
     const pid = String(pickupPointId);
 
-    const existing = (flavor.stockByPickupPoint || []).find(
-      (s) => String(s.pickupPointId) === pid
+    const syncedPointIds = await getSyncedPickupPointIdsByAnyPoint(pickupPointId);
+    const pointIdsToSync = syncedPointIds.length ? syncedPointIds : [String(pickupPointId)];
+
+    const existingRows = (flavor.stockByPickupPoint || []).filter((s) =>
+      pointIdsToSync.includes(String(s.pickupPointId))
     );
 
-    if (existing) {
-      existing.totalQty = nextQty;
-      // reservedQty пока не трогаем (вы сказали резерв позже)
-      existing.updatedAt = new Date();
-      existing.updatedByTelegramId = String(updatedByTelegramId || "");
-    } else {
-      flavor.stockByPickupPoint.push({
-        pickupPointId, // важно: сюда приходит ObjectId строки, mongoose приведёт
-        totalQty: nextQty,
-        reservedQty: 0,
-        updatedAt: new Date(),
-        updatedByTelegramId: String(updatedByTelegramId || ""),
-      });
+    const syncedReservedQty = existingRows.length
+      ? Math.max(...existingRows.map((row) => Math.max(0, Number(row?.reservedQty || 0))))
+      : 0;
+
+    for (const syncPickupPointId of pointIdsToSync) {
+      const existing = (flavor.stockByPickupPoint || []).find(
+        (s) => String(s.pickupPointId) === String(syncPickupPointId)
+      );
+
+      if (existing) {
+        existing.totalQty = nextQty;
+        existing.reservedQty = Math.min(syncedReservedQty, nextQty);
+        existing.updatedAt = new Date();
+        existing.updatedByTelegramId = String(updatedByTelegramId || "");
+      } else {
+        flavor.stockByPickupPoint.push({
+          pickupPointId: syncPickupPointId,
+          totalQty: nextQty,
+          reservedQty: Math.min(syncedReservedQty, nextQty),
+          updatedAt: new Date(),
+          updatedByTelegramId: String(updatedByTelegramId || ""),
+        });
+      }
     }
 
     await product.save();
