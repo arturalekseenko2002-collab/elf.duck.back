@@ -4499,7 +4499,7 @@ app.post("/admin/courier/customer-message", requireAdmin, async (req, res) => {
     const pickupPointId = String(req.body?.pickupPointId || "").trim();
     const usernameRaw = String(req.body?.username || "").trim();
     const textRaw = String(req.body?.text || "").trim();
-    const photoFileId = String(req.body?.photoFileId || "").trim();
+    const photoUrl = String(req.body?.photoUrl || "").trim();
     const managerTelegramId = String(req.body?.managerTelegramId || "").trim();
     const managerUsernameRaw = String(req.body?.managerUsername || "")
       .trim()
@@ -4566,10 +4566,10 @@ app.post("/admin/courier/customer-message", requireAdmin, async (req, res) => {
       inline_keyboard: [[{ text: buttonText, url: managerUrl }]],
     };
 
-    if (photoFileId) {
+    if (photoUrl) {
       await bot.telegram.sendPhoto(
         String(user.telegramId),
-        photoFileId,
+        { url: photoUrl },
         {
           caption: safeText.slice(0, 1024),
           parse_mode: "HTML",
