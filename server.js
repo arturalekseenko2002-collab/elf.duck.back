@@ -480,6 +480,10 @@ const FREE_COURIER_DELIVERY_THRESHOLD_ZL = Number(
   process.env.FREE_COURIER_DELIVERY_THRESHOLD_ZL || 200
 );
 
+const COURIER_MIN_ORDER_TOTAL_ZL = Number(
+  process.env.COURIER_MIN_ORDER_TOTAL_ZL || 80
+);
+
 const SYNCED_PICKUP_POINT_KEY_GROUPS = [
   new Set(["r-dmie-cie", "delivery-2"]),
 ];
@@ -6507,6 +6511,20 @@ app.post("/orders/confirm", async (req, res) => {
             ? "inpost"
             : (cart.checkoutDeliveryMethod === "courier" ? "courier" : null))
         : null;
+
+    if (
+      deliveryType === "delivery" &&
+      deliveryMethod === "courier" &&
+      Number(itemsTotalZl || 0) < COURIER_MIN_ORDER_TOTAL_ZL
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error: "COURIER_MIN_ORDER_NOT_REACHED",
+        field: "courierMinOrder",
+        message: `Courier delivery requires a minimum order of ${COURIER_MIN_ORDER_TOTAL_ZL} PLN`,
+        minOrderZl: COURIER_MIN_ORDER_TOTAL_ZL,
+      });
+    }
 
     const isFreeCourierDelivery =
       itemsTotalZl >= FREE_COURIER_DELIVERY_THRESHOLD_ZL;
