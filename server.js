@@ -4485,6 +4485,120 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+const SERVER_SUPER_ADMIN_IDS = (process.env.SUPER_ADMIN_IDS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+function isServerSuperAdminTelegramId(telegramId) {
+  return SERVER_SUPER_ADMIN_IDS.includes(String(telegramId || "").trim());
+}
+
+app.post("/admin/courier/customer-message", requireAdmin, async (req, res) => {
+  try {
+    const pickupPointId = String(req.body?.pickupPointId || "").trim();
+    const usernameRaw = String(req.body?.username || "").trim();
+    const textRaw = String(req.body?.text || "").trim();
+    const photoUrl = String(req.body?.photoUrl || "").trim();
+    const buttonTextRaw = String(req.body?.buttonText || "").trim();
+    const managerTelegramId = String(req.body?.managerTelegramId || "").trim();
+    const managerUsernameRaw = String(req.body?.managerUsername || "")
+      .trim()
+      .replace(/^@+/, "");
+
+    if (!bot) {
+      return res.status(500).json({ ok: false, error: "BOT_NOT_AVAILABLE" });
+    }
+
+    if (!pickupPointId) {
+      return res.status(400).json({ ok: false, error: "PICKUP_POINT_ID_REQUIRED" });
+    }
+
+    const username = usernameRaw.replace(/^@+/, "").trim();
+    if (!username) {
+      return res.status(400).json({ ok: false, error: "USERNAME_REQUIRED" });
+    }
+
+    if (!textRaw) {
+      return res.status(400).json({ ok: false, error: "TEXT_REQUIRED" });
+    }
+
+    if (!managerUsernameRaw) {
+      return res.status(400).json({ ok: false, error: "MANAGER_USERNAME_REQUIRED" });
+    }
+
+    const pickupPoint = await PickupPoint.findById(
+      pickupPointId,
+      { _id: 1, key: 1, title: 1, allowedAdminTelegramIds: 1 }
+    ).lean();
+
+    if (!pickupPoint) {
+      return res.status(404).json({ ok: false, error: "PICKUP_POINT_NOT_FOUND" });
+    }
+
+    const pointKey = normalizePickupPointKey(pickupPoint?.key || "");
+    if (pointKey !== "delivery") {
+      return res.status(403).json({ ok: false, error: "ONLY_COURIER_POINT_ALLOWED" });
+    }
+
+    const isAllowedCourierManager = Array.isArray(pickupPoint?.allowedAdminTelegramIds)
+      ? pickupPoint.allowedAdminTelegramIds.map((x) => String(x)).includes(managerTelegramId)
+      : false;
+
+    if (!isAllowedCourierManager && !isServerSuperAdminTelegramId(managerTelegramId)) {
+      return res.status(403).json({ ok: false, error: "FORBIDDEN_FOR_THIS_MANAGER" });
+    }
+
+    const user = await User.findOne(
+      { username },
+      { telegramId: 1, username: 1, firstName: 1 }
+    ).lean();
+
+    if (!user?.telegramId) {
+      return res.status(404).json({ ok: false, error: "USER_NOT_FOUND" });
+    }
+
+    const buttonText = buttonTextRaw || "Связаться с курьером";
+    const managerUrl = `https://t.me/${managerUsernameRaw}`;
+    const safeText = escapeHtml(textRaw);
+    const replyMarkup = {
+      inline_keyboard: [[{ text: buttonText, url: managerUrl }]],
+    };
+
+    if (photoUrl) {
+      await bot.telegram.sendPhoto(
+        String(user.telegramId),
+        { url: photoUrl },
+        {
+          caption: safeText.slice(0, 1024),
+          parse_mode: "HTML",
+          reply_markup: replyMarkup,
+        }
+      );
+    } else {
+      await bot.telegram.sendMessage(
+        String(user.telegramId),
+        safeText,
+        {
+          parse_mode: "HTML",
+          disable_web_page_preview: true,
+          reply_markup: replyMarkup,
+        }
+      );
+    }
+
+    return res.json({
+      ok: true,
+      sentToTelegramId: String(user.telegramId),
+      sentToUsername: String(user.username || username),
+      managerUsername: managerUsernameRaw,
+    });
+  } catch (e) {
+    console.error("POST /admin/courier/customer-message error:", e);
+    return res.status(500).json({ ok: false, error: e.message || "SERVER_ERROR" });
+  }
+});
+
 // ==== API ====
 
 app.get("/ping", (_, res) => res.json({ ok: true }));
