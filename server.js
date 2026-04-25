@@ -7665,43 +7665,42 @@ app.post("/orders/:id/apply-cashback", async (req, res) => {
     const orderTotalZl = Number(order.totalZl || 0);
     const cashbackBalance = Number(user.cashbackBalance || 0);
     const alreadyAppliedZl = Number(order?.payment?.cashbackAppliedZl || 0);
-    const alreadyAppliedForReplaceZl = safeMode === "custom" ? 0 : alreadyAppliedZl;
-    const remainingOrderToPayZl = Number(Math.max(0, orderTotalZl - alreadyAppliedForReplaceZl).toFixed(2));
+    const maxAvailableCashbackZl = Number((cashbackBalance + alreadyAppliedZl).toFixed(2));
 
-    if (cashbackBalance <= 0) {
+    if (maxAvailableCashbackZl <= 0) {
       return res.status(400).json({ ok: false, error: "NO_CASHBACK_BALANCE" });
     }
 
-    const requestedAmountZl =
-      safeMode === "custom"
-        ? requestedCashbackAmountZl
-        : safeMode === "full"
-        ? remainingOrderToPayZl
-        : Math.min(cashbackBalance, remainingOrderToPayZl);
+    const targetAppliedCashbackZl = (() => {
+      if (safeMode === "custom") {
+        return Number(Math.min(requestedCashbackAmountZl, maxAvailableCashbackZl, orderTotalZl).toFixed(2));
+      }
 
-    if (!Number.isFinite(requestedAmountZl) || requestedAmountZl <= 0) {
+      if (safeMode === "full") {
+        return Number(orderTotalZl.toFixed(2));
+      }
+
+      return Number(Math.min(alreadyAppliedZl + cashbackBalance, orderTotalZl).toFixed(2));
+    })();
+
+    if (!Number.isFinite(targetAppliedCashbackZl) || targetAppliedCashbackZl < 0) {
       return res.status(400).json({ ok: false, error: "INVALID_CASHBACK_AMOUNT" });
     }
 
-    if (safeMode === "full" && cashbackBalance < remainingOrderToPayZl) {
+    if (safeMode === "custom" && requestedCashbackAmountZl > maxAvailableCashbackZl) {
+      return res.status(400).json({ ok: false, error: "INSUFFICIENT_CASHBACK_BALANCE" });
+    }
+
+    if (safeMode === "full" && maxAvailableCashbackZl < orderTotalZl) {
       return res.status(400).json({ ok: false, error: "INSUFFICIENT_CASHBACK_FOR_FULL_PAYMENT" });
     }
 
-    const cashbackAppliedNowZl = Number(
-      Math.min(requestedAmountZl, cashbackBalance, remainingOrderToPayZl).toFixed(2)
-    );
-
-    if (cashbackAppliedNowZl <= 0) {
-      return res.status(400).json({ ok: false, error: "NO_CASHBACK_TO_APPLY" });
-    }
-
-    const cashbackAppliedZl = Number((alreadyAppliedForReplaceZl + cashbackAppliedNowZl).toFixed(2));
+    const cashbackDeltaZl = Number((targetAppliedCashbackZl - alreadyAppliedZl).toFixed(2));
+    const cashbackAppliedZl = targetAppliedCashbackZl;
     const remainingToPayZl = Number(Math.max(0, orderTotalZl - cashbackAppliedZl).toFixed(2));
     const cashbackFullyPaid = remainingToPayZl <= 0;
 
-    user.cashbackBalance = Number((cashbackBalance - cashbackAppliedNowZl).toFixed(2));
-
-    let cashbackLeftToDeduct = Number(cashbackAppliedNowZl || 0);
+    let cashbackLeftToDeduct = Math.max(0, Number(cashbackDeltaZl || 0));
 
     const activeRows = [...user.cashbackLedger]
       .filter((row) => !row?.expiredAt && Number(row?.remainingZl || 0) > 0)
@@ -7717,6 +7716,18 @@ app.post("/orders/:id/apply-cashback", async (req, res) => {
 
       row.remainingZl = Number((available - used).toFixed(2));
       cashbackLeftToDeduct = Number((cashbackLeftToDeduct - used).toFixed(2));
+    }
+
+    if (cashbackDeltaZl < 0) {
+      user.cashbackLedger.push({
+        type: "refund",
+        amountZl: Math.abs(cashbackDeltaZl),
+        remainingZl: Math.abs(cashbackDeltaZl),
+        source: "cashback_replace",
+        orderId: order._id,
+        createdAt: new Date(),
+        expiresAt: null,
+      });
     }
 
     recalcUserCashbackBalanceFromLedger(user);
