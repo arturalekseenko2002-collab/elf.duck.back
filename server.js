@@ -2651,6 +2651,26 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
 
       const flavors = Array.isArray(row?.flavors) ? row.flavors : [];
 
+      const productQty = flavors.reduce((sum, flavor) => {
+
+        return sum + Math.max(0, Number(flavor?.qty || 0));
+
+      }, 0);
+
+      const tierLabel = getProductBucketLabelByQty(productQty);
+
+      if (productQty > 0) {
+
+        bucket.tierBuckets.set(
+
+          tierLabel,
+
+          (bucket.tierBuckets.get(tierLabel) || 0) + productQty
+
+        );
+
+      }
+
       for (const flavor of flavors) {
         const qty = Math.max(0, Number(flavor?.qty || 0));
         if (!qty) continue;
@@ -2671,15 +2691,15 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
         //   (bucket.tierBuckets.get(tierLabel) || 0) + qty
         // );
 
-        const tierLabel = getProductBucketLabelByQty(productQty);
+        // const tierLabel = getProductBucketLabelByQty(productQty);
 
-        bucket.tierBuckets.set(
+        // bucket.tierBuckets.set(
 
-          tierLabel,
+        //   tierLabel,
 
-          (bucket.tierBuckets.get(tierLabel) || 0) + qty
+        //   (bucket.tierBuckets.get(tierLabel) || 0) + qty
 
-        );
+        // );
 
         const flavorLabel = String(
           flavor?.flavorLabel || flavor?.flavorKey || "Вкус"
