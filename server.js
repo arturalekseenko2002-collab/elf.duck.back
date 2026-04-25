@@ -1948,7 +1948,7 @@ async function annulOrderBecauseNoPaymentConfirm(order, options = {}) {
 
 async function processOrdersWithoutPaymentConfirm() {
   try {
-    const timeoutMinutes = Number(process.env.ORDER_PAYMENT_CONFIRM_TIMEOUT_MINUTES || 10);
+    const timeoutMinutes = Number(process.env.ORDER_PAYMENT_CONFIRM_TIMEOUT_MINUTES || 1);
     const cutoff = new Date(Date.now() - timeoutMinutes * 60 * 1000);
 
     const staleOrders = await Order.find({
