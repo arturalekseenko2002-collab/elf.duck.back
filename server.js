@@ -1131,10 +1131,13 @@ function repriceCartItemsWithSmartPricing(items, products) {
 function getCashbackPercentByTotal(totalZl) {
   const total = Number(totalZl || 0);
 
-  if (total >= 501) return 10;
-  if (total >= 301) return 9;
-  if (total >= 101) return 7;
-  return 4;
+  if (total >= 501) return 8;
+
+  if (total >= 301) return 7;
+
+  if (total >= 101) return 5;
+
+  return total > 0 ? 3 : 0;
 }
 
 async function getIsReferralFirstOrderDiscountEligible(telegramId, cartItems = []) {
@@ -1948,7 +1951,7 @@ async function annulOrderBecauseNoPaymentConfirm(order, options = {}) {
 
 async function processOrdersWithoutPaymentConfirm() {
   try {
-    const timeoutMinutes = Number(process.env.ORDER_PAYMENT_CONFIRM_TIMEOUT_MINUTES || 1);
+    const timeoutMinutes = Number(process.env.ORDER_PAYMENT_CONFIRM_TIMEOUT_MINUTES || 10);
     const cutoff = new Date(Date.now() - timeoutMinutes * 60 * 1000);
 
     const staleOrders = await Order.find({
