@@ -7600,7 +7600,9 @@ app.post("/orders/:id/apply-cashback", async (req, res) => {
     const { telegramId, mode } = req.body || {};
 
     const safeMode = String(mode || "partial").trim().toLowerCase();
-    if (!["partial", "full"].includes(safeMode)) {
+    const requestedCashbackAmountZl = Number(req.body?.amountZl || 0);
+
+    if (!["partial", "full", "custom"].includes(safeMode)) {
       return res.status(400).json({ ok: false, error: "INVALID_CASHBACK_MODE" });
     }
 
@@ -7624,40 +7626,63 @@ app.post("/orders/:id/apply-cashback", async (req, res) => {
       return res.status(400).json({ ok: false, error: "PAYMENT_ALREADY_SUBMITTED" });
     }
 
+    // const user = await User.findOne({ telegramId: String(telegramId || "") });
+    // user.cashbackLedger = Array.isArray(user.cashbackLedger) ? user.cashbackLedger : [];
+    // if (!user) {
+    //   return res.status(404).json({ ok: false, error: "USER_NOT_FOUND" });
+    // }
+
     const user = await User.findOne({ telegramId: String(telegramId || "") });
-    user.cashbackLedger = Array.isArray(user.cashbackLedger) ? user.cashbackLedger : [];
+
     if (!user) {
+
       return res.status(404).json({ ok: false, error: "USER_NOT_FOUND" });
+
     }
 
-    const orderTotal = Number(order.totalZl || 0);
+    user.cashbackLedger = Array.isArray(user.cashbackLedger) ? user.cashbackLedger : [];
+
+    const orderTotalZl = Number(order.totalZl || 0);
     const cashbackBalance = Number(user.cashbackBalance || 0);
+    const alreadyAppliedZl = Number(order?.payment?.cashbackAppliedZl || 0);
+    const remainingOrderToPayZl = Number(
+      Math.max(0, orderTotalZl - alreadyAppliedZl).toFixed(2)
+    );
 
     if (cashbackBalance <= 0) {
       return res.status(400).json({ ok: false, error: "NO_CASHBACK_BALANCE" });
     }
 
-    let cashbackAppliedZl = 0;
-    let remainingToPayZl = orderTotal;
-    let cashbackFullyPaid = false;
+    const requestedAmountZl =
+      safeMode === "custom"
+        ? requestedCashbackAmountZl
+        : safeMode === "full"
+        ? remainingOrderToPayZl
+        : Math.min(cashbackBalance, remainingOrderToPayZl);
 
-    if (safeMode === "full") {
-      if (cashbackBalance < orderTotal) {
-        return res.status(400).json({ ok: false, error: "INSUFFICIENT_CASHBACK_FOR_FULL_PAYMENT" });
-      }
-
-      cashbackAppliedZl = Number(orderTotal.toFixed(2));
-      remainingToPayZl = 0;
-      cashbackFullyPaid = true;
-    } else {
-      cashbackAppliedZl = Number(Math.min(cashbackBalance, orderTotal).toFixed(2));
-      remainingToPayZl = Number((orderTotal - cashbackAppliedZl).toFixed(2));
-      cashbackFullyPaid = remainingToPayZl <= 0;
+    if (!Number.isFinite(requestedAmountZl) || requestedAmountZl <= 0) {
+      return res.status(400).json({ ok: false, error: "INVALID_CASHBACK_AMOUNT" });
     }
 
-    user.cashbackBalance = Number((cashbackBalance - cashbackAppliedZl).toFixed(2));
+    if (safeMode === "full" && cashbackBalance < remainingOrderToPayZl) {
+      return res.status(400).json({ ok: false, error: "INSUFFICIENT_CASHBACK_FOR_FULL_PAYMENT" });
+    }
 
-    let cashbackLeftToDeduct = Number(cashbackAppliedZl || 0);
+    const cashbackAppliedNowZl = Number(
+      Math.min(requestedAmountZl, cashbackBalance, remainingOrderToPayZl).toFixed(2)
+    );
+
+    if (cashbackAppliedNowZl <= 0) {
+      return res.status(400).json({ ok: false, error: "NO_CASHBACK_TO_APPLY" });
+    }
+
+    const cashbackAppliedZl = Number((alreadyAppliedZl + cashbackAppliedNowZl).toFixed(2));
+    const remainingToPayZl = Number(Math.max(0, orderTotalZl - cashbackAppliedZl).toFixed(2));
+    const cashbackFullyPaid = remainingToPayZl <= 0;
+
+    user.cashbackBalance = Number((cashbackBalance - cashbackAppliedNowZl).toFixed(2));
+
+    let cashbackLeftToDeduct = Number(cashbackAppliedNowZl || 0);
 
     const activeRows = [...user.cashbackLedger]
       .filter((row) => !row?.expiredAt && Number(row?.remainingZl || 0) > 0)
