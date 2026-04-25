@@ -7793,9 +7793,36 @@ app.post("/orders/:id/payment-check", async (req, res) => {
       ? order.payment.toObject()
       : (order.payment || {});
 
-    const cashbackAppliedZl = Number(prevPayment.cashbackAppliedZl || 0);
-    const cashbackRemainingToPayZl = Number(prevPayment.cashbackRemainingToPayZl || 0);
     const managerDisplayAmount = Number(req.body?.managerDisplayAmount || 0);
+
+    const cashbackUsedZl = Number(
+      req.body?.cashbackUsedZl ||
+      req.body?.cashbackAppliedZl ||
+      prevPayment?.cashbackAppliedZl ||
+      0
+    );
+
+    const fallbackCashbackRemainingToPayZl = Math.max(
+      0,
+      Number(order?.totalZl || 0) - Number(cashbackUsedZl || 0)
+    );
+
+    const cashbackRemainingToPayZl = Number(
+      req.body?.cashbackRemainingToPayZl ||
+      prevPayment?.cashbackRemainingToPayZl ||
+      fallbackCashbackRemainingToPayZl ||
+      0
+    );
+
+    const cashbackFullyPaidFromBody = Boolean(
+      req.body?.paymentMethod === "cashback" || req.body?.cashbackFullyPaid === true
+    );
+
+    const finalCashbackFullyPaid = Boolean(
+      cashbackFullyPaidFromBody ||
+      prevPayment?.cashbackFullyPaid === true ||
+      cashbackRemainingToPayZl <= 0
+    );
     const managerDisplayCurrency = String(req.body?.managerDisplayCurrency || "PLN").trim() || "PLN";
     const managerDisplayRate =
       req.body?.managerDisplayRate === null ||
@@ -7805,35 +7832,29 @@ app.post("/orders/:id/payment-check", async (req, res) => {
         : Number(req.body.managerDisplayRate || 0);
 
     order.payment = {
-      ...(order.payment?.toObject ? order.payment.toObject() : order.payment || {}),
+      ...prevPayment,
       status: "checking",
-      method: cashbackFullyPaid
+      method: finalCashbackFullyPaid
         ? "cashback"
         : (req.body?.paymentMethod
             ? String(req.body.paymentMethod)
-            : (order.payment?.method || null)),
-      cashChangeType: cashbackFullyPaid
+            : (prevPayment?.method || null)),
+      cashChangeType: finalCashbackFullyPaid
         ? null
         : (req.body?.cashChangeType
             ? String(req.body.cashChangeType)
             : null),
-      cashAmount: cashbackFullyPaid
+      cashAmount: finalCashbackFullyPaid
         ? null
         : (req.body?.cashAmount
             ? String(req.body.cashAmount)
             : null),
-      cashbackAppliedZl:
-        cashbackAppliedZl !== undefined
-          ? Number(Number(cashbackAppliedZl || 0).toFixed(2))
-          : Number(Number(order.payment?.cashbackAppliedZl || 0).toFixed(2)),
-      cashbackRemainingToPayZl:
-        cashbackRemainingToPayZl !== undefined
-          ? Number(Number(cashbackRemainingToPayZl || 0).toFixed(2))
-          : Number(Number(order.payment?.cashbackRemainingToPayZl || 0).toFixed(2)),
+      cashbackAppliedZl: Number(Number(cashbackUsedZl || 0).toFixed(2)),
+      cashbackRemainingToPayZl: Number(Number(cashbackRemainingToPayZl || 0).toFixed(2)),
+      cashbackFullyPaid: finalCashbackFullyPaid,
       managerDisplayAmount,
       managerDisplayCurrency,
       managerDisplayRate,
-      cashbackFullyPaid,
       checkedAt: new Date(),
       checkedByTelegramId: "",
     };
