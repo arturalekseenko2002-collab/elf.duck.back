@@ -7645,9 +7645,8 @@ app.post("/orders/:id/apply-cashback", async (req, res) => {
     const orderTotalZl = Number(order.totalZl || 0);
     const cashbackBalance = Number(user.cashbackBalance || 0);
     const alreadyAppliedZl = Number(order?.payment?.cashbackAppliedZl || 0);
-    const remainingOrderToPayZl = Number(
-      Math.max(0, orderTotalZl - alreadyAppliedZl).toFixed(2)
-    );
+    const alreadyAppliedForReplaceZl = safeMode === "custom" ? 0 : alreadyAppliedZl;
+    const remainingOrderToPayZl = Number(Math.max(0, orderTotalZl - alreadyAppliedForReplaceZl).toFixed(2));
 
     if (cashbackBalance <= 0) {
       return res.status(400).json({ ok: false, error: "NO_CASHBACK_BALANCE" });
@@ -7676,7 +7675,7 @@ app.post("/orders/:id/apply-cashback", async (req, res) => {
       return res.status(400).json({ ok: false, error: "NO_CASHBACK_TO_APPLY" });
     }
 
-    const cashbackAppliedZl = Number((alreadyAppliedZl + cashbackAppliedNowZl).toFixed(2));
+    const cashbackAppliedZl = Number((alreadyAppliedForReplaceZl + cashbackAppliedNowZl).toFixed(2));
     const remainingToPayZl = Number(Math.max(0, orderTotalZl - cashbackAppliedZl).toFixed(2));
     const cashbackFullyPaid = remainingToPayZl <= 0;
 
