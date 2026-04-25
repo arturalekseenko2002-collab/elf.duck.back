@@ -6620,9 +6620,43 @@ app.post("/orders/confirm", async (req, res) => {
         ? isTimeWindowInsidePointSchedule(schedulePoint, cart?.deliveryTimeWindow)
         : false;
 
+      // if (
+      //   (isCourierDelivery && !courierWindowFitsSchedule) ||
+      //   (!isCourierDelivery && !openState.isOpen)
+      // ) {
+
+      const pointSchedulePeriods = Array.isArray(openState?.periods)
+        ? openState.periods
+        : [];
+
+      const pointHasWorkingScheduleToday =
+        openState?.reason !== "NO_SCHEDULE" &&
+        openState?.reason !== "CLOSED_TODAY" &&
+        (
+          pointSchedulePeriods.length > 0 ||
+          (String(openState?.openFrom || "").trim() && String(openState?.openTo || "").trim())
+        );
+
+      const scheduleEndMinutesList = pointSchedulePeriods.length
+        ? pointSchedulePeriods
+            .map((p) => timeToMinutes(p?.openTo))
+            .filter((n) => Number.isFinite(n) && n > 0)
+        : [timeToMinutes(openState?.openTo)].filter((n) => Number.isFinite(n) && n > 0);
+
+      const latestScheduleEndMinutes = scheduleEndMinutesList.length
+        ? Math.max(...scheduleEndMinutesList)
+        : 0;
+
+      const isAfterWorkingHoursToday =
+        !isCourierDelivery &&
+        pointHasWorkingScheduleToday &&
+        latestScheduleEndMinutes > 0 &&
+        getWarsawNowMinutes() > latestScheduleEndMinutes;
+
       if (
         (isCourierDelivery && !courierWindowFitsSchedule) ||
-        (!isCourierDelivery && !openState.isOpen)
+        (!isCourierDelivery && !pointHasWorkingScheduleToday) ||
+        isAfterWorkingHoursToday
       ) {
         const pointLabel =
           String(schedulePoint?.title || "").trim() ||
@@ -6648,9 +6682,21 @@ app.post("/orders/confirm", async (req, res) => {
             : "";
 
         return res.status(400).json({
+
           ok: false,
+
           field: "schedule",
-          error: `${pointLabel} сейчас не принимает заказы. ${scheduleText}${selectedWindowText}`,
+
+          error: isCourierDelivery
+
+            ? `${pointLabel}: выберите время в рамках рабочего графика. ${scheduleText}${selectedWindowText}`
+
+            : isAfterWorkingHoursToday
+
+            ? `${pointLabel}: рабочий день уже закончился. ${scheduleText}`
+
+            : `${pointLabel}: сегодня заказ недоступен. ${scheduleText}`,
+
         });
       }
     }
