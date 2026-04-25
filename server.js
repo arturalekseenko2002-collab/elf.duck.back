@@ -2657,18 +2657,28 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
 
         bucket.totalQty += qty;
 
-        const smartDiscountPerItem = Number(flavor?.smartDiscountPerItem || 0);
+        // const smartDiscountPerItem = Number(flavor?.smartDiscountPerItem || 0);
 
-        const tierLabel = (() => {
-          if (smartDiscountPerItem >= 15) return "[5]";
-          if (smartDiscountPerItem >= 10) return "[3-4]";
-          if (smartDiscountPerItem >= 5) return "[2]";
-          return "[1]";
-        })();
+        // const tierLabel = (() => {
+        //   if (smartDiscountPerItem >= 15) return "[5]";
+        //   if (smartDiscountPerItem >= 10) return "[3-4]";
+        //   if (smartDiscountPerItem >= 5) return "[2]";
+        //   return "[1]";
+        // })();
+
+        // bucket.tierBuckets.set(
+        //   tierLabel,
+        //   (bucket.tierBuckets.get(tierLabel) || 0) + qty
+        // );
+
+        const tierLabel = getProductBucketLabelByQty(productQty);
 
         bucket.tierBuckets.set(
+
           tierLabel,
+
           (bucket.tierBuckets.get(tierLabel) || 0) + qty
+
         );
 
         const flavorLabel = String(
@@ -2685,7 +2695,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
     }
   }
 
-  const tierOrder = ["[5]", "[3-4]", "[2]", "[1]"];
+  const tierOrder = ["5шт.", "3-4шт.", "2шт.", "1шт."];
 
   const aggregatedProducts = Array.from(productStatsMap.values()).sort(
     (a, b) => b.totalQty - a.totalQty || a.title.localeCompare(b.title, "ru")
@@ -2702,7 +2712,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
 
       const tierLine = tierOrder
         .filter((tier) => (product.tierBuckets.get(tier) || 0) > 0)
-        .map((tier) => `${tier} ${product.tierBuckets.get(tier)}`)
+        .map((tier) => `[${tier}] ${product.tierBuckets.get(tier)}`)
         .join(" &lt;&gt; ");
 
       if (tierLine) {
