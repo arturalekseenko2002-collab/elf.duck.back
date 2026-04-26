@@ -845,6 +845,13 @@ function timeToMinutes(hhmm) {
   return h * 60 + m;
 }
 
+function minutesToTime(totalMinutes) {
+  const safeMinutes = Math.max(0, Number(totalMinutes || 0));
+  const hh = String(Math.floor(safeMinutes / 60)).padStart(2, "0");
+  const mm = String(safeMinutes % 60).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
 function getTodayScheduleForPickupPoint(point) {
   const dateKey = getWarsawDateKey();
   return point?.scheduleByDate?.[dateKey] || null;
@@ -6649,6 +6656,32 @@ app.post("/orders/confirm", async (req, res) => {
       const courierWindowFitsSchedule = isCourierDelivery
         ? isTimeWindowInsidePointSchedule(schedulePoint, cart?.deliveryTimeWindow)
         : false;
+
+      const isPickupOrder = deliveryType === "pickup";
+
+        if (isPickupOrder) {
+          const selectedArrivalTime = String(cart?.arrivalTime || "").trim();
+
+          if (!selectedArrivalTime) {
+            return res.status(400).json({
+              ok: false,
+              field: "arrivalTime",
+              error: "Для самовывоза нужно выбрать время прибытия.",
+            });
+          }
+
+          const selectedArrivalMinutes = timeToMinutes(selectedArrivalTime);
+          const minArrivalMinutes = getWarsawNowMinutes() + 10;
+
+          if (selectedArrivalMinutes < minArrivalMinutes) {
+            return res.status(400).json({
+              ok: false,
+              field: "arrivalTime",
+              error: `Выберите время прибытия не раньше ${minutesToTime(minArrivalMinutes)}.`,
+              minArrivalTime: minutesToTime(minArrivalMinutes),
+            });
+          }
+        }
 
       // if (
       //   (isCourierDelivery && !courierWindowFitsSchedule) ||
