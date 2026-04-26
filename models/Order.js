@@ -157,5 +157,6 @@ const orderSchema = new mongoose.Schema(
 orderSchema.index({ userTelegramId: 1, status: 1 });
 orderSchema.index({ "payment.status": 1 });
 orderSchema.index({ userTelegramId: 1, createdAt: -1 });
+orderSchema.index({ userTelegramId: 1, status: 1, createdAt: -1 });
 
 export default mongoose.models.Order || mongoose.model("Order", orderSchema);

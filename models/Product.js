@@ -80,5 +80,7 @@ const productSchema = new mongoose.Schema(
 );
 
 productSchema.index({ categoryKey: 1 });
+productSchema.index({ productKey: 1, "flavors.flavorKey": 1 });
+productSchema.index({ "flavors.stockByPickupPoint.pickupPointId": 1 });
 
 export default mongoose.models.Product || mongoose.model("Product", productSchema);

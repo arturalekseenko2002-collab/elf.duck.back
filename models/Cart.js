@@ -27,7 +27,7 @@ const cartItemSchema = new mongoose.Schema(
 /* ================= CART ================= */
 const cartSchema = new mongoose.Schema(
   {
-    telegramId: { type: String, required: true, unique: true, index: true },
+    telegramId: { type: String, required: true, unique: true },
 
     // current cart items
     items: { type: [cartItemSchema], default: [] },

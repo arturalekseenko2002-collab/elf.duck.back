@@ -31,11 +31,67 @@ app.options("*", cors(corsOptions));
 app.use(compression());
 app.use(express.json());
 
-// MongoDB
+// MongoDB — explicit pool size + no autoIndex so cold boot isn't stalled by
+// Mongoose rebuilding indexes on the Order collection on every restart.
 mongoose
-  .connect(process.env.MONGODB_URI)
-  .then(() => console.log("✅ MongoDB connected"))
+  .connect(process.env.MONGODB_URI, {
+    maxPoolSize: 20,
+    serverSelectionTimeoutMS: 5000,
+    socketTimeoutMS: 45000,
+    autoIndex: process.env.NODE_ENV !== "production",
+  })
+  .then(async () => {
+    console.log("✅ MongoDB connected");
+    if (process.env.SKIP_INDEX_SYNC !== "1") {
+      setImmediate(async () => {
+        try {
+          await Promise.all([
+            Product.syncIndexes(),
+            Order.syncIndexes(),
+            Cart.syncIndexes(),
+            User.syncIndexes(),
+            PickupPoint.syncIndexes(),
+            Category.syncIndexes(),
+          ]);
+          console.log("✅ MongoDB indexes synced");
+        } catch (err) {
+          console.error("⚠️  Index sync failed:", err?.message || err);
+        }
+      });
+    }
+  })
   .catch((err) => console.error("❌ MongoDB error:", err));
+
+// In-memory cache for hot read endpoints (pickup-points, categories, products).
+const _cache = new Map();
+function cacheGet(key) {
+  const hit = _cache.get(key);
+  if (!hit) return null;
+  if (hit.expiresAt <= Date.now()) { _cache.delete(key); return null; }
+  return hit.value;
+}
+function cacheSet(key, value, ttlMs) {
+  _cache.set(key, { value, expiresAt: Date.now() + ttlMs });
+}
+function cacheInvalidate(prefix) {
+  for (const k of _cache.keys()) {
+    if (typeof k === "string" && k.startsWith(prefix)) _cache.delete(k);
+  }
+}
+
+let _warehouseIdsCache = null;
+async function getWarehouseIds() {
+  if (_warehouseIdsCache) return _warehouseIdsCache;
+  const [courierPP, inpostPP] = await Promise.all([
+    PickupPoint.findOne({ key: { $in: ["delivery", "delivery,"] } }, { _id: 1, key: 1 }).lean(),
+    PickupPoint.findOne({ key: { $in: ["delivery-2", "delivery-2,"] } }, { _id: 1, key: 1 }).lean(),
+  ]);
+  _warehouseIdsCache = {
+    courierWarehouseId: courierPP?._id || null,
+    inpostWarehouseId: inpostPP?._id || null,
+  };
+  return _warehouseIdsCache;
+}
 
 // ==== helper’ы рефераки ===
 
@@ -1205,13 +1261,10 @@ function repriceCartItemsWithSmartPricing(items, products) {
 function getCashbackPercentByTotal(totalZl) {
   const total = Number(totalZl || 0);
 
-  if (total >= 501) return 8;
-
-  if (total >= 301) return 7;
-
-  if (total >= 101) return 5;
-
-  return total > 0 ? 3 : 0;
+  if (total >= 501) return 10;
+  if (total >= 301) return 9;
+  if (total >= 101) return 7;
+  return 4;
 }
 
 async function getIsReferralFirstOrderDiscountEligible(telegramId, cartItems = []) {
@@ -2725,55 +2778,25 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
 
       const flavors = Array.isArray(row?.flavors) ? row.flavors : [];
 
-      const productQty = flavors.reduce((sum, flavor) => {
-
-        return sum + Math.max(0, Number(flavor?.qty || 0));
-
-      }, 0);
-
-      const tierLabel = getProductBucketLabelByQty(productQty);
-
-      if (productQty > 0) {
-
-        bucket.tierBuckets.set(
-
-          tierLabel,
-
-          (bucket.tierBuckets.get(tierLabel) || 0) + productQty
-
-        );
-
-      }
-
       for (const flavor of flavors) {
         const qty = Math.max(0, Number(flavor?.qty || 0));
         if (!qty) continue;
 
         bucket.totalQty += qty;
 
-        // const smartDiscountPerItem = Number(flavor?.smartDiscountPerItem || 0);
+        const smartDiscountPerItem = Number(flavor?.smartDiscountPerItem || 0);
 
-        // const tierLabel = (() => {
-        //   if (smartDiscountPerItem >= 15) return "[5]";
-        //   if (smartDiscountPerItem >= 10) return "[3-4]";
-        //   if (smartDiscountPerItem >= 5) return "[2]";
-        //   return "[1]";
-        // })();
+        const tierLabel = (() => {
+          if (smartDiscountPerItem >= 15) return "[5]";
+          if (smartDiscountPerItem >= 10) return "[3-4]";
+          if (smartDiscountPerItem >= 5) return "[2]";
+          return "[1]";
+        })();
 
-        // bucket.tierBuckets.set(
-        //   tierLabel,
-        //   (bucket.tierBuckets.get(tierLabel) || 0) + qty
-        // );
-
-        // const tierLabel = getProductBucketLabelByQty(productQty);
-
-        // bucket.tierBuckets.set(
-
-        //   tierLabel,
-
-        //   (bucket.tierBuckets.get(tierLabel) || 0) + qty
-
-        // );
+        bucket.tierBuckets.set(
+          tierLabel,
+          (bucket.tierBuckets.get(tierLabel) || 0) + qty
+        );
 
         const flavorLabel = String(
           flavor?.flavorLabel || flavor?.flavorKey || "Вкус"
@@ -2789,7 +2812,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
     }
   }
 
-  const tierOrder = ["5шт.", "3-4шт.", "2шт.", "1шт."];
+  const tierOrder = ["[5]", "[3-4]", "[2]", "[1]"];
 
   const aggregatedProducts = Array.from(productStatsMap.values()).sort(
     (a, b) => b.totalQty - a.totalQty || a.title.localeCompare(b.title, "ru")
@@ -2806,7 +2829,7 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
 
       const tierLine = tierOrder
         .filter((tier) => (product.tierBuckets.get(tier) || 0) > 0)
-        .map((tier) => `[${tier}] ${product.tierBuckets.get(tier)}`)
+        .map((tier) => `${tier} ${product.tierBuckets.get(tier)}`)
         .join(" &lt;&gt; ");
 
       if (tierLine) {
@@ -4766,36 +4789,37 @@ app.post("/register-user", async (req, res) => {
     const { ref } = req.body || {};
     const normalizedRef = String(ref || "").replace(/^ref_/, "").trim();
 
-    let user = await User.findOne({ telegramId });
+    // Single upsert instead of findOne → create/save → findById. One round-trip
+    // for the common "returning user" path.
+    const setOnInsert = { telegramId };
+    const set = {};
+    if (username !== null) set.username = username;
+    if (firstName !== null) set.firstName = firstName;
+    if (lastName !== null) set.lastName = lastName;
+    if (photoUrl !== null) set.photoUrl = photoUrl;
 
-    if (!user) {
-      const newUser = await User.create({
-        telegramId,
-        username,
-        firstName,
-        lastName,
-        photoUrl,
-      });
+    let user = await User.findOneAndUpdate(
+      { telegramId },
+      { $set: set, $setOnInsert: setOnInsert },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
 
-      await ensureUserRefCode(newUser);
-      await attachReferralIfAny(newUser, normalizedRef);
-
-      const fresh = await User.findById(newUser._id).lean();
-      return res.json({ ok: true, user: fresh });
+    let mutated = false;
+    if (!user.referral?.code) {
+      await ensureUserRefCode(user);
+      mutated = true;
     }
-
-    user.username = username || user.username;
-    user.firstName = firstName || user.firstName;
-    user.lastName = lastName || user.lastName;
-    user.photoUrl = photoUrl || user.photoUrl;
-    await user.save();
-
     if (normalizedRef) {
+      const before = JSON.stringify(user.referral || {});
       await attachReferralIfAny(user, normalizedRef);
-      user = await User.findById(user._id);
+      if (JSON.stringify(user.referral || {}) !== before) mutated = true;
     }
 
-    await ensureUserRefCode(user);
+    if (mutated) {
+      user = await User.findById(user._id).lean();
+    } else {
+      user = user.toObject ? user.toObject() : user;
+    }
 
     return res.json({ ok: true, user });
   } catch (e) {
@@ -4811,7 +4835,7 @@ app.get("/get-user", async (req, res) => {
 
     if (!telegramId) return;
 
-    const user = await User.findOne({ telegramId });
+    const user = await User.findOne({ telegramId }).lean();
     if (!user) return res.status(404).json({ ok: false, error: "User not found" });
 
     res.json({ ok: true, user });
@@ -5177,9 +5201,15 @@ app.post("/tg/prepared-referral-message", async (req, res) => {
 app.get("/pickup-points", async (req, res) => {
   try {
     const onlyActive = String(req.query.active || "1") === "1";
+    const cacheKey = `pickup-points:${onlyActive ? "1" : "0"}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) return res.json(cached);
+
     const filter = onlyActive ? { isActive: true } : {};
     const points = await PickupPoint.find(filter).sort({ sortOrder: 1, createdAt: -1 }).lean();
-    res.json({ ok: true, pickupPoints: points });
+    const payload = { ok: true, pickupPoints: points };
+    cacheSet(cacheKey, payload, 60 * 1000);
+    res.json(payload);
   } catch (e) {
     console.error("GET /pickup-points error:", e);
     res.status(500).json({ ok: false, error: "Server error" });
@@ -5436,9 +5466,15 @@ app.delete("/admin/pickup-points/:id", requireAdmin, async (req, res) => {
 app.get("/categories", async (req, res) => {
   try {
     const onlyActive = String(req.query.active || "1") === "1";
+    const cacheKey = `categories:${onlyActive ? "1" : "0"}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) return res.json(cached);
+
     const filter = onlyActive ? { isActive: true } : {};
     const categories = await Category.find(filter).sort({ sortOrder: 1, createdAt: -1 }).lean();
-    res.json({ ok: true, categories });
+    const payload = { ok: true, categories };
+    cacheSet(cacheKey, payload, 60 * 1000);
+    res.json(payload);
   } catch (e) {
     console.error("GET /categories error:", e);
     res.status(500).json({ ok: false, error: "Server error" });
@@ -5535,8 +5571,13 @@ app.patch("/admin/categories/:id", requireAdmin, async (req, res) => {
 app.get("/products", async (req, res) => {
   try {
     const onlyActive = String(req.query.active || "1") === "1";
+    const categoryKey = req.query.categoryKey ? String(req.query.categoryKey) : "";
+    const cacheKey = `products:${onlyActive ? "1" : "0"}:${categoryKey}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) return res.json(cached);
+
     const filter = onlyActive ? { isActive: true } : {};
-    if (req.query.categoryKey) filter.categoryKey = String(req.query.categoryKey);
+    if (categoryKey) filter.categoryKey = categoryKey;
 
     const products = await Product.find(filter).sort({ sortOrder: 1, createdAt: -1 }).lean();
 
@@ -5563,7 +5604,9 @@ app.get("/products", async (req, res) => {
       return { ...p, totalsByPickupPoint: Array.from(map.values()) };
     });
 
-    res.json({ ok: true, products: withTotals });
+    const payload = { ok: true, products: withTotals };
+    cacheSet(cacheKey, payload, 30 * 1000);
+    res.json(payload);
   } catch (e) {
     console.error("GET /products error:", e);
     res.status(500).json({ ok: false, error: "Server error" });
