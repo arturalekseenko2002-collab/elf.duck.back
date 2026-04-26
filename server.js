@@ -23,7 +23,7 @@ const app = express();
 const corsOptions = {
   origin: (origin, cb) => cb(null, true),
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "x-admin-token"],
+  allowedHeaders: ["Content-Type", "x-admin-token", "x-telegram-init-data"],
 };
 
 app.use(cors(corsOptions));
@@ -226,6 +226,73 @@ function genOrderNo() {
   let out = "ED-";
   for (let i = 0; i < 6; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)];
   return out;
+}
+
+function verifyTelegramWebAppInitData(initDataRaw) {
+  const initData = String(initDataRaw || "").trim();
+  const botToken = String(process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN || "").trim();
+
+  if (!initData || !botToken) return null;
+
+  const params = new URLSearchParams(initData);
+  const hash = String(params.get("hash") || "").trim();
+  if (!hash) return null;
+
+  params.delete("hash");
+
+  const dataCheckString = Array.from(params.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+
+  const secretKey = crypto
+    .createHmac("sha256", "WebAppData")
+    .update(botToken)
+    .digest();
+
+  const calculatedHash = crypto
+    .createHmac("sha256", secretKey)
+    .update(dataCheckString)
+    .digest("hex");
+
+  try {
+    const a = Buffer.from(calculatedHash, "hex");
+    const b = Buffer.from(hash, "hex");
+
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
+  try {
+    const user = JSON.parse(params.get("user") || "{}");
+    const telegramId = String(user?.id || "").trim();
+    if (!telegramId) return null;
+    return { telegramId, user };
+  } catch {
+    return null;
+  }
+}
+
+function getTrustedTelegramIdFromRequest(req) {
+  const verified = verifyTelegramWebAppInitData(req.headers?.["x-telegram-init-data"]);
+  return String(verified?.telegramId || "").trim();
+}
+
+function requireTrustedTelegramId(req, res) {
+  const telegramId = getTrustedTelegramIdFromRequest(req);
+
+  if (!telegramId) {
+    res.status(401).json({
+      ok: false,
+      error: "INVALID_TELEGRAM_INIT_DATA",
+    });
+    return "";
+  }
+
+  return telegramId;
 }
 
 function escapeHtml(s) {
@@ -4683,21 +4750,31 @@ app.get("/ping", (_, res) => res.json({ ok: true }));
 // регистрируем юзера из mini-app
 app.post("/register-user", async (req, res) => {
   try {
-    const { telegramId, username, firstName, lastName, photoUrl, ref } = req.body || {};
-    const normalizedRef = String(ref || "").replace(/^ref_/, "").trim();
+    const verified = verifyTelegramWebAppInitData(req.headers?.["x-telegram-init-data"]);
+    const telegramId = String(verified?.telegramId || "").trim();
+
     if (!telegramId) {
-      return res.status(400).json({ ok: false, error: "telegramId is required" });
+      return res.status(401).json({ ok: false, error: "INVALID_TELEGRAM_INIT_DATA" });
     }
 
-    let user = await User.findOne({ telegramId: String(telegramId) });
+    const tgUser = verified?.user || {};
+    const username = String(tgUser?.username || "").trim() || null;
+    const firstName = String(tgUser?.first_name || "").trim() || null;
+    const lastName = String(tgUser?.last_name || "").trim() || null;
+    const photoUrl = String(tgUser?.photo_url || "").trim() || null;
+
+    const { ref } = req.body || {};
+    const normalizedRef = String(ref || "").replace(/^ref_/, "").trim();
+
+    let user = await User.findOne({ telegramId });
 
     if (!user) {
       const newUser = await User.create({
-        telegramId: String(telegramId),
-        username: username || null,
-        firstName: firstName || null,
-        lastName: lastName || null,
-        photoUrl: photoUrl || null,
+        telegramId,
+        username,
+        firstName,
+        lastName,
+        photoUrl,
       });
 
       await ensureUserRefCode(newUser);
@@ -4730,8 +4807,9 @@ app.post("/register-user", async (req, res) => {
 // получить юзера
 app.get("/get-user", async (req, res) => {
   try {
-    const { telegramId } = req.query;
-    if (!telegramId) return res.status(400).json({ ok: false, error: "telegramId is required" });
+    const telegramId = requireTrustedTelegramId(req, res);
+
+    if (!telegramId) return;
 
     const user = await User.findOne({ telegramId });
     if (!user) return res.status(404).json({ ok: false, error: "User not found" });
@@ -4745,10 +4823,11 @@ app.get("/get-user", async (req, res) => {
 
 app.get("/cart/summary", async (req, res) => {
   try {
-    const telegramId = String(req.query?.telegramId || "").trim();
-    if (!telegramId) {
-      return res.status(400).json({ ok: false, error: "telegramId is required" });
-    }
+    const telegramId = requireTrustedTelegramId(req, res);
+    if (!telegramId) return;
+    // if (!telegramId) {
+    //   return res.status(400).json({ ok: false, error: "telegramId is required" });
+    // }
 
     const cart = await Cart.findOne({ telegramId }).lean();
     const items = Array.isArray(cart?.items) ? cart.items : [];
@@ -4776,10 +4855,11 @@ app.get("/cart/summary", async (req, res) => {
 
 app.get("/referral/status", async (req, res) => {
   try {
-    const telegramId = String(req.query.telegramId || "").trim();
-    if (!telegramId) {
-      return res.status(400).json({ ok: false, error: "telegramId is required" });
-    }
+    const telegramId = requireTrustedTelegramId(req, res);
+    if (!telegramId) return;
+    // if (!telegramId) {
+    //   return res.status(400).json({ ok: false, error: "telegramId is required" });
+    // }
 
     const user = await User.findOne(
       { telegramId },
@@ -4951,10 +5031,11 @@ app.post("/referral/claim", async (req, res) => {
 // ==== Public: get favorites by telegramId ====
 app.get("/favorites", async (req, res) => {
   try {
-    const telegramId = String(req.query.telegramId || "").trim();
-    if (!telegramId) {
-      return res.status(400).json({ ok: false, error: "telegramId is required" });
-    }
+    const telegramId = requireTrustedTelegramId(req, res);
+    if (!telegramId) return;
+    // if (!telegramId) {
+    //   return res.status(400).json({ ok: false, error: "telegramId is required" });
+    // }
 
     const user = await User.findOne({ telegramId }, { favoriteProductKeys: 1 }).lean();
 
@@ -4973,7 +5054,8 @@ app.get("/favorites", async (req, res) => {
 // ===== Public: toggle favorite product =====
 app.post("/favorites/toggle", async (req, res) => {
   try {
-    const telegramId = String(req.body?.telegramId || "").trim();
+    const telegramId = requireTrustedTelegramId(req, res);
+    if (!telegramId) return;
     const productKey = String(req.body?.productKey || "").trim();
 
     if (!telegramId) {
@@ -5491,10 +5573,14 @@ app.get("/products", async (req, res) => {
 // ===== Public: get cart by telegramId =====
 app.get("/cart", async (req, res) => {
   try {
-    const telegramId = String(req.query.telegramId || "").trim();
-    if (!telegramId) {
-      return res.status(400).json({ ok: false, error: "telegramId is required" });
-    }
+    // const telegramId = String(req.query.telegramId || "").trim();
+    // if (!telegramId) {
+    //   return res.status(400).json({ ok: false, error: "telegramId is required" });
+    // }
+
+    const telegramId = requireTrustedTelegramId(req, res);
+
+    if (!telegramId) return;
 
     const cart = await Cart.findOne({ telegramId }).lean();
 
@@ -5575,7 +5661,9 @@ app.get("/cart", async (req, res) => {
 
 app.delete("/cart/item", async (req, res) => {
   try {
-    const telegramId = String(req.body?.telegramId || "").trim();
+    const telegramId = requireTrustedTelegramId(req, res);
+
+    if (!telegramId) return;
     const itemKey = String(req.body?.itemKey || "").trim();
 
     if (!telegramId) {
@@ -5712,8 +5800,8 @@ app.delete("/cart/item", async (req, res) => {
 app.put("/cart", async (req, res) => {
   try {
     const b = req.body || {};
-    const telegramId = String(b.telegramId || "").trim();
-    if (!telegramId) return res.status(400).json({ ok: false, error: "telegramId is required" });
+    const telegramId = requireTrustedTelegramId(req, res);
+    if (!telegramId) return;
 
     const items = Array.isArray(b.items) ? b.items : [];
 
@@ -6471,8 +6559,8 @@ for (const d of deltas) {
 app.post("/orders/confirm", async (req, res) => {
   console.time("orders/confirm total");
   try {
-    const telegramId = String(req.body?.telegramId || "").trim();
-    if (!telegramId) return res.status(400).json({ ok: false, error: "telegramId is required" });
+    const telegramId = requireTrustedTelegramId(req, res);
+    if (!telegramId) return;
 
   console.time("orders/confirm load cart+user");
 
@@ -7361,7 +7449,9 @@ app.post("/orders/confirm", async (req, res) => {
 app.post("/orders/:id/cancel", async (req, res) => {
   try {
     const orderId = String(req.params.id || "").trim();
-    const telegramId = String(req.body?.telegramId || "").trim();
+    const telegramId = requireTrustedTelegramId(req, res);
+
+    if (!telegramId) return;
 
     if (!orderId) {
       return res.status(400).json({ ok: false, error: "orderId is required" });
@@ -7437,7 +7527,9 @@ app.post("/orders/:id/cancel", async (req, res) => {
 // ===== Repeat order (create new order from existing snapshot) =====
 app.post("/orders/repeat", async (req, res) => {
   try {
-    const telegramId = String(req.body?.telegramId || "").trim();
+    const telegramId = requireTrustedTelegramId(req, res);
+
+    if (!telegramId) return;
     const orderNo = req.body?.orderNo ? String(req.body.orderNo).trim() : null;
     const orderId = req.body?.orderId ? String(req.body.orderId).trim() : null;
 
@@ -7636,8 +7728,9 @@ app.post("/orders/repeat", async (req, res) => {
 
 app.get("/orders", async (req, res) => {
   try {
-    const telegramId = String(req.query.telegramId || "").trim();
-    if (!telegramId) return res.status(400).json({ ok: false, error: "telegramId is required" });
+  const telegramId = requireTrustedTelegramId(req, res);
+
+  if (!telegramId) return;
 
     const orders = await Order.find({ userTelegramId: telegramId }).sort({ createdAt: -1 }).lean();
     return res.json({ ok: true, orders });
@@ -7650,7 +7743,12 @@ app.get("/orders", async (req, res) => {
 app.post("/orders/:id/apply-cashback", async (req, res) => {
   try {
     const { id } = req.params;
-    const { telegramId, mode } = req.body || {};
+
+    const telegramId = requireTrustedTelegramId(req, res);
+
+    if (!telegramId) return;
+
+    const { mode } = req.body || {};
 
     const safeMode = String(mode || "partial").trim().toLowerCase();
     const requestedCashbackAmountZl = Number(req.body?.amountZl || 0);
@@ -7722,6 +7820,12 @@ app.post("/orders/:id/apply-cashback", async (req, res) => {
 
     if (safeMode === "custom" && requestedCashbackAmountZl > maxAvailableCashbackZl) {
       return res.status(400).json({ ok: false, error: "INSUFFICIENT_CASHBACK_BALANCE" });
+    }
+
+    if (safeMode === "custom" && requestedCashbackAmountZl > orderTotalZl) {
+
+      return res.status(400).json({ ok: false, error: "CASHBACK_AMOUNT_EXCEEDS_ORDER_TOTAL" });
+
     }
 
     if (safeMode === "full" && maxAvailableCashbackZl < orderTotalZl) {
@@ -7801,7 +7905,9 @@ app.post("/orders/:id/apply-cashback", async (req, res) => {
 
 app.post("/orders/:id/arrived-at-pickup", async (req, res) => {
   try {
-    const telegramId = String(req.body?.telegramId || "").trim();
+    const telegramId = requireTrustedTelegramId(req, res);
+
+    if (!telegramId) return;
     const { id } = req.params;
 
     if (!telegramId) {
@@ -7835,7 +7941,9 @@ app.post("/orders/:id/arrived-at-pickup", async (req, res) => {
 
 app.post("/orders/:id/payment-check", async (req, res) => {
   try {
-    const telegramId = String(req.body?.telegramId || "").trim();
+    const telegramId = requireTrustedTelegramId(req, res);
+
+    if (!telegramId) return;
     const { id } = req.params;
 
     if (!telegramId) {
@@ -7883,28 +7991,38 @@ app.post("/orders/:id/payment-check", async (req, res) => {
 
     const managerDisplayAmount = Number(req.body?.managerDisplayAmount || 0);
 
-    const cashbackUsedZl = Number(
-      req.body?.cashbackUsedZl ||
-      req.body?.cashbackAppliedZl ||
-      prevPayment?.cashbackAppliedZl ||
-      0
-    );
+    // const cashbackUsedZl = Number(
+    //   req.body?.cashbackUsedZl ||
+    //   req.body?.cashbackAppliedZl ||
+    //   prevPayment?.cashbackAppliedZl ||
+    //   0
+    // );
+
+    const cashbackUsedZl = Number(prevPayment?.cashbackAppliedZl || 0);
 
     const fallbackCashbackRemainingToPayZl = Math.max(
       0,
       Number(order?.totalZl || 0) - Number(cashbackUsedZl || 0)
     );
 
+    // const cashbackRemainingToPayZl = Number(
+    //   req.body?.cashbackRemainingToPayZl ||
+    //   prevPayment?.cashbackRemainingToPayZl ||
+    //   fallbackCashbackRemainingToPayZl ||
+    //   0
+    // );
+
     const cashbackRemainingToPayZl = Number(
-      req.body?.cashbackRemainingToPayZl ||
       prevPayment?.cashbackRemainingToPayZl ||
       fallbackCashbackRemainingToPayZl ||
       0
     );
 
-    const cashbackFullyPaidFromBody = Boolean(
-      req.body?.paymentMethod === "cashback" || req.body?.cashbackFullyPaid === true
-    );
+    // const cashbackFullyPaidFromBody = Boolean(
+    //   req.body?.paymentMethod === "cashback" || req.body?.cashbackFullyPaid === true
+    // );
+
+    const cashbackFullyPaidFromBody = Boolean(prevPayment?.cashbackFullyPaid === true);
 
     const finalCashbackFullyPaid = Boolean(
       cashbackFullyPaidFromBody ||
@@ -8245,7 +8363,8 @@ app.patch("/admin/products/:id/flavors/:flavorId/stock", requireAdmin, async (re
 
 app.get("/orders/:id/payment-config", async (req, res) => {
   try {
-    const telegramId = String(req.query?.telegramId || "").trim();
+    const telegramId = requireTrustedTelegramId(req, res);
+    if (!telegramId) return;
     const orderId = String(req.params?.id || "").trim();
 
     if (!telegramId) {
