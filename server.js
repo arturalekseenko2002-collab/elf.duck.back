@@ -2778,20 +2778,22 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
 
       const flavors = Array.isArray(row?.flavors) ? row.flavors : [];
 
+      const productOrderQty = flavors.reduce((sum, flavor) => {
+        return sum + Math.max(0, Number(flavor?.qty || flavor?.quantity || 0));
+      }, 0);
+
+      const tierLabel = (() => {
+        if (productOrderQty >= 5) return "[5]";
+        if (productOrderQty >= 3) return "[3-4]";
+        if (productOrderQty >= 2) return "[2]";
+        return "[1]";
+      })();
+
       for (const flavor of flavors) {
-        const qty = Math.max(0, Number(flavor?.qty || 0));
+        const qty = Math.max(0, Number(flavor?.qty || flavor?.quantity || 0));
         if (!qty) continue;
 
         bucket.totalQty += qty;
-
-        const smartDiscountPerItem = Number(flavor?.smartDiscountPerItem || 0);
-
-        const tierLabel = (() => {
-          if (smartDiscountPerItem >= 15) return "[5]";
-          if (smartDiscountPerItem >= 10) return "[3-4]";
-          if (smartDiscountPerItem >= 5) return "[2]";
-          return "[1]";
-        })();
 
         bucket.tierBuckets.set(
           tierLabel,
