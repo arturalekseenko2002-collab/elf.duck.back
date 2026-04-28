@@ -7395,7 +7395,7 @@ app.post("/orders/confirm", async (req, res) => {
 
       arrivalTime: cart.arrivalTime ?? null,
       deliveryTimeWindow: cart.deliveryTimeWindow ?? null,
-      comment: cart.comment ?? null,
+      comment: null,
       courierAddress: cart.courierAddress ?? null,
       inpostData: cart.inpostData ?? {},
 
@@ -7448,7 +7448,7 @@ app.post("/orders/confirm", async (req, res) => {
           checkoutPickupPointId: null,
           arrivalTime: null,
           deliveryTimeWindow: null,
-          comment: null,
+          comment: String(req.body?.comment || "").slice(0, 500),
           courierAddress: null,
           courierDistrict: null,
           deliveryFeeZl: 0,
