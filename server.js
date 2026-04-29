@@ -484,15 +484,7 @@ function getManagerOrderPhotoByPickupPoint(order, pickupPoint) {
     );
   }
 
-  if (
-    pointKey.includes("srodmiescie") ||
-
-    pointKey.includes("sródmiescie") ||
-
-    pointKey.includes("śródmiescie") ||
-
-    pointKey.includes("r-dmie-cie") // ← ВАЖНО
-  ) {
+  if (isSrodmiesciePoint(pointKey)) {
     return firstNonEmptyString(
       process.env.TG_ORDER_PHOTO_SRODMIESCIE,
       process.env.TG_ORDER_PHOTO_DEFAULT
@@ -553,14 +545,7 @@ function getCustomerOrderPhotoByPickupPoint(order, pickupPoint) {
     );
   }
 
-  if (
-
-    pointKey.includes("srodmiescie") ||
-    pointKey.includes("sródmiescie") ||
-    pointKey.includes("śródmiescie") ||
-    pointKey.includes("r-dmie-cie") // ← ВАЖНО
-
-  ) {
+  if (isSrodmiesciePoint(pointKey)) {
     return firstNonEmptyString(
       process.env.TG_CLIENT_ORDER_PHOTO_SRODMIESCIE,
       process.env.TG_ORDER_PHOTO_SRODMIESCIE,
