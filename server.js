@@ -412,8 +412,27 @@ function normalizePhotoLookupText(input) {
     .replace(/ą/g, "a")
     .replace(/ę/g, "e")
     .replace(/[^a-z0-9]+/g, " ")
+
     .replace(/\s+/g, " ")
-    .trim();
+
+    .trim()
+
+    .replace(/\br dmie cie\b/g, "srodmiescie")
+
+    .replace(/\bsr dmie cie\b/g, "srodmiescie")
+
+    .replace(/\bsrod miescie\b/g, "srodmiescie");
+}
+
+function isSrodmiesciePoint(searchText) {
+  const normalized = normalizePhotoLookupText(searchText);
+
+  return (
+    normalized.includes("srodmiescie") ||
+    normalized.includes("r dmie cie") ||
+    normalized.includes("sr dmie cie") ||
+    normalized.includes("srod miescie")
+  );
 }
 
 function firstNonEmptyString(...values) {
