@@ -430,18 +430,9 @@ function normalizePhotoLookupText(input) {
 }
 
 function isSrodmiesciePoint(searchText) {
-  const raw = String(searchText || "").trim().toLowerCase().replace(/,+$/, "");
-  const normalized = normalizePhotoLookupText(raw);
+  const normalized = normalizePhotoLookupText(searchText);
 
-  return (
-    raw === "r-dmie-cie" ||
-    raw.includes("r-dmie-cie") ||
-    normalized === "srodmiescie" ||
-    normalized.includes("srodmiescie") ||
-    normalized.includes("r dmie cie") ||
-    normalized.includes("sr dmie cie") ||
-    normalized.includes("srod miescie")
-  );
+  return normalized.includes("srodmiescie");
 }
 
 function firstNonEmptyString(...values) {
