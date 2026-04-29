@@ -5441,6 +5441,7 @@ app.patch("/admin/pickup-points/:id", requireAdmin, async (req, res) => {
     }
 
     const updated = await PickupPoint.findByIdAndUpdate(id, update, { new: true });
+    cacheInvalidate("pickup-points");
     if (!updated) return res.status(404).json({ ok: false, error: "Pickup point not found" });
 
     res.json({ ok: true, pickupPoint: updated });
