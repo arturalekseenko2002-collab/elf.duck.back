@@ -383,8 +383,17 @@ function buildOrderPointSearchBlob(order, pickupPoint) {
     pickupPoint?.label,
     pickupPoint?.district,
     pickupPoint?.city,
+    order?.pickupPointId,
+    order?.pickupPointKey,
     order?.pickupPointTitle,
     order?.pickupPointAddress,
+    order?.pickupPointLabel,
+    order?.pickupPoint?.key,
+    order?.pickupPoint?.title,
+    order?.pickupPoint?.address,
+    order?.paymentPoint?.key,
+    order?.paymentPoint?.title,
+    order?.paymentPoint?.address,
     order?.methodLabel,
     order?.deliveryMethod,
     order?.deliveryType,
@@ -412,22 +421,22 @@ function normalizePhotoLookupText(input) {
     .replace(/ą/g, "a")
     .replace(/ę/g, "e")
     .replace(/[^a-z0-9]+/g, " ")
-
     .replace(/\s+/g, " ")
-
     .trim()
-
     .replace(/\br dmie cie\b/g, "srodmiescie")
-
     .replace(/\bsr dmie cie\b/g, "srodmiescie")
-
-    .replace(/\bsrod miescie\b/g, "srodmiescie");
+    .replace(/\bsrod miescie\b/g, "srodmiescie")
+    .replace(/\bsrodmiescie\b/g, "srodmiescie");
 }
 
 function isSrodmiesciePoint(searchText) {
-  const normalized = normalizePhotoLookupText(searchText);
+  const raw = String(searchText || "").trim().toLowerCase().replace(/,+$/, "");
+  const normalized = normalizePhotoLookupText(raw);
 
   return (
+    raw === "r-dmie-cie" ||
+    raw.includes("r-dmie-cie") ||
+    normalized === "srodmiescie" ||
     normalized.includes("srodmiescie") ||
     normalized.includes("r dmie cie") ||
     normalized.includes("sr dmie cie") ||
@@ -484,7 +493,7 @@ function getManagerOrderPhotoByPickupPoint(order, pickupPoint) {
     );
   }
 
-  if (isSrodmiesciePoint(pointKey)) {
+  if (isSrodmiesciePoint(buildOrderPointSearchBlob(order, pickupPoint))) {
     return firstNonEmptyString(
       process.env.TG_ORDER_PHOTO_SRODMIESCIE,
       process.env.TG_ORDER_PHOTO_DEFAULT
@@ -545,7 +554,7 @@ function getCustomerOrderPhotoByPickupPoint(order, pickupPoint) {
     );
   }
 
-  if (isSrodmiesciePoint(pointKey)) {
+  if (isSrodmiesciePoint(buildOrderPointSearchBlob(order, pickupPoint))) {
     return firstNonEmptyString(
       process.env.TG_CLIENT_ORDER_PHOTO_SRODMIESCIE,
       process.env.TG_ORDER_PHOTO_SRODMIESCIE,
