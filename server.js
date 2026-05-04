@@ -673,8 +673,15 @@ async function getSyncedPickupPointIdsByAnyPoint(input) {
   return ids.length ? Array.from(new Set(ids)) : [String(point._id)];
 }
 
-function normalizeDistrictChunk(input) {
+function stripPolishStreetPrefix(input) {
   return String(input || "")
+    .trim()
+    .replace(/^\s*(?:ulica|ul\.?)\s+/i, "")
+    .trim();
+}
+
+function normalizeDistrictChunk(input) {
+  return stripPolishStreetPrefix(input)
     .trim()
     .toLowerCase()
     .normalize("NFD")
@@ -743,7 +750,7 @@ const _nominatimCache = new Map();
 const NOMINATIM_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
 async function resolveWarsawDeliveryPricing(address, itemsSubtotalZl = 0) {
-  const rawAddress = String(address || "").trim();
+  const rawAddress = stripPolishStreetPrefix(address);
     if (!rawAddress) {
       return {
         districtKey: "",
@@ -765,7 +772,7 @@ async function resolveWarsawDeliveryPricing(address, itemsSubtotalZl = 0) {
   }
 
   const normalizeLooseText = (input) =>
-    String(input || "")
+    stripPolishStreetPrefix(input)
       .trim()
       .toLowerCase()
       .normalize("NFD")
