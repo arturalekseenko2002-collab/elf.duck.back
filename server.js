@@ -868,6 +868,19 @@ if (directMatch.matched) {
           addr.village,
           addr.municipality,
           addr.state,
+
+          addr.suburb,
+
+          addr.city_district,
+
+          addr.neighbourhood,
+
+          addr.district,
+
+          addr.borough,
+
+          addr.quarter,
+
           row?.display_name,
         ]
           .filter(Boolean)
@@ -888,6 +901,19 @@ if (directMatch.matched) {
           addr.house_number,
           addr.house,
           addr.building,
+
+          addr.suburb,
+
+          addr.city_district,
+
+          addr.neighbourhood,
+
+          addr.district,
+
+          addr.borough,
+
+          addr.quarter,
+
           row?.display_name,
         ]
           .filter(Boolean)
@@ -901,9 +927,9 @@ if (directMatch.matched) {
           (addr.house_number || addr.house || addr.building)
       );
 
-      if (!hasMeaningfulAddress) {
-        continue;
-      }
+      // if (!hasMeaningfulAddress) {
+      //   continue;
+      // }
 
       const matchedWordTokens = inputTokens.filter((token) =>
         locationBlob.includes(token)
@@ -915,7 +941,7 @@ if (directMatch.matched) {
         continue;
       }
 
-      if (inputNumberTokens.length > 0) {
+      if (inputNumberTokens.length > 0 && houseNumber) {
         const numberMatched = inputNumberTokens.some(
           (token) =>
             houseNumber === token ||
@@ -934,14 +960,19 @@ if (directMatch.matched) {
         addr.borough,
         addr.quarter,
         addr.neighbourhood,
+        addr.district,
+        row?.display_name,
       ].filter(Boolean);
 
       for (const candidate of districtCandidates) {
-        const matched = matchDistrictFromText(candidate);
-        if (matched.matched) {
-          _nominatimCache.set(cacheKey, { ts: Date.now(), result: matched });
-          return matched;
+        const districtMatch = matchDistrictFromText(candidate);
+        if (districtMatch.matched) {
+          return districtMatch;
         }
+      }
+
+      if (!hasMeaningfulAddress) {
+        continue;
       }
     }
   } catch (e) {
