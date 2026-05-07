@@ -4714,7 +4714,9 @@ function isServerSuperAdminTelegramId(telegramId) {
 app.post("/admin/courier/customer-message", requireAdmin, async (req, res) => {
   try {
     const pickupPointId = String(req.body?.pickupPointId || "").trim();
-    const usernameRaw = String(req.body?.username || "").trim();
+    const targetRaw = String(
+      req.body?.target || req.body?.telegramId || req.body?.username || ""
+    ).trim();
     const textRaw = String(req.body?.text || "").trim();
     const photoUrl = String(req.body?.photoUrl || "").trim();
     const managerTelegramId = String(req.body?.managerTelegramId || "").trim();
@@ -4730,9 +4732,16 @@ app.post("/admin/courier/customer-message", requireAdmin, async (req, res) => {
       return res.status(400).json({ ok: false, error: "PICKUP_POINT_ID_REQUIRED" });
     }
 
-    const username = usernameRaw.replace(/^@+/, "").trim();
-    if (!username) {
-      return res.status(400).json({ ok: false, error: "USERNAME_REQUIRED" });
+    const normalizedTarget = targetRaw.replace(/^@+/, "").trim();
+    const isTelegramIdTarget = /^\d+$/.test(normalizedTarget);
+    const username = isTelegramIdTarget ? "" : normalizedTarget.toLowerCase();
+
+    if (!normalizedTarget) {
+      return res.status(400).json({ ok: false, error: "TARGET_REQUIRED" });
+    }
+
+    if (!isTelegramIdTarget && !/^[a-zA-Z0-9_]{5,32}$/.test(username)) {
+      return res.status(400).json({ ok: false, error: "INVALID_USERNAME_OR_TELEGRAM_ID" });
     }
 
     if (!textRaw) {
@@ -4768,8 +4777,15 @@ app.post("/admin/courier/customer-message", requireAdmin, async (req, res) => {
     }
 
     const user = await User.findOne(
-      { username },
+
+      isTelegramIdTarget
+
+        ? { telegramId: normalizedTarget }
+
+        : { username },
+
       { telegramId: 1, username: 1, firstName: 1 }
+
     ).lean();
 
     if (!user?.telegramId) {
@@ -4777,7 +4793,7 @@ app.post("/admin/courier/customer-message", requireAdmin, async (req, res) => {
     }
 
     const buttonText = "Связаться";
-    const managerUrl = "https://t.me/elfduck_dostawa";
+    const managerUrl = "https://t.me/elfduck_praga";
     const safeText = escapeHtml(textRaw);
     const replyMarkup = {
       inline_keyboard: [[{ text: buttonText, url: managerUrl }]],
@@ -4806,10 +4822,15 @@ app.post("/admin/courier/customer-message", requireAdmin, async (req, res) => {
     }
 
     return res.json({
+
       ok: true,
-      sentToTelegramId: String(user.telegramId),
-      sentToUsername: String(user.username || username),
+
+      sentToTelegramId: String(user.telegramId || ""),
+
+      sentToUsername: String(user.username || username || ""),
+
       managerUsername,
+
     });
   } catch (e) {
     console.error("POST /admin/courier/customer-message error:", e);
