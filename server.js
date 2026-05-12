@@ -2500,6 +2500,19 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
   }, 0);
 }
 
+function getProductRowStatsCategory(productRow = {}) {
+  return String(
+    productRow?.categoryKey ||
+      productRow?.productCategoryKey ||
+      productRow?.category ||
+      productRow?.snapshot?.categoryKey ||
+      productRow?.product?.categoryKey ||
+      ""
+  )
+    .trim()
+    .toLowerCase();
+}
+
 function normalizeStatsProductTitle(productRow = {}) {
   return getProductDisplayTitleForStats(productRow)
     .toLowerCase()
