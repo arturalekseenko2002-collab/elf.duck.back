@@ -4768,9 +4768,9 @@ app.post("/admin/courier/customer-message", requireAdmin, async (req, res) => {
     //   return res.status(403).json({ ok: false, error: "ONLY_COURIER_POINT_ALLOWED" });
     // }
 
-    if (!isServerAdminTelegramId(managerTelegramId) && !isServerSuperAdminTelegramId(managerTelegramId)) {
-      return res.status(403).json({ ok: false, error: "FORBIDDEN_FOR_THIS_MANAGER" });
-    }
+    // if (!isServerAdminTelegramId(managerTelegramId) && !isServerSuperAdminTelegramId(managerTelegramId)) {
+    //   return res.status(403).json({ ok: false, error: "FORBIDDEN_FOR_THIS_MANAGER" });
+    // }
 
     function isServerAdminTelegramId(telegramId) {
 
