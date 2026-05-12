@@ -4752,7 +4752,7 @@ app.post("/admin/courier/customer-message", requireAdmin, async (req, res) => {
     //   return res.status(400).json({ ok: false, error: "MANAGER_USERNAME_REQUIRED" });
     // }
 
-    const managerUsername = "elfduck_dostawa"
+    const managerUsername = managerUsernameRaw || "elfduck_shop_bot";
 
     const pickupPoint = await PickupPoint.findById(
       pickupPointId,
@@ -4763,17 +4763,31 @@ app.post("/admin/courier/customer-message", requireAdmin, async (req, res) => {
       return res.status(404).json({ ok: false, error: "PICKUP_POINT_NOT_FOUND" });
     }
 
-    const pointKey = normalizePickupPointKey(pickupPoint?.key || "");
-    if (pointKey !== "delivery") {
-      return res.status(403).json({ ok: false, error: "ONLY_COURIER_POINT_ALLOWED" });
+    // const pointKey = normalizePickupPointKey(pickupPoint?.key || "");
+    // if (pointKey !== "delivery") {
+    //   return res.status(403).json({ ok: false, error: "ONLY_COURIER_POINT_ALLOWED" });
+    // }
+
+    if (!isServerAdminTelegramId(managerTelegramId) && !isServerSuperAdminTelegramId(managerTelegramId)) {
+      return res.status(403).json({ ok: false, error: "FORBIDDEN_FOR_THIS_MANAGER" });
     }
 
-    const isAllowedCourierManager = Array.isArray(pickupPoint?.allowedAdminTelegramIds)
-      ? pickupPoint.allowedAdminTelegramIds.map((x) => String(x)).includes(managerTelegramId)
-      : false;
+    function isServerAdminTelegramId(telegramId) {
 
-    if (!isAllowedCourierManager && !isServerSuperAdminTelegramId(managerTelegramId)) {
-      return res.status(403).json({ ok: false, error: "FORBIDDEN_FOR_THIS_MANAGER" });
+      const safeTelegramId = String(telegramId || "").trim();
+
+      if (!safeTelegramId) return false;
+
+      return String(process.env.ADMIN_IDS || "")
+
+        .split(",")
+
+        .map((x) => String(x || "").trim())
+
+        .filter(Boolean)
+
+        .includes(safeTelegramId);
+
     }
 
     const user = await User.findOne(
@@ -4793,7 +4807,7 @@ app.post("/admin/courier/customer-message", requireAdmin, async (req, res) => {
     }
 
     const buttonText = "Связаться";
-    const managerUsernameSafe = String(managerUsernameRaw || "")
+    const managerUsernameSafe = String(managerUsername || "")
       .trim()
       .replace(/^@+/, "");
 
