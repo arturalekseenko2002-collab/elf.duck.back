@@ -4793,7 +4793,13 @@ app.post("/admin/courier/customer-message", requireAdmin, async (req, res) => {
     }
 
     const buttonText = "Связаться";
-    const managerUrl = "https://t.me/elfduck_srodmiescie";
+    const managerUsernameSafe = String(managerUsernameRaw || "")
+      .trim()
+      .replace(/^@+/, "");
+
+    const managerUrl = managerUsernameSafe
+      ? `https://t.me/${managerUsernameSafe}`
+      : "https://t.me/elfduck_shop_bot";
     const safeText = escapeHtml(textRaw);
     const replyMarkup = {
       inline_keyboard: [[{ text: buttonText, url: managerUrl }]],
