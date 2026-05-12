@@ -2494,6 +2494,109 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
     return [t1, t2].filter(Boolean).join(" ").trim() || "Товар";
   }
 
+  function getProductRowStatsQty(productRow = {}) {
+  return (Array.isArray(productRow?.flavors) ? productRow.flavors : []).reduce((sum, flavor) => {
+    return sum + Math.max(0, Number(flavor?.qty || flavor?.quantity || 0));
+  }, 0);
+}
+
+function normalizeStatsProductTitle(productRow = {}) {
+  return getProductDisplayTitleForStats(productRow)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isLiquidSmartPriceProduct(productRow = {}) {
+  const title = normalizeStatsProductTitle(productRow);
+  return /\b30\s*ml\b/i.test(title);
+}
+
+function isExcludedDisposableSmartPriceProduct(productRow = {}) {
+  const title = normalizeStatsProductTitle(productRow);
+
+  return (
+    /(^|\s)(1500|1\s*5\s*k|1\.5\s*k)(\s|$)/i.test(title) ||
+    /(^|\s)(2000|2\s*k)(\s|$)/i.test(title)
+  );
+}
+
+function isPodSmartPriceProduct(productRow = {}) {
+  if (isLiquidSmartPriceProduct(productRow)) return false;
+
+  const title = normalizeStatsProductTitle(productRow);
+
+  // Cartridges already work correctly and must stay per-product, not grouped with pods.
+  if (title.includes("cartridge") || title.includes("catridge")) return false;
+
+  const categoryKey = getProductRowStatsCategory(productRow);
+
+  if (categoryKey === "pods" || categoryKey === "pod") {
+    return true;
+  }
+
+  return title.includes("pod");
+}
+
+function isDisposableSmartPriceProduct(productRow = {}) {
+  if (isLiquidSmartPriceProduct(productRow)) return false;
+  if (isPodSmartPriceProduct(productRow)) return false;
+  if (isExcludedDisposableSmartPriceProduct(productRow)) return false;
+
+  const categoryKey = getProductRowStatsCategory(productRow);
+
+  if (categoryKey === "disposables" || categoryKey === "disposable") {
+    return true;
+  }
+
+  const title = normalizeStatsProductTitle(productRow);
+
+  // Cartridges already work correctly and must stay per-product.
+  if (title.includes("cartridge") || title.includes("catridge")) return false;
+
+  return /\b(25k|30k|40k|20k|3000|15000|20000|25000|30000|40000)\b/i.test(title);
+}
+
+function getOrderLiquidSmartQty(order) {
+  return (Array.isArray(order?.items) ? order.items : []).reduce((sum, productRow) => {
+    if (!isLiquidSmartPriceProduct(productRow)) return sum;
+    return sum + getProductRowStatsQty(productRow);
+  }, 0);
+}
+
+function getOrderPodSmartQty(order) {
+  return (Array.isArray(order?.items) ? order.items : []).reduce((sum, productRow) => {
+    if (!isPodSmartPriceProduct(productRow)) return sum;
+    return sum + getProductRowStatsQty(productRow);
+  }, 0);
+}
+
+function getOrderDisposableSmartQty(order) {
+  return (Array.isArray(order?.items) ? order.items : []).reduce((sum, productRow) => {
+    if (!isDisposableSmartPriceProduct(productRow)) return sum;
+    return sum + getProductRowStatsQty(productRow);
+  }, 0);
+}
+
+function getStatsTierQtyForProductRow(order, productRow) {
+  if (isLiquidSmartPriceProduct(productRow)) {
+    return getOrderLiquidSmartQty(order);
+  }
+
+  if (isPodSmartPriceProduct(productRow)) {
+    return getOrderPodSmartQty(order);
+  }
+
+  if (isDisposableSmartPriceProduct(productRow)) {
+    return getOrderDisposableSmartQty(order);
+  }
+
+  return getProductRowStatsQty(productRow);
+}
+
   // function getOrderOriginalItemsTotalZl(order) {
   //   const items = Array.isArray(order?.items) ? order.items : [];
 
@@ -2827,15 +2930,18 @@ function buildDailyStatsMessage(point, orders, dayKey, extra = {}) {
 
       const flavors = Array.isArray(row?.flavors) ? row.flavors : [];
 
-      const productOrderQty = flavors.reduce((sum, flavor) => {
-        return sum + Math.max(0, Number(flavor?.qty || flavor?.quantity || 0));
-      }, 0);
+      const tierQtyForThisRow = getStatsTierQtyForProductRow(order, row);
 
       const tierLabel = (() => {
-        if (productOrderQty >= 5) return "[5]";
-        if (productOrderQty >= 3) return "[3-4]";
-        if (productOrderQty >= 2) return "[2]";
+
+        if (tierQtyForThisRow >= 5) return "[5]";
+
+        if (tierQtyForThisRow >= 3) return "[3-4]";
+
+        if (tierQtyForThisRow >= 2) return "[2]";
+
         return "[1]";
+
       })();
 
       for (const flavor of flavors) {
