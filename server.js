@@ -8817,7 +8817,7 @@ if (TG_BOT_TOKEN) {
       if (!order) return ctx.answerCbQuery("Заказ не найден");
 
       // списываем склад только один раз
-      if (!order.stockCommittedAt) {
+      if (String(order?.payment?.method || "").trim().toLowerCase() !== "cash") {
         await commitOrderStock(order);
         order.stockCommittedAt = new Date();
       }
@@ -9135,6 +9135,11 @@ try {
         return;
       }
 
+      if (!order.stockCommittedAt) {
+        await commitOrderStock(order);
+        order.stockCommittedAt = new Date();
+      }
+
       order.status = "completed";
       order.completedAt = new Date();
       await order.save();
@@ -9285,6 +9290,11 @@ try {
       if (String(order.status || "") === "completed") {
         await ctx.answerCbQuery("Заказ уже выполнен");
         return;
+      }
+
+      if (!order.stockCommittedAt) {
+        await commitOrderStock(order);
+        order.stockCommittedAt = new Date();
       }
 
       order.status = "completed";
