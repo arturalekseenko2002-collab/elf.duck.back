@@ -2430,6 +2430,15 @@ function allocateCashbackBySubtotal(orderTotal, orderCashback, itemSubtotal) {
 }
 
 async function sendDailyPointStatsToGoogleSheet(point, orders, dayKey) {
+  const pointSearchText = normalizePhotoLookupText(
+    [point?.key, point?.title, point?.address, point?.name, point?.label]
+      .filter(Boolean)
+      .join(" | ")
+  );
+
+  if (!pointSearchText.includes("praga")) {
+    return { ok: false, reason: "SKIP_NOT_PRAGA" };
+  }
   if (!GOOGLE_STATS_WEBHOOK_URL) return { ok: false };
 
   const productMap = new Map();
