@@ -14,6 +14,7 @@ import Cart from "./models/Cart.js";
 import Order from "./models/Order.js";
 
 const APP_URL = String(process.env.APP_URL || process.env.WEBAPP_URL || "https://elf-duck.vercel.app").trim();
+const GOOGLE_STATS_WEBHOOK_URL = String(process.env.GOOGLE_STATS_WEBHOOK_URL || "").trim();
 
 let bot = null;
 
@@ -2428,6 +2429,84 @@ function allocateCashbackBySubtotal(orderTotal, orderCashback, itemSubtotal) {
   return Number(((cashback * subtotal) / total).toFixed(2));
 }
 
+async function sendDailyPointStatsToGoogleSheet(point, orders, dayKey) {
+  if (!GOOGLE_STATS_WEBHOOK_URL) return { ok: false };
+
+  const productMap = new Map();
+
+  for (const order of Array.isArray(orders) ? orders : []) {
+    for (const row of Array.isArray(order?.items) ? order.items : []) {
+      const model =
+        [row?.productTitle1, row?.productTitle2].filter(Boolean).join(" ").trim() ||
+        String(row?.productKey || "Товар");
+
+      if (!productMap.has(model)) {
+        productMap.set(model, {
+          model,
+          tier1: 0,
+          tier2: 0,
+          tier34: 0,
+          tier5: 0,
+        });
+      }
+
+      const item = productMap.get(model);
+      const qty = (Array.isArray(row?.flavors) ? row.flavors : []).reduce(
+        (sum, fl) => sum + Math.max(0, Number(fl?.qty || fl?.quantity || 0)),
+        0
+      );
+
+      if (qty >= 5) item.tier5 += qty;
+      else if (qty >= 3) item.tier34 += qty;
+      else if (qty >= 2) item.tier2 += qty;
+      else item.tier1 += qty;
+    }
+  }
+
+  const discounts = Number(
+    (Array.isArray(orders) ? orders : [])
+      .reduce((sum, order) => {
+        return (
+          sum +
+          Number(order?.payment?.cashbackAppliedZl || 0) +
+          Number(order?.payment?.referralFirstOrderDiscountTotalZl || 0)
+        );
+      }, 0)
+      .toFixed(2)
+  );
+
+  const payload = {
+    date: String(dayKey || ""),
+    point: String(point?.title || point?.address || point?.key || ""),
+    products: Array.from(productMap.values()),
+    totals: {
+      discounts,
+    },
+  };
+
+  try {
+    const r = await fetch(GOOGLE_STATS_WEBHOOK_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await r.json().catch(() => ({}));
+
+    if (!r.ok || data?.ok === false) {
+      console.error("sendDailyPointStatsToGoogleSheet failed", data);
+      return { ok: false };
+    }
+
+    return { ok: true };
+  } catch (e) {
+    console.error("sendDailyPointStatsToGoogleSheet error:", e);
+    return { ok: false };
+  }
+}
+
 function formatPaymentMethodLabel(method) {
   const key = String(method || "").trim().toLowerCase();
 
@@ -3310,9 +3389,10 @@ async function processDailyPointStats() {
         userDisplayMap,
       });
 
-      if (sent?.ok) {
-        DAILY_STATS_RUNTIME_SENT.add(dedupeKey);
-      }
+    if (sent?.ok) {
+      await sendDailyPointStatsToGoogleSheet(point, dayOrders, dayKey);
+      DAILY_STATS_RUNTIME_SENT.add(dedupeKey);
+    }
     }
   } catch (e) {
     console.error("processDailyPointStats error:", e);
