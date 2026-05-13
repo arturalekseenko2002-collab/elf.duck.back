@@ -2429,6 +2429,142 @@ function allocateCashbackBySubtotal(orderTotal, orderCashback, itemSubtotal) {
   return Number(((cashback * subtotal) / total).toFixed(2));
 }
 
+function normalizeStatsSheetModelName(input) {
+  return String(input || "")
+    .trim()
+    .toUpperCase()
+    .replace(/🦆/g, "")
+    .replace(/\bELF\s+DUCK\s+D3\b/g, "ELF D3")
+    .replace(/\bELF\s+DUCK\s+1500\b/g, "1500")
+    .replace(/\bELF\s+DUCK\s+2000\b/g, "2000")
+    .replace(/\bELF\s+DUCK\s+3000\s+RI\b/g, "3000 RI")
+    .replace(/\bCHASER\s+BLACK\b/g, "BLACK")
+    .replace(/\bCHASER\s+FOR\s+PODS\b/g, "FOR PODS")
+    .replace(/\b30\s*ML\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getStatsSheetProductQty(row = {}) {
+  const flavors = Array.isArray(row?.flavors) ? row.flavors : [];
+
+  const flavorsQty = flavors.reduce((sum, fl) => {
+    return sum + Math.max(0, Number(fl?.qty || fl?.quantity || 0));
+  }, 0);
+
+  if (flavorsQty > 0) return flavorsQty;
+
+  return Math.max(0, Number(row?.qty || row?.quantity || 0));
+}
+
+function getStatsSheetProductTitle(row = {}) {
+  return (
+    [row?.productTitle1, row?.productTitle2].filter(Boolean).join(" ").trim() ||
+    String(row?.productTitle || row?.title || row?.productKey || "Товар").trim()
+  );
+}
+
+function normalizeStatsSheetProductTitle(row = {}) {
+  return getStatsSheetProductTitle(row)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getStatsSheetProductCategory(row = {}) {
+  return String(
+    row?.categoryKey ||
+      row?.productCategoryKey ||
+      row?.category ||
+      row?.snapshot?.categoryKey ||
+      row?.product?.categoryKey ||
+      ""
+  )
+    .trim()
+    .toLowerCase();
+}
+
+function isStatsSheetLiquid(row = {}) {
+  return /\b30\s*ml\b/i.test(normalizeStatsSheetProductTitle(row));
+}
+
+function isStatsSheetExcludedDisposable(row = {}) {
+  const title = normalizeStatsSheetProductTitle(row);
+
+  return (
+    /(^|\s)(1500|1\s*5\s*k|1\.5\s*k)(\s|$)/i.test(title) ||
+    /(^|\s)(2000|2\s*k)(\s|$)/i.test(title)
+  );
+}
+
+function isStatsSheetPod(row = {}) {
+  if (isStatsSheetLiquid(row)) return false;
+
+  const title = normalizeStatsSheetProductTitle(row);
+  if (title.includes("cartridge") || title.includes("catridge")) return false;
+
+  const categoryKey = getStatsSheetProductCategory(row);
+  if (categoryKey === "pods" || categoryKey === "pod") return true;
+
+  return title.includes("pod");
+}
+
+function isStatsSheetDisposable(row = {}) {
+  if (isStatsSheetLiquid(row)) return false;
+  if (isStatsSheetPod(row)) return false;
+  if (isStatsSheetExcludedDisposable(row)) return false;
+
+  const categoryKey = getStatsSheetProductCategory(row);
+  if (categoryKey === "disposables" || categoryKey === "disposable") return true;
+
+  const title = normalizeStatsSheetProductTitle(row);
+  if (title.includes("cartridge") || title.includes("catridge")) return false;
+
+  return /\b(25k|30k|40k|20k|3000|15000|20000|25000|30000|40000)\b/i.test(title);
+}
+
+function getStatsSheetOrderLiquidQty(order) {
+  return (Array.isArray(order?.items) ? order.items : []).reduce((sum, row) => {
+    if (!isStatsSheetLiquid(row)) return sum;
+    return sum + getStatsSheetProductQty(row);
+  }, 0);
+}
+
+function getStatsSheetOrderPodQty(order) {
+  return (Array.isArray(order?.items) ? order.items : []).reduce((sum, row) => {
+    if (!isStatsSheetPod(row)) return sum;
+    return sum + getStatsSheetProductQty(row);
+  }, 0);
+}
+
+function getStatsSheetOrderDisposableQty(order) {
+  return (Array.isArray(order?.items) ? order.items : []).reduce((sum, row) => {
+    if (!isStatsSheetDisposable(row)) return sum;
+    return sum + getStatsSheetProductQty(row);
+  }, 0);
+}
+
+function getStatsSheetTierQty(order, row) {
+  if (isStatsSheetLiquid(row)) return getStatsSheetOrderLiquidQty(order);
+  if (isStatsSheetPod(row)) return getStatsSheetOrderPodQty(order);
+  if (isStatsSheetDisposable(row)) return getStatsSheetOrderDisposableQty(order);
+
+  return getStatsSheetProductQty(row);
+}
+
+function getStatsSheetTierKeyFromQty(qty) {
+  const n = Math.max(0, Number(qty || 0));
+
+  if (n >= 5) return "tier5";
+  if (n >= 3) return "tier34";
+  if (n >= 2) return "tier2";
+
+  return "tier1";
+}
+
 async function sendDailyPointStatsToGoogleSheet(point, orders, dayKey) {
   const pointSearchText = normalizePhotoLookupText(
     [point?.key, point?.title, point?.address, point?.name, point?.label]
@@ -2447,11 +2583,14 @@ async function sendDailyPointStatsToGoogleSheet(point, orders, dayKey) {
     for (const row of Array.isArray(order?.items) ? order.items : []) {
       const model =
         [row?.productTitle1, row?.productTitle2].filter(Boolean).join(" ").trim() ||
-        String(row?.productKey || "Товар");
+        String(row?.productTitle || row?.title || row?.productKey || "Товар");
 
-      if (!productMap.has(model)) {
-        productMap.set(model, {
-          model,
+      const modelKey = normalizeStatsSheetModelName(model);
+      if (!modelKey) continue;
+
+      if (!productMap.has(modelKey)) {
+        productMap.set(modelKey, {
+          model: modelKey,
           tier1: 0,
           tier2: 0,
           tier34: 0,
@@ -2459,16 +2598,13 @@ async function sendDailyPointStatsToGoogleSheet(point, orders, dayKey) {
         });
       }
 
-      const item = productMap.get(model);
-      const qty = (Array.isArray(row?.flavors) ? row.flavors : []).reduce(
-        (sum, fl) => sum + Math.max(0, Number(fl?.qty || fl?.quantity || 0)),
-        0
-      );
+      const item = productMap.get(modelKey);
 
-      if (qty >= 5) item.tier5 += qty;
-      else if (qty >= 3) item.tier34 += qty;
-      else if (qty >= 2) item.tier2 += qty;
-      else item.tier1 += qty;
+      const soldQty = getStatsSheetProductQty(row);
+      const tierQty = getStatsSheetTierQty(order, row);
+      const tierKey = getStatsSheetTierKeyFromQty(tierQty);
+
+      item[tierKey] = Number(item[tierKey] || 0) + soldQty;
     }
   }
 
