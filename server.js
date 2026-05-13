@@ -8848,7 +8848,7 @@ if (TG_BOT_TOKEN) {
       // --- PATCH 1: replace block ---
       await order.save();
 
-      await applyOrderCashback(order);
+      // await applyOrderCashback(order);
 
       const freshPaidOrder = await Order.findById(order._id);
       if (!freshPaidOrder) {
@@ -9138,6 +9138,8 @@ try {
       order.status = "completed";
       order.completedAt = new Date();
       await order.save();
+    
+      await applyOrderCashback(order);
 
       const deliveryMessageIds = Array.isArray(order.managerDeliveryMessageIds)
         ? order.managerDeliveryMessageIds.filter(Boolean)
@@ -9288,6 +9290,8 @@ try {
       order.status = "completed";
       order.completedAt = new Date();
       await order.save();
+
+      await applyOrderCashback(order);
 
       const arrivalMessageIds = Array.isArray(order.managerArrivalMessageIds)
         ? order.managerArrivalMessageIds.filter(Boolean)
