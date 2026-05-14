@@ -2312,9 +2312,21 @@ async function processStaleCarts() {
     const timeoutMinutes = Math.max(1, Number(CART_AUTO_CLEAR_AFTER_MINUTES || 10));
     const cutoff = new Date(Date.now() - timeoutMinutes * 60 * 1000);
 
+    const now = new Date();
+
     const staleCarts = await Cart.find({
-      updatedAt: { $lte: cutoff },
       items: { $exists: true, $ne: [] },
+      $or: [
+        { cartAutoClearAt: { $lte: now } },
+        {
+          cartAutoClearAt: { $exists: false },
+          updatedAt: { $lte: cutoff },
+        },
+        {
+          cartAutoClearAt: null,
+          updatedAt: { $lte: cutoff },
+        },
+      ],
     });
 
     for (const cart of staleCarts) {
@@ -2335,7 +2347,15 @@ async function processStaleCarts() {
         }
 
         cart.items = [];
+
         cart.checkout = {};
+
+        cart.stockContextId = "";
+
+        cart.reservedContextId = "";
+
+        cart.cartAutoClearAt = null;
+
         cart.staleClearedAt = new Date();
 
         await cart.save();
@@ -6791,6 +6811,10 @@ const inpostPricing =
 
     const nextStockContextId = nextContextId ? String(nextContextId) : "";
 
+    const existingCartAutoClearAt = existing?.cartAutoClearAt
+      ? new Date(existing.cartAutoClearAt)
+      : null;
+
     const cleanItemsWithReserveContext = cleanItems.map((item) => ({
       ...item,
       stockContextId: nextStockContextId,
@@ -7228,18 +7252,28 @@ for (const d of deltas) {
     });
   }
 }
+
+    const hasCartItems = cleanItemsWithReserveContext.length > 0;
+    const hasReserveDelta = deltas.some((d) => Number(d?.delta || 0) !== 0);
+
+    const shouldResetCartAutoClearTimer =
+      hasCartItems && (!existingCartAutoClearAt || hasReserveDelta);
+
+    const cartAutoClearAt = hasCartItems
+      ? shouldResetCartAutoClearTimer
+        ? new Date(Date.now() + Math.max(1, Number(CART_AUTO_CLEAR_AFTER_MINUTES || 10)) * 60 * 1000)
+        : existingCartAutoClearAt
+      : null;
+
+
     // ================= END STOCK RESERVATION =================
 
     console.log("[CART][SAVE][FINAL]", {
-
       telegramId,
-
       deltas,
-
       stockContextId: nextStockContextId,
-
+      cartAutoClearAt,
       cleanItems: cleanItemsWithReserveContext,
-
     });
 
     const updated = await Cart.findOneAndUpdate(
@@ -7256,6 +7290,7 @@ for (const d of deltas) {
           checkout: {
             stockContextId: nextStockContextId,
             reservedContextId: nextStockContextId,
+            cartAutoClearAt,
             deliveryType: finalCheckoutDeliveryType,
             deliveryMethod: finalCheckoutDeliveryMethod,
             pickupPointId: finalCheckoutPickupPointId,
