@@ -2131,42 +2131,52 @@ async function annulOrderBecauseNoPaymentConfirm(order, options = {}) {
 
 function getCartStockContextId(cart) {
   const checkout = cart?.checkout || {};
-  const firstItem = Array.isArray(cart?.items) && cart.items.length ? cart.items[0] : {};
+  const items = Array.isArray(cart?.items) ? cart.items : [];
+  const firstItem = items.length ? items[0] : {};
 
   const directContextId = String(
-    checkout?.stockContextId ||
+    cart?.stockContextId ||
+      cart?.reservedContextId ||
+      cart?.contextId ||
+      cart?.pickupPointId ||
+      cart?.checkoutPickupPointId ||
+      checkout?.stockContextId ||
+      checkout?.reservedContextId ||
       checkout?.contextId ||
       checkout?.pickupPointId ||
-      cart?.stockContextId ||
-      cart?.pickupPointId ||
       firstItem?.stockContextId ||
+      firstItem?.reservedContextId ||
       firstItem?.contextId ||
       firstItem?.pickupPointId ||
+      firstItem?.reservedPickupPointId ||
       ""
   ).trim();
 
   if (directContextId) return directContextId;
 
   const deliveryType = String(
-    checkout?.deliveryType ||
-      checkout?.type ||
+    cart?.checkoutDeliveryType ||
       cart?.deliveryType ||
+      checkout?.deliveryType ||
+      checkout?.type ||
       firstItem?.deliveryType ||
       ""
   ).trim();
 
   const deliveryMethod = String(
-    checkout?.deliveryMethod ||
-      checkout?.method ||
+    cart?.checkoutDeliveryMethod ||
       cart?.deliveryMethod ||
+      checkout?.deliveryMethod ||
+      checkout?.method ||
       firstItem?.deliveryMethod ||
       ""
   ).trim();
 
   if (deliveryType === "pickup") {
     return String(
-      checkout?.pickupPointId ||
+      cart?.checkoutPickupPointId ||
         cart?.pickupPointId ||
+        checkout?.pickupPointId ||
         firstItem?.pickupPointId ||
         ""
     ).trim();
@@ -2312,31 +2322,20 @@ async function processStaleCarts() {
         const releaseResult = await releaseReservedStockForCart(cart);
 
         console.log("[CART AUTO CLEAR] release result", {
-
           cartId: String(cart?._id || ""),
-
           ok: releaseResult?.ok,
-
           reason: releaseResult?.reason || "",
-
           released: Number(releaseResult?.released || 0),
-
           checkout: cart?.checkout || {},
-
           firstItem: Array.isArray(cart?.items) && cart.items.length ? cart.items[0] : null,
-
         });
 
         if (releaseResult?.ok === false) {
-
           continue;
-
         }
 
         cart.items = [];
-
         cart.checkout = {};
-
         cart.staleClearedAt = new Date();
 
         await cart.save();
@@ -6790,6 +6789,14 @@ const inpostPricing =
       pickupPointId: finalCheckoutPickupPointId,
     });
 
+    const nextStockContextId = nextContextId ? String(nextContextId) : "";
+
+    const cleanItemsWithReserveContext = cleanItems.map((item) => ({
+      ...item,
+      stockContextId: nextStockContextId,
+      reservedContextId: nextStockContextId,
+    }));
+
     // ===== DEBUG: stock context mismatch catcher =====
     const dbg = {
       telegramId,
@@ -6840,7 +6847,7 @@ const inpostPricing =
     };
 
     const prevSum = sumItems(existing?.items);
-    const nextSum = sumItems(cleanItems);
+    const nextSum = sumItems(cleanItemsWithReserveContext);
 
     const normFlavorKey = (v) => String(v || "").trim().replace(/,+$/, "");
 
@@ -7224,20 +7231,35 @@ for (const d of deltas) {
     // ================= END STOCK RESERVATION =================
 
     console.log("[CART][SAVE][FINAL]", {
-  telegramId,
-  deltas,
-  cleanItems,
-});
+
+      telegramId,
+
+      deltas,
+
+      stockContextId: nextStockContextId,
+
+      cleanItems: cleanItemsWithReserveContext,
+
+    });
 
     const updated = await Cart.findOneAndUpdate(
       { telegramId },
       {
         $set: {
           telegramId,
-          items: cleanItems,
+          items: cleanItemsWithReserveContext,
+          stockContextId: nextStockContextId,
+          reservedContextId: nextStockContextId,
           checkoutDeliveryType: finalCheckoutDeliveryType,
           checkoutDeliveryMethod: finalCheckoutDeliveryMethod,
           checkoutPickupPointId: finalCheckoutPickupPointId,
+          checkout: {
+            stockContextId: nextStockContextId,
+            reservedContextId: nextStockContextId,
+            deliveryType: finalCheckoutDeliveryType,
+            deliveryMethod: finalCheckoutDeliveryMethod,
+            pickupPointId: finalCheckoutPickupPointId,
+          },
 
           courierAddress,
           inpostData,
