@@ -6696,14 +6696,25 @@ app.put("/cart", async (req, res) => {
     const prevMethod = existing?.checkoutDeliveryMethod ?? null;
     const prevPickup = existing?.checkoutPickupPointId ?? null;
 
-    const finalCheckoutDeliveryType =
-      forceCheckoutSelection && checkoutDeliveryType
-        ? checkoutDeliveryType
-        : String(existing?.checkoutDeliveryType || checkoutDeliveryType || "pickup");
+    const existingItemsCount = Array.isArray(existing?.items) ? existing.items.length : 0;
+    const nextItemsCount = Array.isArray(cleanItems) ? cleanItems.length : 0;
+
+    const isStartingNewCart = existingItemsCount === 0 && nextItemsCount > 0;
+    const isClearingCart = nextItemsCount === 0;
+
+    const finalCheckoutDeliveryType = isClearingCart
+      ? null
+      : isStartingNewCart && checkoutDeliveryType
+      ? checkoutDeliveryType
+      : forceCheckoutSelection && checkoutDeliveryType
+      ? checkoutDeliveryType
+      : String(existing?.checkoutDeliveryType || checkoutDeliveryType || "pickup");
 
     const finalCheckoutDeliveryMethod =
       finalCheckoutDeliveryType === "delivery"
-        ? (forceCheckoutSelection && checkoutDeliveryMethod
+        ? (isStartingNewCart && checkoutDeliveryMethod
+            ? checkoutDeliveryMethod
+            : forceCheckoutSelection && checkoutDeliveryMethod
             ? checkoutDeliveryMethod
             : String(existing?.checkoutDeliveryMethod || checkoutDeliveryMethod || "courier"))
         : "courier";
@@ -6727,8 +6738,15 @@ const inpostPricing =
     ? resolveInpostDeliveryPricing(cleanItems, products)
     : { packageUnits: 0, deliveryFeeZl: 0 };
 
-    const finalCheckoutPickupPointId =
-      forceCheckoutSelection ? checkoutPickupPointId : (prevPickup ?? checkoutPickupPointId ?? null);
+    const finalCheckoutPickupPointId = isClearingCart
+      ? null
+      : finalCheckoutDeliveryType !== "pickup"
+      ? null
+      : isStartingNewCart
+      ? checkoutPickupPointId
+      : forceCheckoutSelection
+      ? checkoutPickupPointId
+      : (prevPickup ?? checkoutPickupPointId ?? null);
 
     // ✅ Guard: pickup requires a pickup point when cart has items
     if (finalCheckoutDeliveryType === "pickup" && !finalCheckoutPickupPointId && cleanItems.length > 0) {
@@ -7282,19 +7300,23 @@ for (const d of deltas) {
         $set: {
           telegramId,
           items: cleanItemsWithReserveContext,
-          stockContextId: nextStockContextId,
-          reservedContextId: nextStockContextId,
+          stockContextId: isClearingCart ? "" : nextStockContextId,
+          reservedContextId: isClearingCart ? "" : nextStockContextId,
+          cartAutoClearAt,
+
           checkoutDeliveryType: finalCheckoutDeliveryType,
           checkoutDeliveryMethod: finalCheckoutDeliveryMethod,
           checkoutPickupPointId: finalCheckoutPickupPointId,
-          checkout: {
-            stockContextId: nextStockContextId,
-            reservedContextId: nextStockContextId,
-            cartAutoClearAt,
-            deliveryType: finalCheckoutDeliveryType,
-            deliveryMethod: finalCheckoutDeliveryMethod,
-            pickupPointId: finalCheckoutPickupPointId,
-          },
+
+          checkout: isClearingCart
+            ? {}
+            : {
+                stockContextId: nextStockContextId,
+                reservedContextId: nextStockContextId,
+                deliveryType: finalCheckoutDeliveryType,
+                deliveryMethod: finalCheckoutDeliveryMethod,
+                pickupPointId: finalCheckoutPickupPointId,
+              },
 
           courierAddress,
           inpostData,
@@ -8197,6 +8219,11 @@ app.post("/orders/confirm", async (req, res) => {
       {
         $set: {
           items: [],
+          checkout: {},
+          stockContextId: "",
+          reservedContextId: "",
+          cartAutoClearAt: null,
+          staleClearedAt: null,
           checkoutDeliveryType: null,
           checkoutDeliveryMethod: null,
           checkoutPickupPointId: null,
