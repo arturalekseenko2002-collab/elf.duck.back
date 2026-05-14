@@ -16,7 +16,7 @@ import Order from "./models/Order.js";
 const APP_URL = String(process.env.APP_URL || process.env.WEBAPP_URL || "https://elf-duck.vercel.app").trim();
 const GOOGLE_STATS_WEBHOOK_URL = String(process.env.GOOGLE_STATS_WEBHOOK_URL || "").trim();
 
-const CART_AUTO_CLEAR_AFTER_MINUTES = Number(process.env.CART_AUTO_CLEAR_AFTER_MINUTES || 1);
+const CART_AUTO_CLEAR_AFTER_MINUTES = Number(process.env.CART_AUTO_CLEAR_AFTER_MINUTES || 10);
 const CART_AUTO_CLEAR_INTERVAL_MS = Number(process.env.CART_AUTO_CLEAR_INTERVAL_MS || 60 * 1000);
 
 let bot = null;
