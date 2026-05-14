@@ -2131,16 +2131,35 @@ async function annulOrderBecauseNoPaymentConfirm(order, options = {}) {
 
 function getCartStockContextId(cart) {
   const checkout = cart?.checkout || {};
+  const firstItem = Array.isArray(cart?.items) && cart.items.length ? cart.items[0] : {};
+
+  const directContextId = String(
+    checkout?.stockContextId ||
+      checkout?.contextId ||
+      checkout?.pickupPointId ||
+      cart?.stockContextId ||
+      cart?.pickupPointId ||
+      firstItem?.stockContextId ||
+      firstItem?.contextId ||
+      firstItem?.pickupPointId ||
+      ""
+  ).trim();
+
+  if (directContextId) return directContextId;
 
   const deliveryType = String(
     checkout?.deliveryType ||
+      checkout?.type ||
       cart?.deliveryType ||
+      firstItem?.deliveryType ||
       ""
   ).trim();
 
   const deliveryMethod = String(
     checkout?.deliveryMethod ||
+      checkout?.method ||
       cart?.deliveryMethod ||
+      firstItem?.deliveryMethod ||
       ""
   ).trim();
 
@@ -2148,6 +2167,7 @@ function getCartStockContextId(cart) {
     return String(
       checkout?.pickupPointId ||
         cart?.pickupPointId ||
+        firstItem?.pickupPointId ||
         ""
     ).trim();
   }
@@ -2160,12 +2180,7 @@ function getCartStockContextId(cart) {
     return "delivery";
   }
 
-  return String(
-    checkout?.pickupPointId ||
-      cart?.pickupPointId ||
-      cart?.stockContextId ||
-      ""
-  ).trim();
+  return "";
 }
 
 function getCartItemFlavorRows(item = {}) {
@@ -2294,10 +2309,34 @@ async function processStaleCarts() {
 
     for (const cart of staleCarts) {
       try {
-        await releaseReservedStockForCart(cart);
+        const releaseResult = await releaseReservedStockForCart(cart);
+
+        console.log("[CART AUTO CLEAR] release result", {
+
+          cartId: String(cart?._id || ""),
+
+          ok: releaseResult?.ok,
+
+          reason: releaseResult?.reason || "",
+
+          released: Number(releaseResult?.released || 0),
+
+          checkout: cart?.checkout || {},
+
+          firstItem: Array.isArray(cart?.items) && cart.items.length ? cart.items[0] : null,
+
+        });
+
+        if (releaseResult?.ok === false) {
+
+          continue;
+
+        }
 
         cart.items = [];
+
         cart.checkout = {};
+
         cart.staleClearedAt = new Date();
 
         await cart.save();
