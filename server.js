@@ -16,6 +16,9 @@ import Order from "./models/Order.js";
 const APP_URL = String(process.env.APP_URL || process.env.WEBAPP_URL || "https://elf-duck.vercel.app").trim();
 const GOOGLE_STATS_WEBHOOK_URL = String(process.env.GOOGLE_STATS_WEBHOOK_URL || "").trim();
 
+const CART_AUTO_CLEAR_AFTER_MINUTES = Number(process.env.CART_AUTO_CLEAR_AFTER_MINUTES || 1);
+const CART_AUTO_CLEAR_INTERVAL_MS = Number(process.env.CART_AUTO_CLEAR_INTERVAL_MS || 60 * 1000);
+
 let bot = null;
 
 const app = express();
@@ -2123,6 +2126,191 @@ async function annulOrderBecauseNoPaymentConfirm(order, options = {}) {
   } catch (e) {
     console.error("annulOrderBecauseNoPaymentConfirm error:", e);
     return { ok: false, reason: "INTERNAL_ERROR" };
+  }
+}
+
+function getCartStockContextId(cart) {
+  const checkout = cart?.checkout || {};
+
+  const deliveryType = String(
+    checkout?.deliveryType ||
+      cart?.deliveryType ||
+      ""
+  ).trim();
+
+  const deliveryMethod = String(
+    checkout?.deliveryMethod ||
+      cart?.deliveryMethod ||
+      ""
+  ).trim();
+
+  if (deliveryType === "pickup") {
+    return String(
+      checkout?.pickupPointId ||
+        cart?.pickupPointId ||
+        ""
+    ).trim();
+  }
+
+  if (deliveryType === "delivery" && deliveryMethod === "inpost") {
+    return "delivery-2";
+  }
+
+  if (deliveryType === "delivery") {
+    return "delivery";
+  }
+
+  return String(
+    checkout?.pickupPointId ||
+      cart?.pickupPointId ||
+      cart?.stockContextId ||
+      ""
+  ).trim();
+}
+
+function getCartItemFlavorRows(item = {}) {
+  const flavors = Array.isArray(item?.flavors) ? item.flavors : [];
+
+  if (flavors.length) {
+    return flavors
+      .map((flavor) => ({
+        flavorKey: String(
+          flavor?.flavorKey ||
+            flavor?.key ||
+            flavor?.id ||
+            flavor?.flavorId ||
+            ""
+        ).trim(),
+        qty: Math.max(0, Number(flavor?.qty || flavor?.quantity || 0)),
+      }))
+      .filter((row) => row.flavorKey && row.qty > 0);
+  }
+
+  const fallbackFlavorKey = String(
+    item?.flavorKey ||
+      item?.key ||
+      item?.flavorId ||
+      ""
+  ).trim();
+
+  const fallbackQty = Math.max(0, Number(item?.qty || item?.quantity || 0));
+
+  return fallbackFlavorKey && fallbackQty > 0
+    ? [{ flavorKey: fallbackFlavorKey, qty: fallbackQty }]
+    : [];
+}
+
+async function releaseReservedStockForCart(cart) {
+  if (!cart || !Array.isArray(cart?.items) || !cart.items.length) {
+    return { ok: true, released: 0 };
+  }
+
+  const contextId = getCartStockContextId(cart);
+
+  if (!contextId) {
+    return { ok: false, reason: "NO_CONTEXT_ID", released: 0 };
+  }
+
+  const pickupPointIds = await getSyncedPickupPointIdsByAnyPoint(contextId);
+
+  if (!pickupPointIds.length) {
+    return { ok: false, reason: "NO_PICKUP_POINT_IDS", released: 0 };
+  }
+
+  let released = 0;
+
+  for (const item of cart.items) {
+    const productKey = String(item?.productKey || "").trim();
+    if (!productKey) continue;
+
+    const flavorRows = getCartItemFlavorRows(item);
+    if (!flavorRows.length) continue;
+
+    const product = await Product.findOne({ productKey });
+    if (!product) continue;
+
+    let changed = false;
+    const productFlavors = Array.isArray(product?.flavors) ? product.flavors : [];
+
+    for (const cartFlavor of flavorRows) {
+      const flavorKey = String(cartFlavor?.flavorKey || "").trim();
+      const qty = Math.max(0, Number(cartFlavor?.qty || 0));
+
+      if (!flavorKey || qty <= 0) continue;
+
+      const productFlavor = productFlavors.find((flavor) => {
+        return String(
+          flavor?.flavorKey ||
+            flavor?.key ||
+            flavor?._id ||
+            ""
+        ).trim() === flavorKey;
+      });
+
+      if (!productFlavor) continue;
+
+      productFlavor.stockByPickupPoint = Array.isArray(productFlavor?.stockByPickupPoint)
+        ? productFlavor.stockByPickupPoint
+        : [];
+
+      for (const pickupPointId of pickupPointIds) {
+        const stockRow = productFlavor.stockByPickupPoint.find((row) => {
+          return String(row?.pickupPointId || "").trim() === String(pickupPointId || "").trim();
+        });
+
+        if (!stockRow) continue;
+
+        const currentReserved = Math.max(0, Number(stockRow?.reservedQty || 0));
+        const nextReserved = Math.max(0, currentReserved - qty);
+        const diff = currentReserved - nextReserved;
+
+        if (diff > 0) {
+          stockRow.reservedQty = nextReserved;
+          released += diff;
+          changed = true;
+        }
+      }
+    }
+
+    if (changed) {
+      product.markModified("flavors");
+      await product.save();
+      cacheInvalidate("products:");
+    }
+  }
+
+  return { ok: true, released };
+}
+
+async function processStaleCarts() {
+  try {
+    const timeoutMinutes = Math.max(1, Number(CART_AUTO_CLEAR_AFTER_MINUTES || 10));
+    const cutoff = new Date(Date.now() - timeoutMinutes * 60 * 1000);
+
+    const staleCarts = await Cart.find({
+      updatedAt: { $lte: cutoff },
+      items: { $exists: true, $ne: [] },
+    });
+
+    for (const cart of staleCarts) {
+      try {
+        await releaseReservedStockForCart(cart);
+
+        cart.items = [];
+        cart.checkout = {};
+        cart.staleClearedAt = new Date();
+
+        await cart.save();
+      } catch (cartErr) {
+        console.error("processStaleCarts cart error:", cartErr);
+      }
+    }
+
+    if (staleCarts.length > 0) {
+      console.log(`[CART AUTO CLEAR] cleared stale carts: ${staleCarts.length}`);
+    }
+  } catch (e) {
+    console.error("processStaleCarts error:", e);
   }
 }
 
@@ -9637,6 +9825,14 @@ setInterval(() => {
 setInterval(() => {
   processOrdersWithoutPaymentConfirm();
 }, 60 * 1000);
+
+setInterval(() => {
+  processStaleCarts();
+}, CART_AUTO_CLEAR_INTERVAL_MS);
+
+setTimeout(() => {
+  processStaleCarts();
+}, 10 * 1000);
 
 processOrdersWithoutPaymentConfirm();
 
