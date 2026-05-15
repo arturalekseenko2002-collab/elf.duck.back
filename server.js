@@ -2948,7 +2948,7 @@ async function sendDailyPointStatsToGoogleSheet(point, orders, dayKey) {
       body: JSON.stringify(payload),
     });
 
-    const data = await r.json().catch(() => ({})); //sdsf
+    const data = await r.json().catch(() => ({})); //sdsff
 
     console.log("[GOOGLE SHEET][STATS RESPONSE]", {
 
