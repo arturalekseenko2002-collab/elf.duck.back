@@ -2855,12 +2855,34 @@ async function sendDailyPointStatsToGoogleSheet(point, orders, dayKey) {
   }
 
   const productMap = new Map();
+  const assortmentItems = [];
 
   for (const order of Array.isArray(orders) ? orders : []) {
     for (const row of Array.isArray(order?.items) ? order.items : []) {
       const model =
         [row?.productTitle1, row?.productTitle2].filter(Boolean).join(" ").trim() ||
         String(row?.productTitle || row?.title || row?.productKey || "Товар");
+      
+      const flavorRows = Array.isArray(row?.flavors) ? row.flavors : [];
+
+      for (const flavor of flavorRows) {
+        const flavorQty = Math.max(0, Number(flavor?.qty || flavor?.quantity || 0));
+        if (flavorQty <= 0) continue;
+
+        assortmentItems.push({
+          model,
+          productKey: String(row?.productKey || "").trim(),
+          flavorKey: String(flavor?.flavorKey || flavor?.key || "").trim(),
+          flavorLabel: String(
+            flavor?.flavorLabel ||
+              flavor?.label ||
+              flavor?.name ||
+              flavor?.flavorKey ||
+              ""
+          ).trim(),
+          qty: flavorQty,
+        });
+      }
 
       const modelKey = normalizeStatsSheetModelName(model);
       if (!modelKey) continue;
@@ -2929,12 +2951,21 @@ async function sendDailyPointStatsToGoogleSheet(point, orders, dayKey) {
   const payload = {
 
     date: String(dayKey || ""),
+
     point: String(point?.title || point?.address || point?.key || ""),
+
     products: Array.from(productMap.values()),
+
+    assortmentItems,
+
     totals: {
+
       discounts,
+
       clients: clientsCount,
+
       clientsCount,
+
     },
 
   };
@@ -2950,7 +2981,7 @@ async function sendDailyPointStatsToGoogleSheet(point, orders, dayKey) {
 
     const data = await r.json().catch(() => ({})); //sdsff
 
-    console.log("[GOOGLE SHEET][STATS RESPONSE]", {
+    console.log("[GOOGLE SHEET][STATS RESPONSE]", JSON.stringify({
 
       httpOk: r.ok,
 
@@ -2962,11 +2993,17 @@ async function sendDailyPointStatsToGoogleSheet(point, orders, dayKey) {
 
       productsCount: Array.isArray(payload?.products) ? payload.products.length : 0,
 
+      assortmentItemsCount: Array.isArray(payload?.assortmentItems)
+
+        ? payload.assortmentItems.length
+
+        : 0,
+
       totals: payload?.totals || {},
 
       response: data,
 
-    });
+    }, null, 2));
 
     if (!r.ok || data?.ok === false) {
 
