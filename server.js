@@ -2921,12 +2921,33 @@ async function sendDailyPointStatsToGoogleSheet(point, orders, dayKey) {
 
     const data = await r.json().catch(() => ({}));
 
+    console.log("[GOOGLE SHEET][STATS RESPONSE]", {
+
+      httpOk: r.ok,
+
+      status: r.status,
+
+      point: String(point?.title || point?.address || point?.key || ""),
+
+      dayKey: String(dayKey || ""),
+
+      productsCount: Array.isArray(payload?.products) ? payload.products.length : 0,
+
+      totals: payload?.totals || {},
+
+      response: data,
+
+    });
+
     if (!r.ok || data?.ok === false) {
+
       console.error("sendDailyPointStatsToGoogleSheet failed", data);
-      return { ok: false };
+
+      return { ok: false, response: data };
+
     }
 
-    return { ok: true };
+    return { ok: true, response: data };
   } catch (e) {
     console.error("sendDailyPointStatsToGoogleSheet error:", e);
     return { ok: false };
