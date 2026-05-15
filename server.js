@@ -2684,6 +2684,8 @@ function normalizeStatsSheetModelName(input) {
     .replace(/\bELF\s+DUCK\s+1500\b/g, "1500")
     .replace(/\bELF\s+DUCK\s+2000\b/g, "2000")
     .replace(/\bELF\s+DUCK\s+3000\s+RI\b/g, "3000 RI")
+    .replace(/\bELF\s+DUCK\s+3000\b/g, "3000 RI")
+    .replace(/\bELF\s+3000\b/g, "3000 RI")
     .replace(/\bCHASER\s+BLACK\b/g, "BLACK")
     .replace(/\bCHASER\s+FOR\s+PODS\b/g, "FOR PODS")
     .replace(/\b30\s*ML\b/g, "")
@@ -3705,6 +3707,19 @@ async function processDailyPointStats() {
     const now = new Date();
     const nowHHMM = getWarsawTimeHHMM(now);
     const dayKey = getWarsawDayKey(now);
+    console.log("[DAILY STATS][SEND]", {
+
+      pointKey: String(point?.key || ""),
+
+      pointTitle: String(point?.title || ""),
+
+      dayKey,
+
+      warsawToday: getWarsawDayKey(),
+
+      statsSendTime: getPointStatsSendTime(point),
+
+    });
     const ordersSince = new Date(Date.now() - 48 * 60 * 60 * 1000);
 
     const points = await PickupPoint.find(
