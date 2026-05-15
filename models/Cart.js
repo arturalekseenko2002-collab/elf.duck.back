@@ -32,6 +32,46 @@ const cartSchema = new mongoose.Schema(
     // current cart items
     items: { type: [cartItemSchema], default: [] },
 
+    checkout: {
+
+      type: Object,
+
+      default: {},
+
+    },
+
+    stockContextId: {
+
+      type: String,
+
+      default: "",
+
+    },
+
+    reservedContextId: {
+
+      type: String,
+
+      default: "",
+
+    },
+
+    cartAutoClearAt: {
+
+      type: Date,
+
+      default: null,
+
+    },
+
+    staleClearedAt: {
+
+      type: Date,
+
+      default: null,
+
+    },
+
     // fixed (by first add) method of receiving goods
     checkoutDeliveryType: {
       type: String,
