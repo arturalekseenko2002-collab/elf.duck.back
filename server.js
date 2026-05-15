@@ -2946,7 +2946,7 @@ async function sendDailyPointStatsToGoogleSheet(point, orders, dayKey) {
       )
 
       .filter(Boolean)
-  ).size;
+  ).size; //dsfvas
 
   const payload = {
 
