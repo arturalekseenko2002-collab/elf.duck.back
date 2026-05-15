@@ -16,6 +16,18 @@ import Order from "./models/Order.js";
 const APP_URL = String(process.env.APP_URL || process.env.WEBAPP_URL || "https://elf-duck.vercel.app").trim();
 const GOOGLE_STATS_WEBHOOK_URL = String(process.env.GOOGLE_STATS_WEBHOOK_URL || "").trim();
 
+const GOOGLE_STATS_WEBHOOK_URL_PRAGA = String(
+
+  process.env.GOOGLE_STATS_WEBHOOK_URL_PRAGA || process.env.GOOGLE_STATS_WEBHOOK_URL || ""
+
+).trim();
+
+const GOOGLE_STATS_WEBHOOK_URL_MOKOTOW = String(
+
+  process.env.GOOGLE_STATS_WEBHOOK_URL_MOKOTOW || ""
+
+).trim();
+
 const CART_AUTO_CLEAR_AFTER_MINUTES = Number(process.env.CART_AUTO_CLEAR_AFTER_MINUTES || 10);
 const CART_AUTO_CLEAR_INTERVAL_MS = Number(process.env.CART_AUTO_CLEAR_INTERVAL_MS || 60 * 1000);
 
@@ -2820,10 +2832,27 @@ async function sendDailyPointStatsToGoogleSheet(point, orders, dayKey) {
       .join(" | ")
   );
 
-  if (!pointSearchText.includes("praga")) {
-    return { ok: false, reason: "SKIP_NOT_PRAGA" };
+  let googleStatsWebhookUrl = "";
+
+  if (pointSearchText.includes("praga")) {
+    googleStatsWebhookUrl = GOOGLE_STATS_WEBHOOK_URL_PRAGA;
+  } else if (pointSearchText.includes("mokot") || pointSearchText.includes("mokotow")) {
+    googleStatsWebhookUrl = GOOGLE_STATS_WEBHOOK_URL_MOKOTOW;
+  } else {
+    return {
+      ok: false,
+      reason: "SKIP_NO_GOOGLE_SHEET_FOR_POINT",
+      pointSearchText,
+    };
   }
-  if (!GOOGLE_STATS_WEBHOOK_URL) return { ok: false };
+
+  if (!googleStatsWebhookUrl) {
+    return {
+      ok: false,
+      reason: "NO_GOOGLE_STATS_WEBHOOK_URL",
+      pointSearchText,
+    };
+  }
 
   const productMap = new Map();
 
@@ -2911,7 +2940,7 @@ async function sendDailyPointStatsToGoogleSheet(point, orders, dayKey) {
   };
 
   try {
-    const r = await fetch(GOOGLE_STATS_WEBHOOK_URL, {
+    const r = await fetch(googleStatsWebhookUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
