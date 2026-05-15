@@ -3707,19 +3707,6 @@ async function processDailyPointStats() {
     const now = new Date();
     const nowHHMM = getWarsawTimeHHMM(now);
     const dayKey = getWarsawDayKey(now);
-    console.log("[DAILY STATS][SEND]", {
-
-      pointKey: String(point?.key || ""),
-
-      pointTitle: String(point?.title || ""),
-
-      dayKey,
-
-      warsawToday: getWarsawDayKey(),
-
-      statsSendTime: getPointStatsSendTime(point),
-
-    });
     const ordersSince = new Date(Date.now() - 48 * 60 * 60 * 1000);
 
     const points = await PickupPoint.find(
@@ -3747,6 +3734,19 @@ async function processDailyPointStats() {
     ).lean();
 
     for (const point of points) {
+      console.log("[DAILY STATS][SEND]", {
+
+        pointKey: String(point?.key || ""),
+
+        pointTitle: String(point?.title || ""),
+
+        dayKey,
+
+        warsawToday: getWarsawDayKey(),
+
+        statsSendTime: getPointStatsSendTime(point),
+
+      });
       const sendTime = getPointStatsSendTime(point, now);
       if (!sendTime) continue;
       if (nowHHMM < sendTime) continue;
