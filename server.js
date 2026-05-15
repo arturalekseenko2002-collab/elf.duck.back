@@ -5712,6 +5712,115 @@ app.post("/admin/carts/force-clear-stale", async (req, res) => {
   }
 });
 
+app.post("/admin/carts/clear-all-with-items", async (req, res) => {
+  try {
+    const adminToken = String(req.headers["x-admin-token"] || "").trim();
+
+    if (!adminToken || adminToken !== String(process.env.ADMIN_API_TOKEN || "").trim()) {
+      return res.status(401).json({
+        ok: false,
+        error: "UNAUTHORIZED",
+      });
+    }
+
+    const dryRun = req.body?.dryRun !== false;
+
+    const carts = await Cart.find({
+      items: { $exists: true, $ne: [] },
+    });
+
+    const results = [];
+
+    for (const cart of carts) {
+      try {
+        const releaseResult = dryRun
+          ? { ok: true, released: 0, dryRun: true }
+          : await releaseReservedStockForCart(cart);
+
+        if (releaseResult?.ok === false) {
+          results.push({
+            cartId: String(cart?._id || ""),
+            telegramId: String(cart?.telegramId || ""),
+            ok: false,
+            reason: releaseResult?.reason || "RELEASE_FAILED",
+            released: Number(releaseResult?.released || 0),
+            itemsCount: Array.isArray(cart?.items) ? cart.items.length : 0,
+          });
+
+          continue;
+        }
+
+        if (!dryRun) {
+          cart.items = [];
+          cart.checkout = {};
+          cart.stockContextId = "";
+          cart.reservedContextId = "";
+          cart.cartAutoClearAt = null;
+          cart.staleClearedAt = new Date();
+
+          cart.checkoutDeliveryType = null;
+          cart.checkoutDeliveryMethod = null;
+          cart.checkoutPickupPointId = null;
+
+          cart.arrivalTime = null;
+          cart.deliveryTimeWindow = null;
+          cart.comment = null;
+
+          cart.courierAddress = null;
+          cart.courierDistrict = null;
+          cart.deliveryFeeZl = 0;
+
+          cart.inpostDeliveryFeeZl = 0;
+          cart.inpostPackageUnits = 0;
+          cart.inpostData = {
+            fullName: null,
+            phone: null,
+            email: null,
+            city: null,
+            lockerAddress: null,
+          };
+
+          await cart.save();
+        }
+
+        results.push({
+          cartId: String(cart?._id || ""),
+          telegramId: String(cart?.telegramId || ""),
+          ok: true,
+          dryRun,
+          released: Number(releaseResult?.released || 0),
+          itemsCount: Array.isArray(cart?.items) ? cart.items.length : 0,
+        });
+      } catch (cartErr) {
+        results.push({
+          cartId: String(cart?._id || ""),
+          telegramId: String(cart?.telegramId || ""),
+          ok: false,
+          reason: String(cartErr?.message || cartErr || "UNKNOWN_ERROR"),
+          itemsCount: Array.isArray(cart?.items) ? cart.items.length : 0,
+        });
+      }
+    }
+
+    return res.json({
+      ok: true,
+      dryRun,
+      found: carts.length,
+      cleared: dryRun ? 0 : results.filter((row) => row.ok).length,
+      failed: results.filter((row) => !row.ok).length,
+      results,
+    });
+  } catch (e) {
+    console.error("clear all carts with items error:", e);
+
+    return res.status(500).json({
+      ok: false,
+      error: "SERVER_ERROR",
+      message: String(e?.message || e),
+    });
+  }
+});
+
 // ==== API ====
 
 app.get("/ping", (_, res) => res.json({ ok: true }));
