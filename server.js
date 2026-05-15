@@ -5821,6 +5821,96 @@ app.post("/admin/carts/clear-all-with-items", async (req, res) => {
   }
 });
 
+app.post("/admin/stock/clear-all-reserved", async (req, res) => {
+  try {
+    const adminToken = String(req.headers["x-admin-token"] || "").trim();
+
+    if (!adminToken || adminToken !== String(process.env.ADMIN_API_TOKEN || "").trim()) {
+      return res.status(401).json({
+        ok: false,
+        error: "UNAUTHORIZED",
+      });
+    }
+
+    const dryRun = req.body?.dryRun !== false;
+
+    const products = await Product.find(
+      {},
+      { productKey: 1, title1: 1, title2: 1, flavors: 1 }
+    ).lean();
+
+    const changes = [];
+
+    for (const product of products) {
+      const productKey = String(product?.productKey || "").trim();
+      const productTitle = [product?.title1, product?.title2]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
+
+      for (const flavor of Array.isArray(product?.flavors) ? product.flavors : []) {
+        const flavorKey = String(flavor?.flavorKey || "").trim();
+        const flavorLabel = String(
+          flavor?.label ||
+            flavor?.flavorLabel ||
+            flavor?.name ||
+            flavorKey ||
+            ""
+        ).trim();
+
+        for (const stockRow of Array.isArray(flavor?.stockByPickupPoint) ? flavor.stockByPickupPoint : []) {
+          const pickupPointId = String(stockRow?.pickupPointId || "").trim();
+          const reservedQty = Math.max(0, Number(stockRow?.reservedQty || 0));
+          const totalQty = Math.max(0, Number(stockRow?.totalQty || 0));
+
+          if (reservedQty <= 0) continue;
+
+          changes.push({
+            productKey,
+            productTitle,
+            flavorKey,
+            flavorLabel,
+            pickupPointId,
+            totalQty,
+            reservedBefore: reservedQty,
+            reservedAfter: 0,
+          });
+        }
+      }
+    }
+
+    if (!dryRun) {
+      await Product.updateMany(
+        {},
+        {
+          $set: {
+            "flavors.$[].stockByPickupPoint.$[].reservedQty": 0,
+          },
+        }
+      );
+    }
+
+    return res.json({
+      ok: true,
+      dryRun,
+      changedRows: changes.length,
+      reservedTotalBefore: changes.reduce(
+        (sum, row) => sum + Number(row.reservedBefore || 0),
+        0
+      ),
+      changes,
+    });
+  } catch (e) {
+    console.error("clear all reserved stock error:", e);
+
+    return res.status(500).json({
+      ok: false,
+      error: "SERVER_ERROR",
+      message: String(e?.message || e),
+    });
+  }
+});
+
 // ==== API ====
 
 app.get("/ping", (_, res) => res.json({ ok: true }));
