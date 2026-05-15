@@ -3040,13 +3040,23 @@ function isExcludedDisposableSmartPriceProduct(productRow = {}) {
   );
 }
 
+function isCartridgeSmartPriceProduct(productRow = {}) {
+  const title = normalizeStatsProductTitle(productRow);
+  const categoryKey = getProductRowStatsCategory(productRow);
+
+  if (categoryKey === "cartridges" || categoryKey === "cartridge") {
+    return true;
+  }
+
+  return title.includes("cartridge") || title.includes("catridge");
+}
+
 function isPodSmartPriceProduct(productRow = {}) {
   if (isLiquidSmartPriceProduct(productRow)) return false;
 
-  const title = normalizeStatsProductTitle(productRow);
+  if (isCartridgeSmartPriceProduct(productRow)) return false;
 
-  // Cartridges already work correctly and must stay per-product, not grouped with pods.
-  if (title.includes("cartridge") || title.includes("catridge")) return false;
+  const title = normalizeStatsProductTitle(productRow);
 
   const categoryKey = getProductRowStatsCategory(productRow);
 
@@ -3068,10 +3078,9 @@ function isDisposableSmartPriceProduct(productRow = {}) {
     return true;
   }
 
-  const title = normalizeStatsProductTitle(productRow);
+  if (isCartridgeSmartPriceProduct(productRow)) return false;
 
-  // Cartridges already work correctly and must stay per-product.
-  if (title.includes("cartridge") || title.includes("catridge")) return false;
+  const title = normalizeStatsProductTitle(productRow);
 
   return /\b(25k|30k|40k|20k|3000|15000|20000|25000|30000|40000)\b/i.test(title);
 }
@@ -3097,9 +3106,25 @@ function getOrderDisposableSmartQty(order) {
   }, 0);
 }
 
+function getOrderCartridgeSmartQty(order) {
+
+  return (Array.isArray(order?.items) ? order.items : []).reduce((sum, productRow) => {
+
+    if (!isCartridgeSmartPriceProduct(productRow)) return sum;
+
+    return sum + getProductRowStatsQty(productRow);
+
+  }, 0);
+
+}
+
 function getStatsTierQtyForProductRow(order, productRow) {
   if (isLiquidSmartPriceProduct(productRow)) {
     return getOrderLiquidSmartQty(order);
+  }
+
+  if (isCartridgeSmartPriceProduct(productRow)) {
+    return getOrderCartridgeSmartQty(order);
   }
 
   if (isPodSmartPriceProduct(productRow)) {
