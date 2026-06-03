@@ -6246,14 +6246,27 @@ app.post("/admin/users/broadcast-photo", async (req, res) => {
       .lean();
 
     const replyMarkup = {
+
       inline_keyboard: [
+
         [
+
           {
+
             text: buttonText,
-            url: buttonUrl,
+
+            web_app: {
+
+              url: buttonUrl,
+
+            },
+
           },
+
         ],
+
       ],
+
     };
 
     const results = [];
