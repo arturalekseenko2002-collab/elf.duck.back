@@ -33,6 +33,8 @@ const CART_AUTO_CLEAR_INTERVAL_MS = Number(process.env.CART_AUTO_CLEAR_INTERVAL_
 
 let bot = null;
 
+const broadcastJobs = new Map();
+
 const app = express();
 
 // CORS
@@ -6389,6 +6391,19 @@ app.post("/admin/users/broadcast-photo-async", async (req, res) => {
 
     const jobId = crypto.randomBytes(8).toString("hex");
 
+    broadcastJobs.set(jobId, {
+      jobId,
+      status: "running",
+      totalUsers: users.length,
+      processed: 0,
+      sent: 0,
+      failed: 0,
+      blocked: 0,
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      lastErrors: [],
+    });
+
     const replyMarkup = {
       inline_keyboard: [
         [
@@ -6423,6 +6438,22 @@ app.post("/admin/users/broadcast-photo-async", async (req, res) => {
       let failed = 0;
       let blocked = 0;
 
+      const updateJob = (patch = {}) => {
+
+        const prev = broadcastJobs.get(jobId) || {};
+
+        broadcastJobs.set(jobId, {
+
+          ...prev,
+
+          ...patch,
+
+          updatedAt: new Date().toISOString(),
+
+        });
+
+      };
+
       console.log("[BROADCAST PHOTO ASYNC][START]", {
         jobId,
         totalUsers: users.length,
@@ -6455,6 +6486,28 @@ app.post("/admin/users/broadcast-photo-async", async (req, res) => {
 
           if (isBlocked) blocked += 1;
 
+          const prevJob = broadcastJobs.get(jobId) || {};
+
+          const prevErrors = Array.isArray(prevJob.lastErrors) ? prevJob.lastErrors : [];
+
+          updateJob({
+
+            lastErrors: [
+
+              ...prevErrors,
+
+              {
+
+                telegramId,
+
+                error: description.slice(0, 300),
+
+              },
+
+            ].slice(-10),
+
+          });
+
           if (failed <= 20) {
             console.warn("[BROADCAST PHOTO ASYNC][SEND FAILED]", {
               jobId,
@@ -6475,15 +6528,59 @@ app.post("/admin/users/broadcast-photo-async", async (req, res) => {
           });
         }
 
+        if ((sent + failed) % 25 === 0 || sent + failed === users.length) {
+
+          updateJob({
+
+            status: "running",
+
+            processed: sent + failed,
+
+            totalUsers: users.length,
+
+            sent,
+
+            failed,
+
+            blocked,
+
+          });
+
+        }
+
         await new Promise((resolve) => setTimeout(resolve, 60));
       }
 
-      console.log("[BROADCAST PHOTO ASYNC][DONE]", {
-        jobId,
+      updateJob({
+
+        status: "done",
+
+        processed: sent + failed,
+
         totalUsers: users.length,
+
         sent,
+
         failed,
+
         blocked,
+
+        finishedAt: new Date().toISOString(),
+
+      });
+
+      console.log("[BROADCAST PHOTO ASYNC][DONE]", {
+
+        jobId,
+
+        totalUsers: users.length,
+
+        sent,
+
+        failed,
+
+        blocked,
+
       });
     });
   } catch (e) {
@@ -6496,6 +6593,32 @@ app.post("/admin/users/broadcast-photo-async", async (req, res) => {
         message: String(e?.message || e),
       });
     }
+  }
+});
+
+app.get("/admin/users/broadcast-jobs/:jobId", async (req, res) => {
+  try {
+    const adminToken = String(req.headers["x-admin-token"] || "").trim();
+
+    if (!adminToken || adminToken !== String(process.env.ADMIN_API_TOKEN || "").trim()) {
+      return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
+    }
+
+    const jobId = String(req.params?.jobId || "").trim();
+    const job = broadcastJobs.get(jobId);
+
+    if (!job) {
+      return res.status(404).json({
+        ok: false,
+        error: "BROADCAST_JOB_NOT_FOUND",
+        jobId,
+      });
+    }
+
+    return res.json({ ok: true, job });
+  } catch (e) {
+    console.error("broadcast job status error:", e);
+    return res.status(500).json({ ok: false, error: "SERVER_ERROR" });
   }
 });
 
