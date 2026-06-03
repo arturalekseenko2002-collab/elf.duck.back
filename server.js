@@ -5969,16 +5969,34 @@ app.post("/tg/prepared-referral-message", async (req, res) => {
       return res.status(500).json({ ok: false, error: "Bot disabled (no TELEGRAM_BOT_TOKEN)" });
     }
 
-    const { tgUserId, refCode } = req.body || {};
+    const trustedTelegramId = requireTrustedTelegramId(req, res);
+    if (!trustedTelegramId) return;
 
-    const userId = Number(tgUserId);
-    if (!userId || Number.isNaN(userId)) {
-      return res.status(400).json({ ok: false, error: "tgUserId is required" });
+    const b = req.body || {};
+
+    const code = String(
+      b.refCode ||
+        b.referralCode ||
+        b.code ||
+        ""
+    ).trim();
+
+    if (!code) {
+      return res.status(400).json({
+        ok: false,
+        error: "REF_CODE_REQUIRED",
+        message: "refCode is required",
+      });
     }
 
-    const code = String(refCode || "").trim();
-    if (!code) {
-      return res.status(400).json({ ok: false, error: "refCode is required" });
+    const userId = Number(trustedTelegramId);
+
+    if (!userId || Number.isNaN(userId)) {
+      return res.status(401).json({
+        ok: false,
+        error: "INVALID_TELEGRAM_INIT_DATA",
+        message: "Telegram initData is required",
+      });
     }
 
     // Это ссылка, которую получатель откроет
@@ -6031,12 +6049,11 @@ app.post("/tg/prepared-referral-message", async (req, res) => {
     });
 
     return res.json({ ok: true, id: prepared?.id });
-
-} catch (e) {
-  console.error("/tg/prepared-referral-message error:", e);
-  const tgDesc = e?.response?.description || e?.description || e?.message;
-  return res.status(500).json({ ok: false, error: tgDesc || "Server error" });
-}
+  } catch (e) {
+    console.error("/tg/prepared-referral-message error:", e);
+    const tgDesc = e?.response?.description || e?.description || e?.message;
+    return res.status(500).json({ ok: false, error: tgDesc || "Server error" });
+  }
 });
 
 // ===== Public: pickup points =====
