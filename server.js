@@ -6338,6 +6338,167 @@ app.post("/admin/users/broadcast-photo", async (req, res) => {
   }
 });
 
+app.post("/admin/users/broadcast-photo-async", async (req, res) => {
+  try {
+    const adminToken = String(req.headers["x-admin-token"] || "").trim();
+
+    if (!adminToken || adminToken !== String(process.env.ADMIN_API_TOKEN || "").trim()) {
+      return res.status(401).json({
+        ok: false,
+        error: "UNAUTHORIZED",
+      });
+    }
+
+    if (!bot) {
+      return res.status(500).json({
+        ok: false,
+        error: "BOT_DISABLED",
+        message: "Telegram bot is disabled. Check TELEGRAM_BOT_TOKEN.",
+      });
+    }
+
+    const photoUrl = String(req.body?.photoUrl || "").trim();
+    const text = String(req.body?.text || "").trim();
+    const buttonText = String(req.body?.buttonText || "").trim();
+    const buttonUrl = String(req.body?.buttonUrl || "").trim();
+    const limit = Math.max(0, Number(req.body?.limit || 0));
+
+    if (!photoUrl) {
+      return res.status(400).json({ ok: false, error: "PHOTO_REQUIRED" });
+    }
+
+    if (!text) {
+      return res.status(400).json({ ok: false, error: "TEXT_REQUIRED" });
+    }
+
+    if (!buttonText) {
+      return res.status(400).json({ ok: false, error: "BUTTON_TEXT_REQUIRED" });
+    }
+
+    if (!buttonUrl) {
+      return res.status(400).json({ ok: false, error: "BUTTON_URL_REQUIRED" });
+    }
+
+    const users = await User.find(
+      { telegramId: { $exists: true, $ne: "" } },
+      { telegramId: 1, username: 1, firstName: 1 }
+    )
+      .sort({ createdAt: 1 })
+      .limit(limit > 0 ? limit : 0)
+      .lean();
+
+    const jobId = crypto.randomBytes(8).toString("hex");
+
+    const replyMarkup = {
+      inline_keyboard: [
+        [
+          {
+            text: buttonText,
+            web_app: {
+              url: buttonUrl,
+            },
+          },
+        ],
+      ],
+    };
+
+    // сразу отвечаем admin-bot, чтобы он не падал по timeout
+    res.json({
+      ok: true,
+      accepted: true,
+      async: true,
+      jobId,
+      totalUsers: users.length,
+      preview: {
+        photoUrl,
+        text,
+        buttonText,
+        buttonUrl,
+      },
+    });
+
+    // дальше отправляем в фоне
+    setImmediate(async () => {
+      let sent = 0;
+      let failed = 0;
+      let blocked = 0;
+
+      console.log("[BROADCAST PHOTO ASYNC][START]", {
+        jobId,
+        totalUsers: users.length,
+        buttonText,
+        buttonUrl,
+      });
+
+      for (const user of users) {
+        const telegramId = String(user?.telegramId || "").trim();
+        if (!telegramId) continue;
+
+        try {
+          await bot.telegram.sendPhoto(telegramId, photoUrl, {
+            caption: text,
+            parse_mode: "HTML",
+            reply_markup: replyMarkup,
+          });
+
+          sent += 1;
+        } catch (e) {
+          failed += 1;
+
+          const description = String(e?.response?.description || e?.message || e || "");
+
+          const isBlocked =
+            description.includes("bot was blocked") ||
+            description.includes("user is deactivated") ||
+            description.includes("chat not found") ||
+            description.includes("Forbidden");
+
+          if (isBlocked) blocked += 1;
+
+          if (failed <= 20) {
+            console.warn("[BROADCAST PHOTO ASYNC][SEND FAILED]", {
+              jobId,
+              telegramId,
+              error: description,
+            });
+          }
+        }
+
+        if ((sent + failed) % 100 === 0) {
+          console.log("[BROADCAST PHOTO ASYNC][PROGRESS]", {
+            jobId,
+            processed: sent + failed,
+            totalUsers: users.length,
+            sent,
+            failed,
+            blocked,
+          });
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 60));
+      }
+
+      console.log("[BROADCAST PHOTO ASYNC][DONE]", {
+        jobId,
+        totalUsers: users.length,
+        sent,
+        failed,
+        blocked,
+      });
+    });
+  } catch (e) {
+    console.error("admin async photo broadcast error:", e);
+
+    if (!res.headersSent) {
+      return res.status(500).json({
+        ok: false,
+        error: "SERVER_ERROR",
+        message: String(e?.message || e),
+      });
+    }
+  }
+});
+
 app.patch("/admin/pickup-points/:id", requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
