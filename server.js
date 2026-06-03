@@ -6173,6 +6173,158 @@ app.post("/admin/users/cashback/grant-by-username", async (req, res) => {
   }
 });
 
+app.post("/admin/users/broadcast-photo", async (req, res) => {
+  try {
+    const adminToken = String(req.headers["x-admin-token"] || "").trim();
+
+    if (!adminToken || adminToken !== String(process.env.ADMIN_API_TOKEN || "").trim()) {
+      return res.status(401).json({
+        ok: false,
+        error: "UNAUTHORIZED",
+      });
+    }
+
+    if (!bot) {
+      return res.status(500).json({
+        ok: false,
+        error: "BOT_DISABLED",
+        message: "Telegram bot is disabled. Check TELEGRAM_BOT_TOKEN.",
+      });
+    }
+
+    const dryRun = req.body?.dryRun !== false;
+    const photoUrl = String(req.body?.photoUrl || "").trim();
+    const text = String(req.body?.text || "").trim();
+    const buttonText = String(req.body?.buttonText || "").trim();
+    const buttonUrl = String(req.body?.buttonUrl || "").trim();
+    const limit = Math.max(0, Number(req.body?.limit || 0));
+
+    if (!photoUrl) {
+      return res.status(400).json({
+        ok: false,
+        error: "PHOTO_REQUIRED",
+        message: "photoUrl is required",
+      });
+    }
+
+    if (!text) {
+      return res.status(400).json({
+        ok: false,
+        error: "TEXT_REQUIRED",
+        message: "text is required",
+      });
+    }
+
+    if (!buttonText) {
+      return res.status(400).json({
+        ok: false,
+        error: "BUTTON_TEXT_REQUIRED",
+        message: "buttonText is required",
+      });
+    }
+
+    if (!buttonUrl) {
+      return res.status(400).json({
+        ok: false,
+        error: "BUTTON_URL_REQUIRED",
+        message: "buttonUrl is required",
+      });
+    }
+
+    const users = await User.find(
+      {
+        telegramId: { $exists: true, $ne: "" },
+      },
+      {
+        telegramId: 1,
+        username: 1,
+        firstName: 1,
+      }
+    )
+      .sort({ createdAt: 1 })
+      .limit(limit > 0 ? limit : 0)
+      .lean();
+
+    const replyMarkup = {
+      inline_keyboard: [
+        [
+          {
+            text: buttonText,
+            url: buttonUrl,
+          },
+        ],
+      ],
+    };
+
+    const results = [];
+    let sent = 0;
+    let failed = 0;
+    let blocked = 0;
+
+    if (!dryRun) {
+      for (const user of users) {
+        const telegramId = String(user?.telegramId || "").trim();
+        if (!telegramId) continue;
+
+        try {
+          await bot.telegram.sendPhoto(telegramId, photoUrl, {
+            caption: text,
+            parse_mode: "HTML",
+            reply_markup: replyMarkup,
+          });
+
+          sent += 1;
+          results.push({ telegramId, ok: true });
+
+          await new Promise((resolve) => setTimeout(resolve, 60));
+        } catch (e) {
+          failed += 1;
+
+          const description = String(e?.response?.description || e?.message || e || "");
+
+          const isBlocked =
+            description.includes("bot was blocked") ||
+            description.includes("user is deactivated") ||
+            description.includes("chat not found") ||
+            description.includes("Forbidden");
+
+          if (isBlocked) blocked += 1;
+
+          results.push({
+            telegramId,
+            ok: false,
+            error: description,
+          });
+        }
+      }
+    }
+
+    return res.json({
+      ok: true,
+      dryRun,
+      totalUsers: users.length,
+      sent,
+      failed,
+      blocked,
+      preview: {
+        photoUrl,
+        text,
+        buttonText,
+        buttonUrl,
+      },
+      results: dryRun ? [] : results.slice(0, 200),
+    });
+  } catch (e) {
+    console.error("admin photo broadcast error:", e);
+
+    return res.status(500).json({
+      ok: false,
+      error: "SERVER_ERROR",
+      message: String(e?.message || e),
+    });
+  }
+});
+
 app.patch("/admin/pickup-points/:id", requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
