@@ -84,6 +84,137 @@ mongoose
   })
   .then(async () => {
     console.log("✅ MongoDB connected");
+
+    if (
+
+      String(
+
+        process.env.CLEAR_ALL_RESERVED_QTY_ON_STARTUP || ""
+
+      ).trim() === "1"
+
+    ) {
+
+      try {
+
+        const result = await Product.updateMany(
+
+          {},
+
+          [
+
+            {
+
+              $set: {
+
+                flavors: {
+
+                  $map: {
+
+                    input: { $ifNull: ["$flavors", []] },
+
+                    as: "flavor",
+
+                    in: {
+
+                      $mergeObjects: [
+
+                        "$$flavor",
+
+                        {
+
+                          stockByPickupPoint: {
+
+                            $map: {
+
+                              input: {
+
+                                $ifNull: [
+
+                                  "$$flavor.stockByPickupPoint",
+
+                                  [],
+
+                                ],
+
+                              },
+
+                              as: "stock",
+
+                              in: {
+
+                                $mergeObjects: [
+
+                                  "$$stock",
+
+                                  {
+
+                                    reservedQty: 0,
+
+                                  },
+
+                                ],
+
+                              },
+
+                            },
+
+                          },
+
+                        },
+
+                      ],
+
+                    },
+
+                  },
+
+                },
+
+              },
+
+            },
+
+          ]
+
+        );
+
+        console.log(
+
+          "[MAINTENANCE][CLEAR ALL RESERVES] completed",
+
+          {
+
+            matchedCount: Number(
+
+              result?.matchedCount || 0
+
+            ),
+
+            modifiedCount: Number(
+
+              result?.modifiedCount || 0
+
+            ),
+
+          }
+
+        );
+
+      } catch (error) {
+
+        console.error(
+
+          "[MAINTENANCE][CLEAR ALL RESERVES] failed",
+
+          error
+
+        );
+
+      }
+
+    }
+
     if (process.env.SKIP_INDEX_SYNC !== "1") {
       setImmediate(async () => {
         try {
@@ -661,7 +792,7 @@ const COURIER_MIN_ORDER_TOTAL_ZL = Number(
 );
 
 const SYNCED_PICKUP_POINT_KEY_GROUPS = [
-  new Set(["r-dmie-cie", "delivery-2"]),
+  new Set(["wola", "delivery-2"]),
 ];
 
 function normalizePickupPointKey(value) {
