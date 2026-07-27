@@ -28,6 +28,30 @@ const GOOGLE_STATS_WEBHOOK_URL_MOKOTOW = String(
 
 ).trim();
 
+const GOOGLE_STATS_WEBHOOK_URL_WOLA = String(
+
+  process.env.GOOGLE_STATS_WEBHOOK_URL_WOLA || ""
+
+).trim();
+
+const GOOGLE_STATS_WEBHOOK_URL_SRODMIESCIE = String(
+
+  process.env.GOOGLE_STATS_WEBHOOK_URL_SRODMIESCIE || ""
+
+).trim();
+
+const GOOGLE_STATS_WEBHOOK_URL_COURIER = String(
+
+  process.env.GOOGLE_STATS_WEBHOOK_URL_COURIER || ""
+
+).trim();
+
+const GOOGLE_STATS_WEBHOOK_URL_INPOST = String(
+
+  process.env.GOOGLE_STATS_WEBHOOK_URL_INPOST || ""
+
+).trim();
+
 const CART_AUTO_CLEAR_AFTER_MINUTES = Number(process.env.CART_AUTO_CLEAR_AFTER_MINUTES || 10);
 const CART_AUTO_CLEAR_INTERVAL_MS = Number(process.env.CART_AUTO_CLEAR_INTERVAL_MS || 60 * 1000);
 
@@ -2834,16 +2858,42 @@ async function sendDailyPointStatsToGoogleSheet(point, orders, dayKey) {
       .join(" | ")
   );
 
-  let googleStatsWebhookUrl = "";
+  const pointKey = String(point?.key || "")
+    .trim()
+    .toLowerCase()
+    .replace(/,+$/, "");
 
-  if (pointSearchText.includes("praga")) {
-    googleStatsWebhookUrl = GOOGLE_STATS_WEBHOOK_URL_PRAGA;
-  } else if (pointSearchText.includes("mokot") || pointSearchText.includes("mokotow")) {
-    googleStatsWebhookUrl = GOOGLE_STATS_WEBHOOK_URL_MOKOTOW;
-  } else {
+  const googleStatsWebhookUrlByPointKey = {
+
+    praga: GOOGLE_STATS_WEBHOOK_URL_PRAGA,
+
+    "mokot-w": GOOGLE_STATS_WEBHOOK_URL_MOKOTOW,
+
+    wola: GOOGLE_STATS_WEBHOOK_URL_WOLA,
+
+    "wola-inpost": GOOGLE_STATS_WEBHOOK_URL_WOLA,
+
+    "r-dmie-cie": GOOGLE_STATS_WEBHOOK_URL_SRODMIESCIE,
+
+    delivery: GOOGLE_STATS_WEBHOOK_URL_COURIER,
+
+    "delivery-2": GOOGLE_STATS_WEBHOOK_URL_INPOST,
+
+  };
+
+  const googleStatsWebhookUrl =
+    googleStatsWebhookUrlByPointKey[pointKey] || "";
+
+  if (
+    !Object.prototype.hasOwnProperty.call(
+      googleStatsWebhookUrlByPointKey,
+      pointKey
+    )
+  ) {
     return {
       ok: false,
       reason: "SKIP_NO_GOOGLE_SHEET_FOR_POINT",
+      pointKey,
       pointSearchText,
     };
   }
@@ -2852,6 +2902,7 @@ async function sendDailyPointStatsToGoogleSheet(point, orders, dayKey) {
     return {
       ok: false,
       reason: "NO_GOOGLE_STATS_WEBHOOK_URL",
+      pointKey,
       pointSearchText,
     };
   }
@@ -2862,19 +2913,35 @@ async function sendDailyPointStatsToGoogleSheet(point, orders, dayKey) {
   for (const order of Array.isArray(orders) ? orders : []) {
     for (const row of Array.isArray(order?.items) ? order.items : []) {
       const model =
-        [row?.productTitle1, row?.productTitle2].filter(Boolean).join(" ").trim() ||
-        String(row?.productTitle || row?.title || row?.productKey || "Товар");
-      
-      const flavorRows = Array.isArray(row?.flavors) ? row.flavors : [];
+        [row?.productTitle1, row?.productTitle2]
+          .filter(Boolean)
+          .join(" ")
+          .trim() ||
+        String(
+          row?.productTitle ||
+            row?.title ||
+            row?.productKey ||
+            "Товар"
+        );
+
+      const flavorRows = Array.isArray(row?.flavors)
+        ? row.flavors
+        : [];
 
       for (const flavor of flavorRows) {
-        const flavorQty = Math.max(0, Number(flavor?.qty || flavor?.quantity || 0));
+        const flavorQty = Math.max(
+          0,
+          Number(flavor?.qty || flavor?.quantity || 0)
+        );
+
         if (flavorQty <= 0) continue;
 
         assortmentItems.push({
           model,
           productKey: String(row?.productKey || "").trim(),
-          flavorKey: String(flavor?.flavorKey || flavor?.key || "").trim(),
+          flavorKey: String(
+            flavor?.flavorKey || flavor?.key || ""
+          ).trim(),
           flavorLabel: String(
             flavor?.flavorLabel ||
               flavor?.label ||
@@ -2905,7 +2972,8 @@ async function sendDailyPointStatsToGoogleSheet(point, orders, dayKey) {
       const tierQty = getStatsSheetTierQty(order, row);
       const tierKey = getStatsSheetTierKeyFromQty(tierQty);
 
-      item[tierKey] = Number(item[tierKey] || 0) + soldQty;
+      item[tierKey] =
+        Number(item[tierKey] || 0) + soldQty;
     }
   }
 
@@ -2915,61 +2983,49 @@ async function sendDailyPointStatsToGoogleSheet(point, orders, dayKey) {
         return (
           sum +
           Number(order?.payment?.cashbackAppliedZl || 0) +
-          Number(order?.payment?.referralFirstOrderDiscountTotalZl || 0)
+          Number(
+            order?.payment
+              ?.referralFirstOrderDiscountTotalZl || 0
+          )
         );
       }, 0)
       .toFixed(2)
   );
 
   const clientsCount = new Set(
-
     (Array.isArray(orders) ? orders : [])
-
-      .filter((order) => shouldCountOrderInDailyStats(order))
-
-      .map((order) =>
-
-        String(
-        order?.userTelegramId ||
-
-          order?.telegramId ||
-
-          order?.user?.telegramId ||
-
-          order?.userSnapshot?.telegramId ||
-
-          order?.customerTelegramId ||
-
-          order?._id ||
-
-          ""
-        ).trim()
-
+      .filter((order) =>
+        shouldCountOrderInDailyStats(order)
       )
-
+      .map((order) =>
+        String(
+          order?.userTelegramId ||
+            order?.telegramId ||
+            order?.user?.telegramId ||
+            order?.userSnapshot?.telegramId ||
+            order?.customerTelegramId ||
+            order?._id ||
+            ""
+        ).trim()
+      )
       .filter(Boolean)
-  ).size; //dsfvas
+  ).size;
 
   const payload = {
-
     date: String(dayKey || ""),
-
-    point: String(point?.title || point?.address || point?.key || ""),
-
+    point: String(
+      point?.title ||
+        point?.address ||
+        point?.key ||
+        ""
+    ),
     products: Array.from(productMap.values()),
-
     assortmentItems,
-
     totals: {
-
       discounts,
-
       clients: clientsCount,
-
       clientsCount,
-
     },
-
   };
 
   try {
@@ -2981,44 +3037,64 @@ async function sendDailyPointStatsToGoogleSheet(point, orders, dayKey) {
       body: JSON.stringify(payload),
     });
 
-    const data = await r.json().catch(() => ({})); //sdsff
+    const data = await r.json().catch(() => ({}));
 
-    console.log("[GOOGLE SHEET][STATS RESPONSE]", JSON.stringify({
-
-      httpOk: r.ok,
-
-      status: r.status,
-
-      point: String(point?.title || point?.address || point?.key || ""),
-
-      dayKey: String(dayKey || ""),
-
-      productsCount: Array.isArray(payload?.products) ? payload.products.length : 0,
-
-      assortmentItemsCount: Array.isArray(payload?.assortmentItems)
-
-        ? payload.assortmentItems.length
-
-        : 0,
-
-      totals: payload?.totals || {},
-
-      response: data,
-
-    }, null, 2));
+    console.log(
+      "[GOOGLE SHEET][STATS RESPONSE]",
+      JSON.stringify(
+        {
+          httpOk: r.ok,
+          status: r.status,
+          pointKey,
+          point: String(
+            point?.title ||
+              point?.address ||
+              point?.key ||
+              ""
+          ),
+          dayKey: String(dayKey || ""),
+          productsCount: Array.isArray(payload?.products)
+            ? payload.products.length
+            : 0,
+          assortmentItemsCount: Array.isArray(
+            payload?.assortmentItems
+          )
+            ? payload.assortmentItems.length
+            : 0,
+          totals: payload?.totals || {},
+          response: data,
+        },
+        null,
+        2
+      )
+    );
 
     if (!r.ok || data?.ok === false) {
+      console.error(
+        "sendDailyPointStatsToGoogleSheet failed",
+        data
+      );
 
-      console.error("sendDailyPointStatsToGoogleSheet failed", data);
-
-      return { ok: false, response: data };
-
+      return {
+        ok: false,
+        response: data,
+      };
     }
 
-    return { ok: true, response: data };
+    return {
+      ok: true,
+      response: data,
+    };
   } catch (e) {
-    console.error("sendDailyPointStatsToGoogleSheet error:", e);
-    return { ok: false };
+    console.error(
+      "sendDailyPointStatsToGoogleSheet error:",
+      e
+    );
+
+    return {
+      ok: false,
+      error: String(e?.message || e),
+    };
   }
 }
 
@@ -3822,29 +3898,34 @@ async function processDailyPointStats() {
       }
     ).lean();
 
+    const sharedGoogleSheetPointKeys = new Set([
+      "wola",
+      "delivery-2",
+    ]);
+
     for (const point of points) {
       console.log("[DAILY STATS][SEND]", {
-
         pointKey: String(point?.key || ""),
-
         pointTitle: String(point?.title || ""),
-
         dayKey,
-
         warsawToday: getWarsawDayKey(),
-
         statsSendTime: getPointStatsSendTime(point),
-
       });
+
       const sendTime = getPointStatsSendTime(point, now);
+
       if (!sendTime) continue;
       if (nowHHMM < sendTime) continue;
 
       const dedupeKey = `${String(point?._id || "")}:${dayKey}`;
-      if (DAILY_STATS_RUNTIME_SENT.has(dedupeKey)) continue;
+
+      if (DAILY_STATS_RUNTIME_SENT.has(dedupeKey)) {
+        continue;
+      }
 
       const match = getOrderPointMatch(point);
-      const orders = await Order.find( //wefv
+
+      const orders = await Order.find(
         {
           ...match,
           createdAt: { $gte: ordersSince },
@@ -3867,23 +3948,39 @@ async function processDailyPointStats() {
       ).lean();
 
       const dayOrders = orders.filter((order) => {
-        if (getWarsawDayKey(order?.createdAt) !== dayKey) return false;
+        if (getWarsawDayKey(order?.createdAt) !== dayKey) {
+          return false;
+        }
+
         return shouldCountOrderInDailyStats(order);
       });
 
       const needsFallbackBasePrices = dayOrders.some((order) =>
-        (Array.isArray(order?.items) ? order.items : []).some((row) => {
-          const flavors = Array.isArray(row?.flavors) ? row.flavors : [];
-          return !flavors.some((f) => Number(f?.baseUnitPrice || 0) > 0);
-        })
+        (Array.isArray(order?.items) ? order.items : []).some(
+          (row) => {
+            const flavors = Array.isArray(row?.flavors)
+              ? row.flavors
+              : [];
+
+            return !flavors.some(
+              (flavor) =>
+                Number(flavor?.baseUnitPrice || 0) > 0
+            );
+          }
+        )
       );
 
       const productKeys = needsFallbackBasePrices
         ? Array.from(
             new Set(
               dayOrders.flatMap((order) =>
-                (Array.isArray(order?.items) ? order.items : [])
-                  .map((row) => String(row?.productKey || "").trim())
+                (Array.isArray(order?.items)
+                  ? order.items
+                  : []
+                )
+                  .map((row) =>
+                    String(row?.productKey || "").trim()
+                  )
                   .filter(Boolean)
               )
             )
@@ -3892,63 +3989,229 @@ async function processDailyPointStats() {
 
       const products = productKeys.length
         ? await Product.find(
-            { productKey: { $in: productKeys } },
-            { productKey: 1, price: 1 }
+            {
+              productKey: {
+                $in: productKeys,
+              },
+            },
+            {
+              productKey: 1,
+              price: 1,
+            }
           ).lean()
         : [];
 
       const productBasePriceMap = new Map(
-        products.map((p) => [String(p?.productKey || "").trim(), Number(p?.price || 0)])
+        products.map((product) => [
+          String(product?.productKey || "").trim(),
+          Number(product?.price || 0),
+        ])
       );
 
       const orderUserIds = Array.from(
-        new Set(dayOrders.map((order) => String(order?.userTelegramId || "").trim()).filter(Boolean))
+        new Set(
+          dayOrders
+            .map((order) =>
+              String(order?.userTelegramId || "").trim()
+            )
+            .filter(Boolean)
+        )
       );
 
       const statsUsers = orderUserIds.length
         ? await User.find(
             {
-              telegramId: { $in: orderUserIds },
+              telegramId: {
+                $in: orderUserIds,
+              },
             },
-            { telegramId: 1, username: 1, firstName: 1, referral: 1 }
+            {
+              telegramId: 1,
+              username: 1,
+              firstName: 1,
+              referral: 1,
+            }
           ).lean()
         : [];
 
       const referredFirstOrderUsers = new Set(
         statsUsers
           .filter(
-            (u) =>
-              String(u?.referral?.usedCode || "").trim() &&
-              u?.referral?.firstOrderDoneAt &&
-              getWarsawDayKey(u?.referral?.firstOrderDoneAt) === dayKey
+            (user) =>
+              String(
+                user?.referral?.usedCode || ""
+              ).trim() &&
+              user?.referral?.firstOrderDoneAt &&
+              getWarsawDayKey(
+                user?.referral?.firstOrderDoneAt
+              ) === dayKey
           )
-          .map((u) => String(u?.telegramId || "").trim())
+          .map((user) =>
+            String(user?.telegramId || "").trim()
+          )
           .filter(Boolean)
       );
 
       const userDisplayMap = new Map(
-        statsUsers.map((u) => {
-          const name = String(u?.username || "").trim()
-            ? `@${String(u.username).trim()}`
-            : String(u?.firstName || "").trim() || String(u?.telegramId || "Клиент");
+        statsUsers.map((user) => {
+          const name = String(
+            user?.username || ""
+          ).trim()
+            ? `@${String(user.username).trim()}`
+            : String(user?.firstName || "").trim() ||
+              String(
+                user?.telegramId || "Клиент"
+              );
 
-          return [String(u?.telegramId || "").trim(), name];
+          return [
+            String(user?.telegramId || "").trim(),
+            name,
+          ];
         })
       );
 
-      const sent = await sendDailyPointStats(point, dayOrders, dayKey, {
-        productBasePriceMap,
-        referredFirstOrderUsers,
-        userDisplayMap,
-      });
+      const sent = await sendDailyPointStats(
+        point,
+        dayOrders,
+        dayKey,
+        {
+          productBasePriceMap,
+          referredFirstOrderUsers,
+          userDisplayMap,
+        }
+      );
 
-    if (sent?.ok) {
-      await sendDailyPointStatsToGoogleSheet(point, dayOrders, dayKey);
-      DAILY_STATS_RUNTIME_SENT.add(dedupeKey);
+      if (sent?.ok) {
+        const pointKey = String(point?.key || "")
+          .trim()
+          .toLowerCase()
+          .replace(/,+$/, "");
+
+        /*
+         * Wola и InPost не отправляем в Google
+         * по отдельности. Ниже они будут объединены.
+         */
+        if (!sharedGoogleSheetPointKeys.has(pointKey)) {
+          await sendDailyPointStatsToGoogleSheet(
+            point,
+            dayOrders,
+            dayKey
+          );
+        }
+
+        DAILY_STATS_RUNTIME_SENT.add(dedupeKey);
+      }
     }
+
+    /*
+     * Общая таблица и общий ассортимент:
+     * Wola + InPost.
+     */
+    const wolaPoint = points.find(
+      (point) =>
+        String(point?.key || "")
+          .trim()
+          .toLowerCase()
+          .replace(/,+$/, "") === "wola"
+    );
+
+    const inpostPoint = points.find(
+      (point) =>
+        String(point?.key || "")
+          .trim()
+          .toLowerCase()
+          .replace(/,+$/, "") === "delivery-2"
+    );
+
+    const sharedDedupeKey = `wola-inpost:${dayKey}`;
+
+    if (
+      wolaPoint &&
+      inpostPoint &&
+      !DAILY_STATS_RUNTIME_SENT.has(sharedDedupeKey)
+    ) {
+      const wolaSendTime = getPointStatsSendTime(
+        wolaPoint,
+        now
+      );
+
+      const inpostSendTime = getPointStatsSendTime(
+        inpostPoint,
+        now
+      );
+
+      const bothPointsReady =
+        wolaSendTime &&
+        inpostSendTime &&
+        nowHHMM >= wolaSendTime &&
+        nowHHMM >= inpostSendTime;
+
+      if (bothPointsReady) {
+        const combinedOrders = await Order.find(
+          {
+            $or: [
+              getOrderPointMatch(wolaPoint),
+              getOrderPointMatch(inpostPoint),
+            ],
+            createdAt: {
+              $gte: ordersSince,
+            },
+            status: {
+              $ne: "canceled",
+            },
+          },
+          {
+            userTelegramId: 1,
+            orderNo: 1,
+            totalZl: 1,
+            status: 1,
+            payment: 1,
+            items: 1,
+            cashbackZl: 1,
+            createdAt: 1,
+            deliveryType: 1,
+            deliveryMethod: 1,
+            deliveryFeeZl: 1,
+            inpostDeliveryFeeZl: 1,
+          }
+        ).lean();
+
+        const combinedDayOrders =
+          combinedOrders.filter((order) => {
+            if (
+              getWarsawDayKey(order?.createdAt) !==
+              dayKey
+            ) {
+              return false;
+            }
+
+            return shouldCountOrderInDailyStats(
+              order
+            );
+          });
+
+        const googleSheetResult =
+          await sendDailyPointStatsToGoogleSheet(
+            {
+              key: "wola-inpost",
+              title: "Wola + InPost",
+            },
+            combinedDayOrders,
+            dayKey
+          );
+
+        if (googleSheetResult?.ok) {
+          DAILY_STATS_RUNTIME_SENT.add(
+            sharedDedupeKey
+          );
+        }
+      }
     }
   } catch (e) {
-    console.error("processDailyPointStats error:", e);
+    console.error(
+      "processDailyPointStats error:",
+      e
+    );
   }
 }
 
