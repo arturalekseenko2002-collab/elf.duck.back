@@ -10597,6 +10597,8 @@ try {
       order.shippedAt = new Date();
       await order.save();
 
+      await applyOrderCashback(order);
+
       const deliveryMessageIds = Array.isArray(order.managerDeliveryMessageIds)
         ? order.managerDeliveryMessageIds.filter(Boolean)
         : [];
