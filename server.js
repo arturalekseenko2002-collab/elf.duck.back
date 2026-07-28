@@ -909,13 +909,28 @@ function getInpostEquivalentUnitsFromCartItems(items = [], products = []) {
   return packageUnits;
 }
 
-function resolveInpostDeliveryPricing(items = [], products = []) {
-  const packageUnits = getInpostEquivalentUnitsFromCartItems(items, products);
-  const deliveryFeeZl = packageUnits > 7 ? 17 : 12;
+function resolveInpostDeliveryPricing(
+  items = [],
+  products = [],
+  itemsSubtotalZl = 0
+) {
+  const packageUnits = getInpostEquivalentUnitsFromCartItems(
+    items,
+    products
+  );
+
+  const isFreeDelivery = Number(itemsSubtotalZl || 0) >= 200;
+
+  const deliveryFeeZl = isFreeDelivery
+    ? 0
+    : packageUnits > 7
+    ? 17
+    : 12;
 
   return {
     packageUnits,
     deliveryFeeZl,
+    isFreeDelivery,
   };
 }
 
@@ -8509,8 +8524,15 @@ app.post("/orders/confirm", async (req, res) => {
         : 0;
 
     const inpostDeliveryFeeZl =
+
       deliveryType === "delivery" && deliveryMethod === "inpost"
-        ? Number(cart.inpostDeliveryFeeZl || 0)
+
+        ? Number(itemsTotalZl || 0) >= 200
+
+          ? 0
+
+          : Number(cart.inpostDeliveryFeeZl || 0)
+
         : 0;
 
     const totalZl = Number((itemsTotalZl + courierDeliveryFeeZl + inpostDeliveryFeeZl).toFixed(2));
@@ -9057,7 +9079,7 @@ app.post("/orders/confirm", async (req, res) => {
       deliveryType === "delivery" && deliveryMethod === "inpost"
         ? {
             packageUnits: Number(cart?.inpostPackageUnits || 0),
-            deliveryFeeZl: Number(cart?.inpostDeliveryFeeZl || 0),
+            deliveryFeeZl: Number(itemsTotalZl || 0) >= 200 ? 0 : Number(cart?.inpostDeliveryFeeZl || 0),
           }
         : { packageUnits: 0, deliveryFeeZl: 0 };
 
