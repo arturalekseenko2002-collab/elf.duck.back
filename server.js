@@ -9180,7 +9180,15 @@ app.post("/orders/confirm", async (req, res) => {
 
       arrivalTime: cart.arrivalTime ?? null,
       deliveryTimeWindow: cart.deliveryTimeWindow ?? null,
-      comment: null,
+      comment: String(
+
+        req.body?.comment ?? cart?.comment ?? ""
+
+      )
+
+        .trim()
+
+        .slice(0, 500) || null,
       courierAddress: cart.courierAddress ?? null,
       inpostData: cart.inpostData ?? {},
 
@@ -9238,7 +9246,7 @@ app.post("/orders/confirm", async (req, res) => {
           checkoutPickupPointId: null,
           arrivalTime: null,
           deliveryTimeWindow: null,
-          comment: String(req.body?.comment || "").slice(0, 500),
+          comment: "",
           courierAddress: null,
           courierDistrict: null,
           deliveryFeeZl: 0,
