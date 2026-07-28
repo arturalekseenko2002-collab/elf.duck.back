@@ -59,6 +59,43 @@ let bot = null;
 
 const broadcastJobs = new Map();
 
+const PROMO_CODES_COLLECTION = "promo_codes";
+
+function normalizePromoCode(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "")
+    .replace(/[^A-Z0-9_-]/g, "")
+    .slice(0, 32);
+}
+
+async function ensurePromoCodeIndexes() {
+  try {
+    const collection =
+      mongoose.connection.collection(
+        PROMO_CODES_COLLECTION
+      );
+
+    await Promise.all([
+      collection.createIndex(
+        { code: 1 },
+        { unique: true }
+      ),
+
+      collection.createIndex({
+        isActive: 1,
+        createdAt: -1,
+      }),
+    ]);
+  } catch (error) {
+    console.error(
+      "Promo code index sync failed:",
+      error?.message || error
+    );
+  }
+}
+
 const app = express();
 
 // CORS
@@ -84,6 +121,8 @@ mongoose
   })
   .then(async () => {
     console.log("✅ MongoDB connected");
+
+    await ensurePromoCodeIndexes();
 
     if (
 
@@ -522,6 +561,20 @@ function requireTrustedTelegramId(req, res) {
   }
 
   return telegramId;
+}
+
+async function getPromoCodeByCode(code) {
+  const safeCode = normalizePromoCode(code);
+
+  if (!safeCode) {
+    return null;
+  }
+
+  return mongoose.connection
+    .collection(PROMO_CODES_COLLECTION)
+    .findOne({
+      code: safeCode,
+    });
 }
 
 function escapeHtml(s) {
@@ -7005,6 +7058,178 @@ app.post("/admin/users/broadcast-photo-async", async (req, res) => {
   }
 });
 
+app.get("/admin/promo-codes", requireAdmin, async (req, res) => {
+  try {
+    const promoCodes = await mongoose.connection
+      .collection(PROMO_CODES_COLLECTION)
+      .find({})
+      .sort({ createdAt: -1 })
+      .limit(200)
+      .toArray();
+
+    return res.json({
+      ok: true,
+      promoCodes,
+    });
+  } catch (error) {
+    console.error(
+      "GET /admin/promo-codes error:",
+      error
+    );
+
+    return res.status(500).json({
+      ok: false,
+      error: "PROMO_CODES_LIST_FAILED",
+    });
+  }
+});
+
+app.post("/admin/promo-codes", requireAdmin, async (req, res) => {
+  try {
+    const code = normalizePromoCode(
+      req.body?.code
+    );
+
+    const amountZl = Number(
+      req.body?.amountZl || 0
+    );
+
+    if (!code || code.length < 3) {
+      return res.status(400).json({
+        ok: false,
+        error: "INVALID_PROMO_CODE",
+      });
+    }
+
+    if (
+      !Number.isFinite(amountZl) ||
+      amountZl <= 0 ||
+      amountZl > 100000
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error: "INVALID_PROMO_AMOUNT",
+      });
+    }
+
+    const now = new Date();
+
+    const result = await mongoose.connection
+      .collection(PROMO_CODES_COLLECTION)
+      .findOneAndUpdate(
+        { code },
+
+        {
+          $set: {
+            code,
+            amountZl: Number(
+              amountZl.toFixed(2)
+            ),
+            isActive: true,
+            updatedAt: now,
+          },
+
+          $setOnInsert: {
+            createdAt: now,
+
+            createdByTelegramId: String(
+              req.adminTelegramId || ""
+            ),
+
+            activationsCount: 0,
+          },
+        },
+
+        {
+          upsert: true,
+          returnDocument: "after",
+        }
+      );
+
+    const promoCode =
+      result?.value || result;
+
+    return res.json({
+      ok: true,
+      promoCode,
+    });
+  } catch (error) {
+    console.error(
+      "POST /admin/promo-codes error:",
+      error
+    );
+
+    if (
+      String(error?.code || "") === "11000"
+    ) {
+      return res.status(409).json({
+        ok: false,
+        error: "PROMO_CODE_ALREADY_EXISTS",
+      });
+    }
+
+    return res.status(500).json({
+      ok: false,
+      error: "PROMO_CODE_SAVE_FAILED",
+    });
+  }
+});
+
+app.patch(
+  "/admin/promo-codes/:code/toggle",
+  requireAdmin,
+
+  async (req, res) => {
+    try {
+      const code = normalizePromoCode(
+        req.params?.code
+      );
+
+      const existing =
+        await getPromoCodeByCode(code);
+
+      if (!existing) {
+        return res.status(404).json({
+          ok: false,
+          error: "PROMO_NOT_FOUND",
+        });
+      }
+
+      const isActive =
+        existing?.isActive !== true;
+
+      await mongoose.connection
+        .collection(PROMO_CODES_COLLECTION)
+        .updateOne(
+          { code },
+
+          {
+            $set: {
+              isActive,
+              updatedAt: new Date(),
+            },
+          }
+        );
+
+      return res.json({
+        ok: true,
+        code,
+        isActive,
+      });
+    } catch (error) {
+      console.error(
+        "PATCH /admin/promo-codes/:code/toggle error:",
+        error
+      );
+
+      return res.status(500).json({
+        ok: false,
+        error: "PROMO_CODE_TOGGLE_FAILED",
+      });
+    }
+  }
+);
+
 app.get("/admin/users/broadcast-jobs/:jobId", async (req, res) => {
   try {
     const adminToken = String(req.headers["x-admin-token"] || "").trim();
@@ -10262,6 +10487,176 @@ app.get("/orders/:id/payment-config", async (req, res) => {
     return res.status(500).json({ ok: false, error: "Server error" });
   }
 });
+
+app.post(
+  "/promo-codes/activate",
+  async (req, res) => {
+    try {
+      const telegramId =
+        requireTrustedTelegramId(req, res);
+
+      if (!telegramId) {
+        return;
+      }
+
+      const code = normalizePromoCode(
+        req.body?.code
+      );
+
+      if (!code) {
+        return res.status(400).json({
+          ok: false,
+          error: "PROMO_NOT_FOUND",
+        });
+      }
+
+      const promoCode =
+        await getPromoCodeByCode(code);
+
+      if (
+        !promoCode ||
+        promoCode?.isActive !== true
+      ) {
+        return res.status(404).json({
+          ok: false,
+          error: "PROMO_NOT_FOUND",
+        });
+      }
+
+      const amountZl = Number(
+        promoCode?.amountZl || 0
+      );
+
+      if (
+        !Number.isFinite(amountZl) ||
+        amountZl <= 0
+      ) {
+        return res.status(400).json({
+          ok: false,
+          error: "PROMO_NOT_FOUND",
+        });
+      }
+
+      const now = new Date();
+
+      const updateResult =
+        await User.collection.findOneAndUpdate(
+          {
+            telegramId,
+
+            $or: [
+              {
+                promoCodeUsed: {
+                  $exists: false,
+                },
+              },
+              {
+                promoCodeUsed: null,
+              },
+              {
+                promoCodeUsed: "",
+              },
+            ],
+          },
+
+          {
+            $inc: {
+              cashbackBalance: Number(
+                amountZl.toFixed(2)
+              ),
+            },
+
+            $set: {
+              promoCodeUsed: code,
+              promoCodeUsedAt: now,
+
+              promoCodeAmountZl: Number(
+                amountZl.toFixed(2)
+              ),
+
+              updatedAt: now,
+            },
+          },
+
+          {
+            returnDocument: "after",
+          }
+        );
+
+      const updatedUser =
+        updateResult?.value || updateResult;
+
+      if (!updatedUser?._id) {
+        const currentUser =
+          await User.collection.findOne(
+            { telegramId },
+
+            {
+              projection: {
+                promoCodeUsed: 1,
+              },
+            }
+          );
+
+        if (!currentUser) {
+          return res.status(404).json({
+            ok: false,
+            error: "USER_NOT_FOUND",
+          });
+        }
+
+        return res.status(409).json({
+          ok: false,
+          error: "PROMO_ALREADY_USED",
+
+          usedCode: String(
+            currentUser?.promoCodeUsed || ""
+          ),
+        });
+      }
+
+      await mongoose.connection
+        .collection(PROMO_CODES_COLLECTION)
+        .updateOne(
+          { code },
+
+          {
+            $inc: {
+              activationsCount: 1,
+            },
+
+            $set: {
+              lastActivatedAt: now,
+              updatedAt: now,
+            },
+          }
+        );
+
+      return res.json({
+        ok: true,
+        code,
+
+        amountZl: Number(
+          amountZl.toFixed(2)
+        ),
+
+        cashbackBalance: Number(
+          updatedUser?.cashbackBalance || 0
+        ),
+      });
+    } catch (error) {
+      console.error(
+        "POST /promo-codes/activate error:",
+        error
+      );
+
+      return res.status(500).json({
+        ok: false,
+        error: "PROMO_ACTIVATION_FAILED",
+      });
+    }
+  }
+);
 
 
 // ==== Telegram бот ====
