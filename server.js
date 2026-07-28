@@ -10488,9 +10488,7 @@ app.get("/orders/:id/payment-config", async (req, res) => {
   }
 });
 
-app.post(
-  "/promo-codes/activate",
-  async (req, res) => {
+app.post("/promo-codes/activate", async (req, res) => {
     try {
       const telegramId =
         requireTrustedTelegramId(req, res);
@@ -10537,44 +10535,81 @@ app.post(
         });
       }
 
+      const safeAmountZl = Number(
+        amountZl.toFixed(2)
+      );
+
       const now = new Date();
+
+      const existingUser =
+        await User.collection.findOne(
+          { telegramId },
+          {
+            projection: {
+              _id: 1,
+              promoCodeActivations: 1,
+            },
+          }
+        );
+
+      if (!existingUser) {
+        return res.status(404).json({
+          ok: false,
+          error: "USER_NOT_FOUND",
+        });
+      }
+
+      const alreadyUsed = Array.isArray(
+        existingUser?.promoCodeActivations
+      )
+        ? existingUser.promoCodeActivations.some(
+            (activation) =>
+              normalizePromoCode(
+                activation?.code
+              ) === code
+          )
+        : false;
+
+      if (alreadyUsed) {
+        return res.status(409).json({
+          ok: false,
+          error: "PROMO_ALREADY_USED",
+          usedCode: code,
+        });
+      }
 
       const updateResult =
         await User.collection.findOneAndUpdate(
           {
             telegramId,
 
-            $or: [
-              {
-                promoCodeUsed: {
-                  $exists: false,
-                },
-              },
-              {
-                promoCodeUsed: null,
-              },
-              {
-                promoCodeUsed: "",
-              },
-            ],
+            "promoCodeActivations.code": {
+              $ne: code,
+            },
           },
 
           {
             $inc: {
-              cashbackBalance: Number(
-                amountZl.toFixed(2)
-              ),
+              cashbackBalance: safeAmountZl,
+            },
+
+            $push: {
+              promoCodeActivations: {
+                code,
+                amountZl: safeAmountZl,
+                promoCodeId: promoCode._id,
+                activatedAt: now,
+              },
             },
 
             $set: {
-              promoCodeUsed: code,
-              promoCodeUsedAt: now,
-
-              promoCodeAmountZl: Number(
-                amountZl.toFixed(2)
-              ),
-
               updatedAt: now,
+            },
+
+            $unset: {
+              promoCodeUsed: "",
+              promoCodeUsedAt: "",
+              promoCodeAmountZl: "",
             },
           },
 
@@ -10587,42 +10622,31 @@ app.post(
         updateResult?.value || updateResult;
 
       if (!updatedUser?._id) {
-        const currentUser =
-          await User.collection.findOne(
-            { telegramId },
-
-            {
-              projection: {
-                promoCodeUsed: 1,
-              },
-            }
-          );
-
-        if (!currentUser) {
-          return res.status(404).json({
-            ok: false,
-            error: "USER_NOT_FOUND",
-          });
-        }
-
         return res.status(409).json({
           ok: false,
           error: "PROMO_ALREADY_USED",
-
-          usedCode: String(
-            currentUser?.promoCodeUsed || ""
-          ),
+          usedCode: code,
         });
       }
 
       await mongoose.connection
         .collection(PROMO_CODES_COLLECTION)
         .updateOne(
-          { code },
+          {
+            _id: promoCode._id,
+          },
 
           {
             $inc: {
               activationsCount: 1,
+            },
+
+            $push: {
+              activations: {
+                telegramId,
+                amountZl: safeAmountZl,
+                activatedAt: now,
+              },
             },
 
             $set: {
@@ -10635,14 +10659,17 @@ app.post(
       return res.json({
         ok: true,
         code,
-
-        amountZl: Number(
-          amountZl.toFixed(2)
-        ),
+        amountZl: safeAmountZl,
 
         cashbackBalance: Number(
           updatedUser?.cashbackBalance || 0
         ),
+
+        activation: {
+          code,
+          amountZl: safeAmountZl,
+          activatedAt: now,
+        },
       });
     } catch (error) {
       console.error(
