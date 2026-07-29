@@ -13106,50 +13106,101 @@ if (TG_BOT_TOKEN) {
       }
 
       const stateKey = String(
-        ctx.from?.id ||
-        ctx.chat?.id ||
-        ""
-      );
 
-      inpostTrackingInputState.set(
-        stateKey,
-        {
-          orderId: String(order._id),
-          chatId: String(
-            ctx.chat?.id || ""
-          ),
-          requestedAt: Date.now(),
-        }
+        ctx.from?.id ||
+
+        ctx.chat?.id ||
+
+        ""
+
       );
 
       await ctx.answerCbQuery();
 
-      await ctx.reply(
+      const promptMessage = await ctx.reply(
+
         [
+
           "📦 <b>Введите трекинг-номер InPost</b>",
+
           "",
+
           `Заказ: <b>#${escapeHtml(
+
             order?.orderNo || "—"
+
           )}</b>`,
+
           "",
+
           "Отправьте трекинг-номер следующим сообщением.",
+
         ].join("\n"),
+
         {
+
           parse_mode: "HTML",
 
           reply_markup: {
+
             inline_keyboard: [
+
               [
+
                 {
+
                   text: "❌ Отмена",
 
                   callback_data:
+
                     `mgr_inpost_tracking_cancel:${order._id}`,
+
                 },
+
               ],
+
             ],
+
           },
+
         }
+
+      );
+
+      inpostTrackingInputState.set(
+
+        stateKey,
+
+        {
+
+          orderId: String(order._id),
+
+          chatId: String(
+
+            ctx.chat?.id || ""
+
+          ),
+
+          requestedAt: Date.now(),
+
+          promptMessageId: Number(
+
+            promptMessage?.message_id || 0
+
+          ),
+
+          readyMessageId: Number(
+
+            ctx.callbackQuery
+
+              ?.message
+
+              ?.message_id || 0
+
+          ),
+
+        }
+
       );
     } catch (error) {
       console.error(
@@ -13310,6 +13361,47 @@ if (TG_BOT_TOKEN) {
           String(ctx.from?.id || "")
         );
 
+        const chatId = String(
+          ctx.chat?.id ||
+          currentState?.chatId ||
+          ""
+        );
+
+        const messageIdsToDelete = [
+          Number(
+            currentState?.promptMessageId || 0
+          ),
+
+          Number(
+            currentState?.inputMessageId || 0
+          ),
+
+          Number(
+            currentState?.readyMessageId || 0
+          ),
+
+          Number(
+            ctx.callbackQuery
+              ?.message
+              ?.message_id || 0
+          ),
+        ].filter(Boolean);
+
+        for (
+          const messageId of new Set(
+            messageIdsToDelete
+          )
+        ) {
+          try {
+            if (chatId && messageId) {
+              await ctx.telegram.deleteMessage(
+                chatId,
+                messageId
+              );
+            }
+          } catch {}
+        }
+
         inpostTrackingInputState.delete(
           stateKey
         );
@@ -13318,24 +13410,44 @@ if (TG_BOT_TOKEN) {
           "Заказ отправлен"
         );
 
-        try {
-          await ctx.editMessageText(
-            [
-              "✅ <b>Заказ отмечен как отправленный</b>",
-              "",
-              `Трекинг-номер: <code>${escapeHtml(
-                trackingNumber
-              )}</code>`,
-              "",
-              "Клиент получил уведомление со ссылкой на отслеживание.",
-            ].join("\n"),
-            {
-              parse_mode: "HTML",
-              disable_web_page_preview:
-                true,
-            }
+        const resultText = [
+          "✅ <b>Заказ отмечен как отправленный</b>",
+          "",
+          `Трекинг-номер: <code>${escapeHtml(
+            trackingNumber
+          )}</code>`,
+          "",
+          "Клиент получил уведомление со ссылкой на отслеживание.",
+        ].join("\n");
+
+        const originalOrderMessageId =
+          Number(
+            order?.payment
+              ?.managerMessageId || 0
           );
-        } catch {}
+
+        await ctx.telegram.sendMessage(
+          chatId,
+          resultText,
+          {
+            parse_mode: "HTML",
+
+            disable_web_page_preview:
+              true,
+
+            ...(originalOrderMessageId
+              ? {
+                  reply_parameters: {
+                    message_id:
+                      originalOrderMessageId,
+
+                    allow_sending_without_reply:
+                      true,
+                  },
+                }
+              : {}),
+          }
+        );
       } catch (error) {
         console.error(
           "mgr_inpost_tracking_confirm error:",
@@ -13460,8 +13572,14 @@ if (TG_BOT_TOKEN) {
           stateKey,
           {
             ...currentState,
+
             trackingNumber,
+
             receivedAt: Date.now(),
+
+            inputMessageId: Number(
+              ctx.message?.message_id || 0
+            ),
           }
         );
 
@@ -13689,9 +13807,7 @@ if (TG_BOT_TOKEN) {
     }
   });
 
-  bot.action(
-    /mgr_change_status:(.+)/,
-    async (ctx) => {
+  bot.action(/mgr_change_status:(.+)/, async (ctx) => {
       try {
         const orderId = String(
           ctx.match?.[1] || ""
@@ -13708,13 +13824,31 @@ if (TG_BOT_TOKEN) {
           return;
         }
 
-        if (
-          String(
-            order?.deliveryType || ""
-          ) !== "pickup"
-        ) {
+        const deliveryType = String(
+          order?.deliveryType || ""
+        )
+          .trim()
+          .toLowerCase();
+
+        const deliveryMethod = String(
+          order?.deliveryMethod || ""
+        )
+          .trim()
+          .toLowerCase();
+
+        const canManagerChangeStatus =
+          deliveryType === "pickup" ||
+          (
+            deliveryType === "delivery" &&
+            deliveryMethod === "inpost"
+          );
+
+        if (!canManagerChangeStatus) {
           await ctx.answerCbQuery(
-            "Доступно только для самовывоза"
+            "Изменение статуса недоступно для этого заказа",
+            {
+              show_alert: true,
+            }
           );
 
           return;
