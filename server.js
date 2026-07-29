@@ -5941,11 +5941,6 @@ if (order.deliveryType === "delivery" && order.deliveryMethod === "courier") {
       ],
     });
 
-const changeStatusButton = {
-  text: "🔄 Изменить статус",
-  callback_data: `mgr_change_status:${order._id}`,
-};
-
 const appendPermanentManagerButtons = (markup = {}) => {
   const rows = Array.isArray(markup?.inline_keyboard)
     ? markup.inline_keyboard
