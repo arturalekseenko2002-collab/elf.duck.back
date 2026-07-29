@@ -134,6 +134,15 @@ const orderSchema = new mongoose.Schema(
       managerDisplayRate: { type: Number, default: null },
       cashbackAppliedAt: { type: Date, default: null },
       cashbackRefundedAt: { type: Date, default: null },
+      cashbackOriginalAppliedZl: {
+        type: Number,
+        default: 0,
+      },
+
+      cashbackRefundedAmountZl: {
+        type: Number,
+        default: 0,
+      },
 
       managerMessageChatId: { type: String, default: "" },
       managerMessageId: { type: String, default: "" },
