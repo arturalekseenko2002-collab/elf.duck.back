@@ -5429,6 +5429,36 @@ const initialReplyMarkup =
           ],
         ],
       };
+
+      initialReplyMarkup.inline_keyboard = [
+        ...(Array.isArray(
+          initialReplyMarkup.inline_keyboard
+        )
+          ? initialReplyMarkup.inline_keyboard
+          : []),
+
+        [
+          {
+            text: "💬 Написать клиенту",
+
+            url: `tg://user?id=${encodeURIComponent(
+              String(
+                order?.userTelegramId || ""
+              )
+            )}`,
+          },
+        ],
+
+        [
+          {
+            text: "🔄 Изменить статус",
+
+            callback_data:
+              `mgr_change_status:${order._id}`,
+          },
+        ],
+      ];
+
 const pickupPoint = order?.pickupPointId
   ? await PickupPoint.findById(order.pickupPointId).lean().catch(() => null)
   : null;
@@ -5911,130 +5941,141 @@ if (order.deliveryType === "delivery" && order.deliveryMethod === "courier") {
       ],
     });
 
-const replyMarkup =
+const contactClientButton = {
+  text: "💬 Написать клиенту",
+  url: `tg://user?id=${encodeURIComponent(
+    String(order?.userTelegramId || "")
+  )}`,
+};
+
+const changeStatusButton = {
+  text: "🔄 Изменить статус",
+  callback_data: `mgr_change_status:${order._id}`,
+};
+
+const appendPermanentManagerButtons = (markup = {}) => {
+  const rows = Array.isArray(markup?.inline_keyboard)
+    ? markup.inline_keyboard
+    : [];
+
+  return {
+    inline_keyboard: [
+      ...rows,
+      [contactClientButton],
+      [changeStatusButton],
+    ],
+  };
+};
+
+const baseReplyMarkup =
   orderStatusKey === "completed"
-    ? withCommonManagerButtons([
-        [
-          {
-            text:
-              "✅ Заказ выполнен",
-
-            callback_data:
-              `mgr_order_completed_done:${order._id}`,
-          },
+    ? {
+        inline_keyboard: [
+          [
+            {
+              text:
+                String(order?.deliveryType || "") === "delivery" &&
+                String(order?.deliveryMethod || "") === "courier"
+                  ? "🚚 Заказ доставлен"
+                  : "✅ Заказ выполнен",
+              callback_data: `mgr_order_completed_done:${order._id}`,
+            },
+          ],
         ],
-      ])
-
+      }
     : orderStatusKey === "shipped"
-    ? withCommonManagerButtons([
-        [
-          {
-            text:
-              "📦 Заказ отправлен",
-
-            callback_data:
-              `mgr_order_shipped_done:${order._id}`,
-          },
+    ? {
+        inline_keyboard: [
+          [
+            {
+              text: "📦 Заказ отправлен",
+              callback_data: `mgr_order_shipped_done:${order._id}`,
+            },
+          ],
         ],
-      ])
-
+      }
     : orderStatusKey === "annulled"
-    ? withCommonManagerButtons([
-        [
-          {
-            text:
-              "⌛️ Заказ аннулирован",
-
-            callback_data:
-              `mgr_order_annulled_done:${order._id}`,
-          },
+    ? {
+        inline_keyboard: [
+          [
+            {
+              text: "⌛️ Заказ аннулирован",
+              callback_data: `mgr_order_annulled_done:${order._id}`,
+            },
+          ],
         ],
-      ])
-
+      }
     : orderStatusKey === "canceled"
-    ? withCommonManagerButtons([
-        [
-          {
-            text: canceledByClient
-              ? "❌ Заказ отменен клиентом"
-              : "❌ Заказ отклонен менеджером",
-
-            callback_data:
-              `mgr_order_canceled_done:${order._id}`,
-          },
+    ? {
+        inline_keyboard: [
+          [
+            {
+              text: canceledByClient
+                ? "❌ Заказ отменен клиентом"
+                : "❌ Заказ отклонен менеджером",
+              callback_data: `mgr_order_canceled_done:${order._id}`,
+            },
+          ],
         ],
-      ])
-
-    : String(
-        order?.payment?.status || ""
-      ) === "awaiting"
-    ? withCommonManagerButtons([
-        [
-          {
-            text: "🕒 Ожидаю",
-
-            callback_data:
-              `mgr_done:${order._id}`,
-          },
+      }
+    : String(order?.payment?.status || "") === "awaiting"
+    ? {
+        inline_keyboard: [
+          [
+            {
+              text: "🕒 Ожидаю",
+              callback_data: `mgr_done:${order._id}`,
+            },
+          ],
         ],
-      ])
-
-    : String(
-        order?.deliveryType || ""
-      ) === "pickup" &&
-      String(
-        order?.payment?.method || ""
-      ) === "cash" &&
-      String(
-        order?.payment?.status || ""
-      ) !== "awaiting"
-    ? withCommonManagerButtons([
-        [
-          {
-            text: "🕒 Ожидаю",
-
-            callback_data:
-              `mgr_pay_paid:${order._id}`,
-          },
-          {
-            text: "❌ Отклонить",
-
-            callback_data:
-              `mgr_pay_unpaid:${order._id}`,
-          },
+      }
+    : String(order?.deliveryType || "") === "pickup" &&
+      String(order?.payment?.method || "") === "cash" &&
+      String(order?.payment?.status || "") !== "awaiting"
+    ? {
+        inline_keyboard: [
+          [
+            {
+              text: "🕒 Ожидаю",
+              callback_data: `mgr_pay_paid:${order._id}`,
+            },
+            {
+              text: "❌ Отклонить",
+              callback_data: `mgr_pay_unpaid:${order._id}`,
+            },
+          ],
         ],
-      ])
-
-    : String(
-        order?.payment?.status || ""
-      ) === "paid"
-    ? withCommonManagerButtons([
-        [
-          {
-            text: "✅ Оплачено",
-
-            callback_data:
-              `mgr_done:${order._id}`,
-          },
+      }
+    : String(order?.payment?.status || "") === "paid"
+    ? {
+        inline_keyboard: [
+          [
+            {
+              text: "✅ Оплачено",
+              callback_data: `mgr_done:${order._id}`,
+            },
+          ],
         ],
-      ])
-
-    : withCommonManagerButtons([
-        [
-          {
-            text: "✅ Оплачено",
-
-            callback_data:
-              `mgr_pay_paid:${order._id}`,
-          },
-          {
-            text: "❌ Отклонить",
-
-            callback_data:
-              `mgr_pay_unpaid:${order._id}`,
-          },
+      }
+    : {
+        inline_keyboard: [
+          [
+            {
+              text: "✅ Оплачено",
+              callback_data: `mgr_pay_paid:${order._id}`,
+            },
+            {
+              text: "❌ Отклонить",
+              callback_data: `mgr_pay_unpaid:${order._id}`,
+            },
+          ],
         ],
-      ]);
+      };
+
+const replyMarkup =
+  appendPermanentManagerButtons(
+    baseReplyMarkup
+  );
 
     try {
       await bot.telegram.editMessageText(
