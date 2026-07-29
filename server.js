@@ -7132,8 +7132,6 @@ app.post("/admin/users/broadcast-photo-async", async (req, res) => {
 
     // дальше отправляем в фоне
     setImmediate(async () => {
-      try {
-      console.log("[BROADCAST] BACKGROUND STARTED");
       let sent = 0;
       let failed = 0;
       let blocked = 0;
@@ -7282,26 +7280,7 @@ app.post("/admin/users/broadcast-photo-async", async (req, res) => {
         blocked,
 
       });
-        } catch (e) {
-
-        console.error("[BROADCAST BACKGROUND ERROR]", e);
-
-        broadcastJobs.set(jobId, {
-
-          ...(broadcastJobs.get(jobId) || {}),
-
-          status: "failed",
-
-          error: String(e?.stack || e),
-
-          finishedAt: new Date().toISOString(),
-
-        });
-
-      }
-
     });
-   
   } catch (e) {
     console.error("admin async photo broadcast error:", e);
 
