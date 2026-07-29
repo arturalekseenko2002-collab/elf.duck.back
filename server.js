@@ -2173,14 +2173,35 @@ async function applyOrderCashback(order) {
   await user.save();
 
   await Order.updateOne(
-    { _id: freshOrder._id, cashbackAppliedAt: null },
+
     {
+
+      _id: freshOrder._id,
+
+      $or: [
+
+        { cashbackAppliedAt: null },
+
+        { cashbackAppliedAt: { $exists: false } },
+
+      ],
+
+    },
+
+    {
+
       $set: {
+
         cashbackPercent: percent,
+
         cashbackZl,
+
         cashbackAppliedAt: new Date(),
+
       },
+
     }
+
   );
 
   return { applied: true, cashbackZl, percent };
@@ -2465,25 +2486,12 @@ async function rollbackEarnedOrderCashback(order) {
     };
   }
 
-  const freshOrder = await Order.findById(
-    String(order._id || "")
-  );
+  const freshOrder =
+    await Order.findById(
+      String(order._id || "")
+    );
 
   if (!freshOrder) {
-    return {
-      rolledBack: false,
-      amount: 0,
-    };
-  }
-
-  const earnedCashbackZl = Number(
-    freshOrder?.cashbackZl || 0
-  );
-
-  if (
-    !(earnedCashbackZl > 0) ||
-    !freshOrder?.cashbackAppliedAt
-  ) {
     return {
       rolledBack: false,
       amount: 0,
@@ -2512,36 +2520,69 @@ async function rollbackEarnedOrderCashback(order) {
     freshOrder._id || ""
   );
 
-  let leftToDeduct = Number(
-    earnedCashbackZl.toFixed(2)
+  /*
+   * Все строки начисления, относящиеся
+   * именно к этому заказу.
+   */
+  const orderCashbackRows =
+    user.cashbackLedger.filter(
+      (row) =>
+        String(
+          row?.sourceOrderId || ""
+        ) === orderId
+    );
+
+  /*
+   * Источник истины №1 — ledger.
+   */
+  const ledgerEarnedAmount = Number(
+    orderCashbackRows
+      .reduce(
+        (sum, row) =>
+          sum +
+          Math.max(
+            0,
+            Number(row?.amountZl || 0)
+          ),
+        0
+      )
+      .toFixed(2)
   );
 
   /*
-   * Сначала списываем именно запись кэшбека,
-   * начисленную за этот заказ.
+   * Источник истины №2 — данные заказа.
    */
-  const orderCashbackRows =
-    user.cashbackLedger
-      .filter(
-        (row) =>
-          String(
-            row?.sourceOrderId || ""
-          ) === orderId &&
-          !row?.expiredAt &&
-          Number(
-            row?.remainingZl || 0
-          ) > 0
-      )
-      .sort(
-        (a, b) =>
-          new Date(
-            a?.earnedAt || 0
-          ).getTime() -
-          new Date(
-            b?.earnedAt || 0
-          ).getTime()
-      );
+  const savedOrderCashbackAmount =
+    Number(
+      Math.max(
+        0,
+        Number(
+          freshOrder?.cashbackZl || 0
+        )
+      ).toFixed(2)
+    );
 
+  const earnedCashbackZl = Number(
+    Math.max(
+      ledgerEarnedAmount,
+      savedOrderCashbackAmount
+    ).toFixed(2)
+  );
+
+  if (!(earnedCashbackZl > 0)) {
+    return {
+      rolledBack: false,
+      amount: 0,
+    };
+  }
+
+  let leftToDeduct =
+    earnedCashbackZl;
+
+  /*
+   * Сначала обнуляем остаток строк,
+   * начисленных конкретно за этот заказ.
+   */
   for (
     const row of orderCashbackRows
   ) {
@@ -2553,6 +2594,8 @@ async function rollbackEarnedOrderCashback(order) {
         row?.remainingZl || 0
       )
     );
+
+    if (available <= 0) continue;
 
     const deducted = Math.min(
       available,
@@ -2573,9 +2616,9 @@ async function rollbackEarnedOrderCashback(order) {
   }
 
   /*
-   * Если клиент уже начал тратить именно
-   * этот начисленный кэшбек, добираем сумму
-   * из остальных активных частей баланса.
+   * Если начисленный кэшбек уже частично
+   * потрачен — добираем из других
+   * активных частей баланса.
    */
   if (leftToDeduct > 0) {
     const otherActiveRows =
@@ -2612,6 +2655,8 @@ async function rollbackEarnedOrderCashback(order) {
         )
       );
 
+      if (available <= 0) continue;
+
       const deducted = Math.min(
         available,
         leftToDeduct
@@ -2631,11 +2676,6 @@ async function rollbackEarnedOrderCashback(order) {
     }
   }
 
-  /*
-   * Не разрешаем отменить заказ,
-   * если клиент уже потратил начисленный
-   * кэшбек и полностью забрать его нельзя.
-   */
   if (leftToDeduct > 0) {
     throw new Error(
       "INSUFFICIENT_CASHBACK_BALANCE_FOR_ORDER_CANCELLATION"
@@ -2652,11 +2692,6 @@ async function rollbackEarnedOrderCashback(order) {
 
   await user.save();
 
-  /*
-   * Сбрасываем отметку начисления,
-   * чтобы при повторном переводе заказа
-   * в выполненные кэшбек мог начислиться снова.
-   */
   await Order.updateOne(
     {
       _id: freshOrder._id,
