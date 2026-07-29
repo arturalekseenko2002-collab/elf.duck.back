@@ -12876,13 +12876,45 @@ if (TG_BOT_TOKEN) {
         order
       ).catch(() => null);
 
-    const managerTelegramId = String(
-      Array.isArray(
-        point?.allowedAdminTelegramIds
-      )
-        ? point.allowedAdminTelegramIds[0] || ""
-        : ""
-    ).trim();
+      const notifyPoint =
+        await resolveOrderNotificationPoint(order).catch(() => null);
+
+      const pointManagerTelegramId = String(
+        Array.isArray(
+          notifyPoint?.allowedAdminTelegramIds
+        )
+          ? notifyPoint.allowedAdminTelegramIds[0] || ""
+          : ""
+      ).trim();
+
+      const pointManagerUser =
+        pointManagerTelegramId
+          ? await User.findOne(
+              {
+                telegramId: pointManagerTelegramId,
+              },
+              {
+                username: 1,
+                firstName: 1,
+                telegramId: 1,
+              }
+            ).lean()
+          : null;
+
+      const managerContactUsernameRaw = String(
+        pointManagerUser?.username ||
+        pointManagerUser?.firstName ||
+        ""
+      ).trim();
+
+      const managerContactUsername =
+        pointManagerUser?.username
+          ? (
+              managerContactUsernameRaw.startsWith("@")
+                ? managerContactUsernameRaw
+                : `@${managerContactUsernameRaw}`
+            )
+          : managerContactUsernameRaw || "—";
 
     const deliveryWindow = String(
       order?.deliveryTimeWindow ||
@@ -14116,18 +14148,20 @@ if (TG_BOT_TOKEN) {
             ).lean()
           : null;
 
-        const courierUsernameRaw = String(
-          courierUser?.username ||
+        const managerContactUsernameRaw = String(
+          pointManagerUser?.username ||
+          notifyPoint?.managerUsername ||
+          freshDeliveredOrder?.courierUsername ||
           order?.courierUsername ||
           ""
         ).trim();
 
-        const courierUsername =
-          courierUsernameRaw
+        const managerContactUsername =
+          managerContactUsernameRaw
             ? (
-                courierUsernameRaw.startsWith("@")
-                  ? courierUsernameRaw
-                  : `@${courierUsernameRaw}`
+                managerContactUsernameRaw.startsWith("@")
+                  ? managerContactUsernameRaw
+                  : `@${managerContactUsernameRaw}`
               )
             : "—";
 
@@ -14144,7 +14178,7 @@ if (TG_BOT_TOKEN) {
               ``,
               `Курьер прибыл по заказу <b>#${orderNo}</b>.`,
               ``,
-              `📲 <b>Связь с курьером:</b> ${escapeHtml(courierUsername)}`,
+              `📲 <b>Связь с менеджером:</b> ${escapeHtml(managerContactUsername)}`,
             ].join("\n"),
             {
               parse_mode: "HTML",
