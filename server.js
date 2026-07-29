@@ -14095,29 +14095,35 @@ if (TG_BOT_TOKEN) {
         const orderNo = escapeHtml(order?.orderNo || "—");
         const notifyPoint = await resolveOrderNotificationPoint(freshDeliveredOrder || order).catch(() => null);
 
-        const pointManagerTelegramId = String(
-          Array.isArray(notifyPoint?.allowedAdminTelegramIds)
-            ? notifyPoint.allowedAdminTelegramIds[0] || ""
-            : ""
+        const courierTelegramId = String(
+          order?.courierTelegramId || ""
         ).trim();
 
-        const pointManagerUser = pointManagerTelegramId
+        const courierUser = courierTelegramId
           ? await User.findOne(
-              { telegramId: pointManagerTelegramId },
-              { telegramId: 1, username: 1, firstName: 1 }
+              { telegramId: courierTelegramId },
+              {
+                telegramId: 1,
+                username: 1,
+                firstName: 1,
+              }
             ).lean()
           : null;
 
         const courierUsernameRaw = String(
-          pointManagerUser?.username ||
-          notifyPoint?.managerUsername ||
-          notifyPoint?.courierUsername ||
-          freshDeliveredOrder?.courierUsername ||
-          freshDeliveredOrder?.courier?.username ||
+          courierUser?.username ||
           order?.courierUsername ||
-          order?.courier?.username ||
           ""
         ).trim();
+
+        const courierUsername =
+          courierUsernameRaw
+            ? (
+                courierUsernameRaw.startsWith("@")
+                  ? courierUsernameRaw
+                  : `@${courierUsernameRaw}`
+              )
+            : "—";
 
         const courierUsername = courierUsernameRaw
           ? (courierUsernameRaw.startsWith("@")
