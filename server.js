@@ -12871,11 +12871,6 @@ if (TG_BOT_TOKEN) {
       return false;
     }
 
-    const point =
-      await resolveOrderNotificationPoint(
-        order
-      ).catch(() => null);
-
       const notifyPoint =
         await resolveOrderNotificationPoint(order).catch(() => null);
 
@@ -12957,18 +12952,17 @@ if (TG_BOT_TOKEN) {
       return false;
     }
 
-    const replyMarkup =
-      managerTelegramId
+  const replyMarkup =
+    pointManagerTelegramId
         ? {
             inline_keyboard: [
               [
                 {
                   text:
                     "💬 Связаться с менеджером",
-
                   url:
                     `tg://user?id=${encodeURIComponent(
-                      managerTelegramId
+                      pointManagerTelegramId
                     )}`,
                 },
               ],
