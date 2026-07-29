@@ -3268,7 +3268,9 @@ async function changePickupOrderStatusByManager(
     deliveryType === "pickup" ||
     (
       deliveryType === "delivery" &&
-      deliveryMethod === "inpost"
+      ["inpost", "courier"].includes(
+        deliveryMethod
+      )
     );
 
   if (!canManagerChangeStatus) {
@@ -6357,21 +6359,21 @@ async function refreshManagerOrderMessage(order) {
       lines.push("");
     }
 
-if (order.deliveryType === "delivery" && order.deliveryMethod === "courier") {
-  if (order.courierAddress) {
-    lines.push(`📍 <b>Адрес доставки:</b> ${escapeHtml(order.courierAddress)}`);
-  }
-  if (order.courierDistrict) {
-    lines.push(`🌍 <b>Район:</b> ${escapeHtml(order.courierDistrict)}`);
-  }
-  if (Number(order.deliveryFeeZl || 0) > 0) {
-    lines.push(`🚚 <b>Стоимость доставки:</b> ${Number(order.deliveryFeeZl || 0).toFixed(2)} PLN`);
-  }
-  if (order.deliveryTimeWindow) {
-    lines.push(`🕒 <b>Временной промежуток:</b> ${escapeHtml(order.deliveryTimeWindow)}`);
-  }
-  lines.push("");
-}
+    if (order.deliveryType === "delivery" && order.deliveryMethod === "courier") {
+      if (order.courierAddress) {
+        lines.push(`📍 <b>Адрес доставки:</b> ${escapeHtml(order.courierAddress)}`);
+      }
+      if (order.courierDistrict) {
+        lines.push(`🌍 <b>Район:</b> ${escapeHtml(order.courierDistrict)}`);
+      }
+      if (Number(order.deliveryFeeZl || 0) > 0) {
+        lines.push(`🚚 <b>Стоимость доставки:</b> ${Number(order.deliveryFeeZl || 0).toFixed(2)} PLN`);
+      }
+      if (order.deliveryTimeWindow) {
+        lines.push(`🕒 <b>Временной промежуток:</b> ${escapeHtml(order.deliveryTimeWindow)}`);
+      }
+      lines.push("");
+    }
 
     if (order.deliveryType === "delivery" && order.deliveryMethod === "inpost") {
       if (order.inpostData?.fullName) lines.push(`👤 <b>Получатель:</b> ${escapeHtml(order.inpostData.fullName)}`);
@@ -6413,167 +6415,236 @@ if (order.deliveryType === "delivery" && order.deliveryMethod === "courier") {
 
     const text = lines.filter((line) => line !== null && line !== undefined).join("\n");
 
-const permanentManagerButtons = [
-  [
-    {
-      text: "💬 Написать клиенту",
+    const isCourierOrder =
+      String(order?.deliveryType || "")
+        .trim()
+        .toLowerCase() === "delivery" &&
+      String(order?.deliveryMethod || "")
+        .trim()
+        .toLowerCase() === "courier";
 
-      url: `tg://user?id=${encodeURIComponent(
-        String(
-          order?.userTelegramId || ""
-        )
-      )}`,
-    },
-  ],
+    const isCashPayment =
+      String(order?.payment?.method || "")
+        .trim()
+        .toLowerCase() === "cash";
 
-  [
-    {
-      text: "🔄 Изменить статус",
+    const permanentManagerButtons = [
+      [
+        {
+          text: "💬 Написать клиенту",
 
-      callback_data:
-        `mgr_change_status:${order._id}`,
-    },
-  ],
-];
+          url: `tg://user?id=${encodeURIComponent(
+            String(
+              order?.userTelegramId || ""
+            )
+          )}`,
+        },
+      ],
 
-const baseInlineKeyboard =
-  orderStatusKey === "completed"
-    ? [
-        [
-          {
-            text:
-              String(
-                order?.deliveryType || ""
-              ) === "delivery" &&
-              String(
-                order?.deliveryMethod || ""
-              ) === "courier"
-                ? "🚚 Заказ доставлен"
-                : "✅ Заказ выполнен",
+      [
+        {
+          text: "🔄 Изменить статус",
 
-            callback_data:
-              `mgr_order_completed_done:${order._id}`,
-          },
-        ],
-      ]
+          callback_data:
+            `mgr_change_status:${order._id}`,
+        },
+      ],
+    ];
 
-    : orderStatusKey === "shipped"
-    ? [
-        [
-          {
-            text: "📦 Заказ отправлен",
+    const baseInlineKeyboard =
+      orderStatusKey === "completed"
+        ? [
+            [
+              {
+                text: isCourierOrder
+                  ? "🚚 Заказ доставлен"
+                  : "✅ Заказ выполнен",
 
-            callback_data:
-              `mgr_order_shipped_done:${order._id}`,
-          },
-        ],
-      ]
+                callback_data:
+                  `mgr_order_completed_done:${order._id}`,
+              },
+            ],
+          ]
 
-    : orderStatusKey === "annulled"
-    ? [
-        [
-          {
-            text: "⌛️ Заказ аннулирован",
+        : orderStatusKey === "shipped"
+        ? [
+            [
+              {
+                text: "📦 Заказ отправлен",
 
-            callback_data:
-              `mgr_order_annulled_done:${order._id}`,
-          },
-        ],
-      ]
+                callback_data:
+                  `mgr_order_shipped_done:${order._id}`,
+              },
+            ],
+          ]
 
-    : orderStatusKey === "canceled"
-    ? [
-        [
-          {
-            text: canceledByClient
-              ? "❌ Заказ отменен клиентом"
-              : "❌ Заказ отклонен менеджером",
+        : orderStatusKey === "annulled"
+        ? [
+            [
+              {
+                text: "⌛️ Заказ аннулирован",
 
-            callback_data:
-              `mgr_order_canceled_done:${order._id}`,
-          },
-        ],
-      ]
+                callback_data:
+                  `mgr_order_annulled_done:${order._id}`,
+              },
+            ],
+          ]
 
-    : String(
-        order?.payment?.status || ""
-      ) === "awaiting"
-    ? [
-        [
-          {
-            text: "🕒 Ожидаю",
+        : orderStatusKey === "canceled"
+        ? [
+            [
+              {
+                text: canceledByClient
+                  ? "❌ Заказ отменен клиентом"
+                  : "❌ Заказ отклонен менеджером",
 
-            callback_data:
-              `mgr_done:${order._id}`,
-          },
-        ],
-      ]
+                callback_data:
+                  `mgr_order_canceled_done:${order._id}`,
+              },
+            ],
+          ]
 
-    : String(
-        order?.deliveryType || ""
-      ) === "pickup" &&
-      String(
-        order?.payment?.method || ""
-      ) === "cash" &&
-      String(
-        order?.payment?.status || ""
-      ) !== "awaiting"
-    ? [
-        [
-          {
-            text: "🕒 Ожидаю",
+        /*
+        * Курьерский заказ уже принят
+        * или оплата подтверждена.
+        */
+        : isCourierOrder &&
+          ["paid", "awaiting"].includes(
+            paymentStatusKey
+          )
+        ? [
+            [
+              {
+                text:
+                  "🚗 Буду через 15 минут",
 
-            callback_data:
-              `mgr_pay_paid:${order._id}`,
-          },
+                callback_data:
+                  `mgr_courier_soon:${order._id}`,
+              },
+            ],
 
-          {
-            text: "❌ Отклонить",
+            [
+              {
+                text: "📍 Я на месте",
 
-            callback_data:
-              `mgr_pay_unpaid:${order._id}`,
-          },
-        ],
-      ]
+                callback_data:
+                  `mgr_courier_arrived:${order._id}`,
+              },
+            ],
 
-    : String(
-        order?.payment?.status || ""
-      ) === "paid"
-    ? [
-        [
-          {
-            text: "✅ Оплачено",
+            [
+              {
+                text: "✅ Заказ выполнен",
 
-            callback_data:
-              `mgr_done:${order._id}`,
-          },
-        ],
-      ]
+                callback_data:
+                  `mgr_change_status_apply:completed:${order._id}`,
+              },
+            ],
+          ]
 
-    : [
-        [
-          {
-            text: "✅ Оплачено",
+        /*
+        * Курьер и оплата на месте.
+        */
+        : isCourierOrder &&
+          isCashPayment
+        ? [
+            [
+              {
+                text: "✅ Принят",
 
-            callback_data:
-              `mgr_pay_paid:${order._id}`,
-          },
+                callback_data:
+                  `mgr_pay_paid:${order._id}`,
+              },
 
-          {
-            text: "❌ Отклонить",
+              {
+                text: "❌ Отклонить",
 
-            callback_data:
-              `mgr_pay_unpaid:${order._id}`,
-          },
-        ],
-      ];
+                callback_data:
+                  `mgr_pay_unpaid:${order._id}`,
+              },
+            ],
+          ]
 
-const replyMarkup = {
-  inline_keyboard: [
-    ...baseInlineKeyboard,
-    ...permanentManagerButtons,
-  ],
-};
+        /*
+        * Самовывоз с наличными.
+        */
+        : String(
+            order?.payment?.status || ""
+          ) === "awaiting"
+        ? [
+            [
+              {
+                text: "🕒 Ожидаю",
+
+                callback_data:
+                  `mgr_done:${order._id}`,
+              },
+            ],
+          ]
+
+        : String(
+            order?.deliveryType || ""
+          ) === "pickup" &&
+          isCashPayment
+        ? [
+            [
+              {
+                text: "🕒 Ожидаю",
+
+                callback_data:
+                  `mgr_pay_paid:${order._id}`,
+              },
+
+              {
+                text: "❌ Отклонить",
+
+                callback_data:
+                  `mgr_pay_unpaid:${order._id}`,
+              },
+            ],
+          ]
+
+        : String(
+            order?.payment?.status || ""
+          ) === "paid"
+        ? [
+            [
+              {
+                text: "✅ Оплачено",
+
+                callback_data:
+                  `mgr_done:${order._id}`,
+              },
+            ],
+          ]
+
+        /*
+        * BLIK / крипта / украинская карта.
+        */
+        : [
+            [
+              {
+                text: "✅ Оплатил",
+
+                callback_data:
+                  `mgr_pay_paid:${order._id}`,
+              },
+
+              {
+                text: "❌ Отклонить",
+
+                callback_data:
+                  `mgr_pay_unpaid:${order._id}`,
+              },
+            ],
+          ];
+
+    const replyMarkup = {
+      inline_keyboard: [
+        ...baseInlineKeyboard,
+        ...permanentManagerButtons,
+      ],
+    };
     try {
       await bot.telegram.editMessageText(
         messageChatId,
@@ -12784,6 +12855,284 @@ if (TG_BOT_TOKEN) {
     return true;
   }
 
+  async function sendCourierClientMessage(
+    order,
+    type
+  ) {
+    if (!bot || !order) {
+      return false;
+    }
+
+    const clientTelegramId = String(
+      order?.userTelegramId || ""
+    ).trim();
+
+    if (!clientTelegramId) {
+      return false;
+    }
+
+    const managerTelegramId = String(
+      order?.courierTelegramId ||
+      order?.handledByTelegramId ||
+      order?.payment?.checkedByTelegramId ||
+      ""
+    ).trim();
+
+    const deliveryWindow = String(
+      order?.deliveryTimeWindow ||
+      order?.arrivalTime ||
+      "указанный промежуток времени"
+    ).trim();
+
+    let text = "";
+
+    if (type === "accepted") {
+      text = [
+        "✅ <b>Ваш заказ принят!</b>",
+        "",
+        "Мы в процессе сбора вашего заказа.",
+        `Ожидайте курьера в промежутке <b>${escapeHtml(
+          deliveryWindow
+        )}</b>.`,
+      ].join("\n");
+    }
+
+    if (type === "soon") {
+      text = [
+        "🚗 <b>Курьер выехал и будет через 15 минут!</b>",
+        "",
+        "Ищите серую Honda с номерами WB 084CY.",
+        "",
+        "Пожалуйста, выйдите навстречу — курьер может ожидать не более 5 минут. В случае опоздания курьер вправе уехать, а повторная доставка оплачивается в двойном размере.",
+      ].join("\n");
+    }
+
+    if (type === "arrived") {
+      text = [
+        "📍 <b>Курьер на месте!</b>",
+        "",
+        "Если не видите курьера — свяжитесь с менеджером.",
+      ].join("\n");
+    }
+
+    if (!text) {
+      return false;
+    }
+
+    const replyMarkup =
+      managerTelegramId
+        ? {
+            inline_keyboard: [
+              [
+                {
+                  text:
+                    "💬 Связаться с менеджером",
+
+                  url:
+                    `tg://user?id=${encodeURIComponent(
+                      managerTelegramId
+                    )}`,
+                },
+              ],
+            ],
+          }
+        : undefined;
+
+    await bot.telegram.sendMessage(
+      clientTelegramId,
+      text,
+      {
+        parse_mode: "HTML",
+
+        disable_web_page_preview:
+          true,
+
+        ...(replyMarkup
+          ? {
+              reply_markup:
+                replyMarkup,
+            }
+          : {}),
+      }
+    );
+
+    return true;
+  }
+
+  bot.action(/mgr_courier_soon:(.+)/, async (ctx) => {
+      try {
+        const orderId = String(
+          ctx.match?.[1] || ""
+        ).trim();
+
+        const order =
+          await Order.findById(
+            orderId
+          );
+
+        if (!order) {
+          await ctx.answerCbQuery(
+            "Заказ не найден"
+          );
+
+          return;
+        }
+
+        const isCourierOrder =
+          String(
+            order?.deliveryType || ""
+          )
+            .trim()
+            .toLowerCase() ===
+            "delivery" &&
+          String(
+            order?.deliveryMethod || ""
+          )
+            .trim()
+            .toLowerCase() ===
+            "courier";
+
+        if (!isCourierOrder) {
+          await ctx.answerCbQuery(
+            "Доступно только для курьерской доставки",
+            {
+              show_alert: true,
+            }
+          );
+
+          return;
+        }
+
+        order.courierUsername =
+          String(
+            ctx.from?.username || ""
+          ).trim();
+
+        order.courierTelegramId =
+          String(
+            ctx.from?.id || ""
+          ).trim();
+
+        order.handledByTelegramId =
+          String(
+            ctx.from?.id || ""
+          ).trim();
+
+        await order.save();
+
+        await sendCourierClientMessage(
+          order,
+          "soon"
+        );
+
+        await ctx.answerCbQuery(
+          "Клиент уведомлён"
+        );
+      } catch (error) {
+        console.error(
+          "mgr_courier_soon error:",
+          error
+        );
+
+        try {
+          await ctx.answerCbQuery(
+            "Не удалось уведомить клиента",
+            {
+              show_alert: true,
+            }
+          );
+        } catch {}
+      }
+    }
+  );
+
+  bot.action(/mgr_courier_arrived:(.+)/, async (ctx) => {
+      try {
+        const orderId = String(
+          ctx.match?.[1] || ""
+        ).trim();
+
+        const order =
+          await Order.findById(
+            orderId
+          );
+
+        if (!order) {
+          await ctx.answerCbQuery(
+            "Заказ не найден"
+          );
+
+          return;
+        }
+
+        const isCourierOrder =
+          String(
+            order?.deliveryType || ""
+          )
+            .trim()
+            .toLowerCase() ===
+            "delivery" &&
+          String(
+            order?.deliveryMethod || ""
+          )
+            .trim()
+            .toLowerCase() ===
+            "courier";
+
+        if (!isCourierOrder) {
+          await ctx.answerCbQuery(
+            "Доступно только для курьерской доставки",
+            {
+              show_alert: true,
+            }
+          );
+
+          return;
+        }
+
+        order.courierUsername =
+          String(
+            ctx.from?.username || ""
+          ).trim();
+
+        order.courierTelegramId =
+          String(
+            ctx.from?.id || ""
+          ).trim();
+
+        order.handledByTelegramId =
+          String(
+            ctx.from?.id || ""
+          ).trim();
+
+        await order.save();
+
+        await sendCourierClientMessage(
+          order,
+          "arrived"
+        );
+
+        await ctx.answerCbQuery(
+          "Клиент уведомлён"
+        );
+      } catch (error) {
+        console.error(
+          "mgr_courier_arrived error:",
+          error
+        );
+
+        try {
+          await ctx.answerCbQuery(
+            "Не удалось уведомить клиента",
+            {
+              show_alert: true,
+            }
+          );
+        } catch {}
+      }
+    }
+  );
+
   bot.action(/mgr_pay_paid:(.+)/, async (ctx) => {
     try {
       const orderId = String(ctx.match?.[1] || "").trim();
@@ -12805,22 +13154,48 @@ if (TG_BOT_TOKEN) {
         order.stockCommittedAt = new Date();
       }
 
+      const isCourierOrder =
+        String(order?.deliveryType || "")
+          .trim()
+          .toLowerCase() ===
+          "delivery" &&
+        String(order?.deliveryMethod || "")
+          .trim()
+          .toLowerCase() ===
+          "courier";
+
+      const isCashPayment =
+        String(order?.payment?.method || "")
+          .trim()
+          .toLowerCase() ===
+          "cash";
+
       const shouldMarkAwaiting =
-      String(order?.deliveryType || "") === "pickup" &&
-      String(order?.payment?.method || "") === "cash";
+        (
+          String(
+            order?.deliveryType || ""
+          )
+            .trim()
+            .toLowerCase() ===
+            "pickup" ||
+          isCourierOrder
+        ) &&
+        isCashPayment;
 
       order.payment = {
         ...(order.payment?.toObject ? order.payment.toObject() : order.payment || {}),
-        status: shouldMarkAwaiting ? "awaiting" : "paid",
-        paidAt: new Date(),
+        status: shouldMarkAwaiting
+          ? "awaiting"
+          : "paid",
+
+        paidAt: shouldMarkAwaiting
+          ? null
+          : new Date(),
         checkedAt: new Date(),
         checkedByTelegramId: String(ctx.from?.id || ""),
       };
 
-      if (
-        String(order?.deliveryType || "") === "delivery" &&
-        String(order?.deliveryMethod || "") === "courier"
-      ) {
+      if (isCourierOrder) {
         order.courierUsername = String(ctx.from?.username || "").trim();
         order.courierTelegramId = String(ctx.from?.id || "").trim();
       }
@@ -12858,10 +13233,17 @@ if (TG_BOT_TOKEN) {
         nextPaymentStatus
       ) {
         try {
-          await notifyPickupClientAfterManagerPaymentStatus(
-            freshPaidOrder,
-            String(ctx.from?.id || "")
-          );
+          if (isCourierOrder) {
+            await sendCourierClientMessage(
+              freshPaidOrder,
+              "accepted"
+            );
+          } else {
+            await notifyPickupClientAfterManagerPaymentStatus(
+              freshPaidOrder,
+              String(ctx.from?.id || "")
+            );
+          }
         } catch (notifyError) {
           console.error(
             "mgr_pay_paid client notification error:",
@@ -12872,7 +13254,17 @@ if (TG_BOT_TOKEN) {
       // --- END PATCH 1 ---
 
       // Для доставки отправляем отдельное сообщение-напоминание менеджеру
-      if (String(order?.deliveryType || "") === "delivery") {
+      if (
+
+        String(
+          order?.deliveryType || ""
+        ) === "delivery" &&
+
+        String(
+          order?.deliveryMethod || ""
+        ) === "inpost"
+
+      ) {
         try {
           const managerChatId = String(order?.payment?.managerMessageChatId || "").trim();
           const managerMessageId = Number(order?.payment?.managerMessageId || 0);
@@ -12980,6 +13372,22 @@ if (TG_BOT_TOKEN) {
       };
 
       order.status = "canceled";
+
+      order.canceledAt =
+        new Date();
+
+      order.canceledByTelegramId =
+        String(
+          ctx.from?.id || ""
+        );
+
+      order.managerEditedAt =
+        new Date();
+
+      order.managerEditedByTelegramId =
+        String(
+          ctx.from?.id || ""
+        );
 
       // --- PATCH 3: replace block for unpaid status ---
       await order.save();
@@ -13791,10 +14199,19 @@ if (TG_BOT_TOKEN) {
           .toLowerCase();
 
         const canManagerChangeStatus =
+
           deliveryType === "pickup" ||
+
           (
+
             deliveryType === "delivery" &&
-            deliveryMethod === "inpost"
+
+            ["inpost", "courier"].includes(
+
+              deliveryMethod
+
+            )
+
           );
 
         if (!canManagerChangeStatus) {
