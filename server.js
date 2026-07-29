@@ -12509,23 +12509,6 @@ if (TG_BOT_TOKEN) {
       await ctx.answerCbQuery(
         shouldMarkAwaiting ? "Клиент ожидается на точке" : "Оплата подтверждена"
       );
-      // --- PATCH 2: add collapse/collapseButton logic after answerCbQuery ---
-try {
-  await ctx.editMessageReplyMarkup({
-    inline_keyboard: [
-      [{ text: shouldMarkAwaiting ? "🕒 Ожидаю" : "✅ Оплачено", callback_data: `mgr_done:${freshPaidOrder._id}` }],
-    ],
-  });
-} catch (e) {
-  const msg = String(e?.response?.description || e?.message || "").toLowerCase();
-
-  if (msg.includes("message is not modified")) {
-    return;
-  }
-
-  console.error("mgr_pay_paid editMessageReplyMarkup error:", e);
-}
-      // --- END PATCH 2 ---
     } catch (e) {
       console.error("mgr_pay_paid error:", e);
       try {
@@ -12581,17 +12564,6 @@ try {
       stopPaymentReminder(order._id);
 
       await ctx.answerCbQuery("Оплата отклонена, кэшбек возвращён");
-
-      try {
-        await ctx.editMessageReplyMarkup({
-          inline_keyboard: [
-            [{ text: "❌ Оплата отклонена", callback_data: `mgr_done:${freshUnpaidOrder._id}` }],
-          ],
-        });
-      } catch (e) {
-        console.error("mgr_pay_unpaid editMessageReplyMarkup error:", e);
-      }
-      // --- END PATCH 3 ---
     } catch (e) {
       console.error("mgr_pay_unpaid error:", e);
       try {
