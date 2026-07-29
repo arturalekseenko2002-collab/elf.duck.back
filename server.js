@@ -3252,17 +3252,28 @@ async function changePickupOrderStatusByManager(
     );
   }
 
-  /*
-   * Сейчас функция предназначена
-   * только для самовывоза.
-   */
-  if (
-    String(
-      order?.deliveryType || ""
-    ) !== "pickup"
-  ) {
+  const deliveryType = String(
+    order?.deliveryType || ""
+  )
+    .trim()
+    .toLowerCase();
+
+  const deliveryMethod = String(
+    order?.deliveryMethod || ""
+  )
+    .trim()
+    .toLowerCase();
+
+  const canManagerChangeStatus =
+    deliveryType === "pickup" ||
+    (
+      deliveryType === "delivery" &&
+      deliveryMethod === "inpost"
+    );
+
+  if (!canManagerChangeStatus) {
     throw new Error(
-      "ONLY_PICKUP_ORDERS_ALLOWED"
+      "ORDER_STATUS_CHANGE_NOT_ALLOWED"
     );
   }
 
@@ -3289,9 +3300,6 @@ async function changePickupOrderStatusByManager(
     .trim()
     .toLowerCase();
 
-  /*
-   * Защита от повторного нажатия.
-   */
   if (current === target) {
     return order;
   }
@@ -3300,64 +3308,22 @@ async function changePickupOrderStatusByManager(
    * ПЕРЕХОД В ОТМЕНЁННЫЙ
    */
   if (target === "canceled") {
-    await restoreCommittedOrderStock(
-
-      order
-
-    );
-
-    order.stockCommittedAt = null;
-
-    await rollbackEarnedOrderCashback(
-
-      order
-
-    );
-
-    await refundOrderCashback(
-
-      order
-
-    );
     if (order?.stockCommittedAt) {
       await restoreCommittedOrderStock(
         order
       );
-
-      order.stockCommittedAt = null;
     } else if (!order?.stockReleasedAt) {
-      /*
-       * Если заказ ещё не выполнялся,
-       * но товар был зарезервирован,
-       * снимаем резерв.
-       */
       await releaseOrderReservedStock(
         order
       );
     }
 
-    order.stockReleasedAt =
-      new Date();
-
-    /*
-     * Убираем кэшбек, который клиент
-     * получил за выполненный заказ.
-     */
     await rollbackEarnedOrderCashback(
       order
     );
 
-    /*
-     * Возвращаем кэшбек,
-     * которым клиент платил.
-     */
     await refundOrderCashback(order);
 
-    /*
-     * refundOrderCashback сохраняет
-     * отдельный экземпляр Order,
-     * поэтому перечитываем заказ.
-     */
     const fresh =
       await Order.findById(
         order._id
@@ -3373,6 +3339,8 @@ async function changePickupOrderStatusByManager(
 
     fresh.completedAt = null;
 
+    fresh.shippedAt = null;
+
     fresh.canceledAt = new Date();
 
     fresh.canceledByTelegramId =
@@ -3384,6 +3352,14 @@ async function changePickupOrderStatusByManager(
 
     fresh.stockReleasedAt =
       new Date();
+
+    fresh.managerEditedAt =
+      new Date();
+
+    fresh.managerEditedByTelegramId =
+      String(
+        managerTelegramId || ""
+      );
 
     fresh.payment = {
       ...(fresh.payment?.toObject
@@ -3402,21 +3378,6 @@ async function changePickupOrderStatusByManager(
         ),
     };
 
-    /*
-     * Метка ручного изменения.
-     *
-     * Если таких полей нет в строгой
-     * Mongoose-схеме Order, их нужно
-     * добавить в models/Order.js.
-     */
-    fresh.managerEditedAt =
-      new Date();
-
-    fresh.managerEditedByTelegramId =
-      String(
-        managerTelegramId || ""
-      );
-
     await fresh.save();
 
     return fresh;
@@ -3426,43 +3387,43 @@ async function changePickupOrderStatusByManager(
    * ПЕРЕХОД В ВЫПОЛНЕННЫЙ
    */
 
-  /*
-   * Забираем ранее возвращённый
-   * кэшбек оплаты.
-   */
   await deductRefundedOrderCashback(
     order
   );
 
   const fresh =
-    await Order.findById(order._id);
+    await Order.findById(
+      order._id
+    );
 
-  // if (!fresh) {
-  //   throw new Error(
-  //     "ORDER_NOT_FOUND_BEFORE_COMPLETE"
-  //   );
-  // }
+  if (!fresh) {
+    throw new Error(
+      "ORDER_NOT_FOUND_BEFORE_COMPLETE"
+    );
+  }
 
   /*
-   * commitOrderStock имеет защиту:
+   * Списываем товар только если он
+   * ещё не был окончательно списан.
    *
-   * if (order.stockCommittedAt) return false;
-   *
-   * Поэтому перед повторным списанием
-   * сбрасываем флаг.
+   * Для InPost после статуса shipped
+   * stockCommittedAt уже будет заполнен,
+   * поэтому повторного списания не произойдёт.
    */
-  fresh.stockCommittedAt = null;
+  if (!fresh?.stockCommittedAt) {
+    await commitOrderStock(fresh);
 
-  await commitOrderStock(fresh);
-
-  fresh.stockCommittedAt =
-    new Date();
+    fresh.stockCommittedAt =
+      new Date();
+  }
 
   fresh.stockReleasedAt = null;
 
   fresh.status = "completed";
 
   fresh.completedAt = new Date();
+
+  fresh.shippedAt = null;
 
   fresh.canceledAt = null;
 
@@ -3495,13 +3456,6 @@ async function changePickupOrderStatusByManager(
 
   await fresh.save();
 
-  /*
-   * Заново начисляем награду
-   * за выполненный заказ.
-   *
-   * При отмене cashbackAppliedAt
-   * был сброшен.
-   */
   await applyOrderCashback(fresh);
 
   return await Order.findById(
