@@ -6348,7 +6348,7 @@ const replyMarkup = {
         messageChatId,
         messageId,
         undefined,
-        lines.join("\n"),
+        text,
         {
           parse_mode: "HTML",
           disable_web_page_preview: true,
@@ -6369,7 +6369,7 @@ const replyMarkup = {
             messageChatId,
             messageId,
             undefined,
-            lines.join("\n"),
+            text,
             {
               parse_mode: "HTML",
               reply_markup: replyMarkup,
