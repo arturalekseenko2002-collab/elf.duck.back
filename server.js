@@ -2457,31 +2457,49 @@ async function deductRefundedOrderCashback(order) {
   };
 }
 
-async function rollbackEarnedOrderCashback(
-  order
-) {
-  if (!order?.cashbackAppliedAt) {
+async function rollbackEarnedOrderCashback(order) {
+  if (!order?._id) {
     return {
       rolledBack: false,
       amount: 0,
     };
   }
 
-  const orderId = String(
-    order?._id || ""
-  ).trim();
+  const freshOrder = await Order.findById(
+    String(order._id || "")
+  );
 
-  const user = await User.findOne({
-    telegramId: String(
-      order?.userTelegramId || ""
-    ),
-  });
-
-  if (!user) {
+  if (!freshOrder) {
     return {
       rolledBack: false,
       amount: 0,
     };
+  }
+
+  const earnedCashbackZl = Number(
+    freshOrder?.cashbackZl || 0
+  );
+
+  if (
+    !(earnedCashbackZl > 0) ||
+    !freshOrder?.cashbackAppliedAt
+  ) {
+    return {
+      rolledBack: false,
+      amount: 0,
+    };
+  }
+
+  const user = await User.findOne({
+    telegramId: String(
+      freshOrder?.userTelegramId || ""
+    ),
+  });
+
+  if (!user) {
+    throw new Error(
+      "USER_NOT_FOUND_FOR_EARNED_CASHBACK_ROLLBACK"
+    );
   }
 
   user.cashbackLedger = Array.isArray(
@@ -2490,75 +2508,171 @@ async function rollbackEarnedOrderCashback(
     ? user.cashbackLedger
     : [];
 
-  let removed = 0;
+  const orderId = String(
+    freshOrder._id || ""
+  );
+
+  let leftToDeduct = Number(
+    earnedCashbackZl.toFixed(2)
+  );
 
   /*
-   * applyOrderCashback создаёт строку ledger
-   * с sourceOrderId и временем earnedAt,
-   * близким к cashbackAppliedAt.
+   * Сначала списываем именно запись кэшбека,
+   * начисленную за этот заказ.
    */
-  user.cashbackLedger =
-    user.cashbackLedger.filter((row) => {
-      const sameOrder =
-        String(row?.sourceOrderId || "") ===
-        orderId;
-
-      const earnedAt = row?.earnedAt
-        ? new Date(row.earnedAt)
-        : null;
-
-      const appliedAt = new Date(
-        order.cashbackAppliedAt
+  const orderCashbackRows =
+    user.cashbackLedger
+      .filter(
+        (row) =>
+          String(
+            row?.sourceOrderId || ""
+          ) === orderId &&
+          !row?.expiredAt &&
+          Number(
+            row?.remainingZl || 0
+          ) > 0
+      )
+      .sort(
+        (a, b) =>
+          new Date(
+            a?.earnedAt || 0
+          ).getTime() -
+          new Date(
+            b?.earnedAt || 0
+          ).getTime()
       );
 
-      const isEarnedCashback =
-        sameOrder &&
-        earnedAt &&
-        Math.abs(
-          earnedAt.getTime() -
-            appliedAt.getTime()
-        ) < 60000;
+  for (
+    const row of orderCashbackRows
+  ) {
+    if (leftToDeduct <= 0) break;
 
-      if (isEarnedCashback) {
-        removed += Number(
-          row?.remainingZl || 0
+    const available = Math.max(
+      0,
+      Number(
+        row?.remainingZl || 0
+      )
+    );
+
+    const deducted = Math.min(
+      available,
+      leftToDeduct
+    );
+
+    row.remainingZl = Number(
+      (
+        available - deducted
+      ).toFixed(2)
+    );
+
+    leftToDeduct = Number(
+      (
+        leftToDeduct - deducted
+      ).toFixed(2)
+    );
+  }
+
+  /*
+   * Если клиент уже начал тратить именно
+   * этот начисленный кэшбек, добираем сумму
+   * из остальных активных частей баланса.
+   */
+  if (leftToDeduct > 0) {
+    const otherActiveRows =
+      user.cashbackLedger
+        .filter(
+          (row) =>
+            String(
+              row?.sourceOrderId || ""
+            ) !== orderId &&
+            !row?.expiredAt &&
+            Number(
+              row?.remainingZl || 0
+            ) > 0
+        )
+        .sort(
+          (a, b) =>
+            new Date(
+              a?.expiresAt || 0
+            ).getTime() -
+            new Date(
+              b?.expiresAt || 0
+            ).getTime()
         );
 
-        return false;
-      }
+    for (
+      const row of otherActiveRows
+    ) {
+      if (leftToDeduct <= 0) break;
 
-      return true;
-    });
+      const available = Math.max(
+        0,
+        Number(
+          row?.remainingZl || 0
+        )
+      );
 
-  recalcUserCashbackBalanceFromLedger(user);
+      const deducted = Math.min(
+        available,
+        leftToDeduct
+      );
 
-  user.markModified?.("cashbackLedger");
+      row.remainingZl = Number(
+        (
+          available - deducted
+        ).toFixed(2)
+      );
+
+      leftToDeduct = Number(
+        (
+          leftToDeduct - deducted
+        ).toFixed(2)
+      );
+    }
+  }
+
+  /*
+   * Не разрешаем отменить заказ,
+   * если клиент уже потратил начисленный
+   * кэшбек и полностью забрать его нельзя.
+   */
+  if (leftToDeduct > 0) {
+    throw new Error(
+      "INSUFFICIENT_CASHBACK_BALANCE_FOR_ORDER_CANCELLATION"
+    );
+  }
+
+  recalcUserCashbackBalanceFromLedger(
+    user
+  );
+
+  user.markModified?.(
+    "cashbackLedger"
+  );
 
   await user.save();
 
   /*
-   * Разрешаем applyOrderCashback
-   * начислить кэшбек заново,
-   * если заказ снова станет выполненным.
+   * Сбрасываем отметку начисления,
+   * чтобы при повторном переводе заказа
+   * в выполненные кэшбек мог начислиться снова.
    */
   await Order.updateOne(
     {
-      _id: orderId,
+      _id: freshOrder._id,
     },
     {
       $set: {
         cashbackAppliedAt: null,
-        cashbackZl: 0,
         cashbackPercent: 0,
+        cashbackZl: 0,
       },
     }
   );
 
   return {
     rolledBack: true,
-    amount: Number(
-      removed.toFixed(2)
-    ),
+    amount: earnedCashbackZl,
   };
 }
 
@@ -2733,10 +2847,25 @@ async function changePickupOrderStatusByManager(
    * ПЕРЕХОД В ОТМЕНЁННЫЙ
    */
   if (target === "canceled") {
-    /*
-     * Если товар уже был реально списан,
-     * возвращаем totalQty.
-     */
+    await restoreCommittedOrderStock(
+
+      order
+
+    );
+
+    order.stockCommittedAt = null;
+
+    await rollbackEarnedOrderCashback(
+
+      order
+
+    );
+
+    await refundOrderCashback(
+
+      order
+
+    );
     if (order?.stockCommittedAt) {
       await restoreCommittedOrderStock(
         order
@@ -12756,16 +12885,27 @@ try {
             : "Заказ отмечен как отменённый"
         );
       } catch (error) {
-        console.error(
-          "mgr_change_status_apply error:",
-          error
-        );
+      const errorCode = String(
 
-        const message =
-          String(error?.message || "") ===
-          "INSUFFICIENT_CASHBACK_BALANCE_FOR_STATUS_CHANGE"
-            ? "У клиента недостаточно кэшбека для возврата статуса"
-            : "Не удалось изменить статус";
+        error?.message || ""
+
+      );
+
+      const message =
+
+        errorCode ===
+
+        "INSUFFICIENT_CASHBACK_BALANCE_FOR_STATUS_CHANGE"
+
+          ? "У клиента недостаточно кэшбека для возврата статуса"
+
+          : errorCode ===
+
+            "INSUFFICIENT_CASHBACK_BALANCE_FOR_ORDER_CANCELLATION"
+
+          ? "Клиент уже потратил начисленный за заказ кэшбек. Отмена заблокирована"
+
+          : "Не удалось изменить статус";
 
         try {
           await ctx.answerCbQuery(
