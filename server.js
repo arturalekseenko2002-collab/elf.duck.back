@@ -12390,6 +12390,151 @@ if (TG_BOT_TOKEN) {
     }
   });
 
+  async function notifyPickupClientAfterManagerPaymentStatus(
+    order,
+    managerTelegramId
+  ) {
+    if (!bot || !order) return false;
+
+    if (
+      String(
+        order?.deliveryType || ""
+      ) !== "pickup"
+    ) {
+      return false;
+    }
+
+    const clientTelegramId = String(
+      order?.userTelegramId || ""
+    ).trim();
+
+    if (!clientTelegramId) {
+      return false;
+    }
+
+    const point =
+      await resolveOrderNotificationPoint(
+        order
+      );
+
+    const arrivalTime =
+      String(
+        order?.arrivalTime || ""
+      ).trim() || "указанное время";
+
+    const pointAddress =
+      String(
+        point?.address ||
+          order?.pickupPointAddress ||
+          order?.methodLabel ||
+          "указанная точка самовывоза"
+      ).trim();
+
+    const paymentMethod = String(
+      order?.payment?.method || ""
+    )
+      .trim()
+      .toLowerCase();
+
+    const paymentStatus = String(
+      order?.payment?.status || ""
+    )
+      .trim()
+      .toLowerCase();
+
+    let text = "";
+
+    /*
+    * Наличные:
+    * менеджер нажал «Ожидаю».
+    */
+    if (
+      paymentMethod === "cash" &&
+      paymentStatus === "awaiting"
+    ) {
+      const remainingToPayZl = Number(
+        order?.payment
+          ?.cashbackRemainingToPayZl ||
+          order?.totalZl ||
+          0
+      );
+
+      text = [
+        "✅ <b>ВАШ ЗАКАЗ В ПРОЦЕССЕ СБОРА!</b>",
+        "",
+        `Ожидаем вас в <b>${escapeHtml(
+          arrivalTime
+        )}</b>.`,
+        `К оплате: <b>${remainingToPayZl.toFixed(
+          2
+        )} PLN</b>.`,
+        `Локация: <b>${escapeHtml(
+          pointAddress
+        )}</b>.`,
+      ].join("\n");
+    }
+
+    /*
+    * BLIK / крипта / украинская карта:
+    * менеджер нажал «Оплачено».
+    */
+    else if (paymentStatus === "paid") {
+      text = [
+        "✅ <b>ОПЛАТА ПОДТВЕРЖДЕНА!</b>",
+        "",
+        "Ваш заказ в процессе сбора.",
+        `Ожидаем вас в <b>${escapeHtml(
+          arrivalTime
+        )}</b>.`,
+        `Локация: <b>${escapeHtml(
+          pointAddress
+        )}</b>.`,
+      ].join("\n");
+    } else {
+      return false;
+    }
+
+    const managerId = String(
+      managerTelegramId || ""
+    ).trim();
+
+    const replyMarkup = managerId
+      ? {
+          inline_keyboard: [
+            [
+              {
+                text:
+                  "💬 Связаться с менеджером",
+
+                url: `tg://user?id=${encodeURIComponent(
+                  managerId
+                )}`,
+              },
+            ],
+          ],
+        }
+      : undefined;
+
+    await bot.telegram.sendMessage(
+      clientTelegramId,
+      text,
+      {
+        parse_mode: "HTML",
+
+        disable_web_page_preview: true,
+
+        ...(replyMarkup
+          ? {
+              reply_markup:
+                replyMarkup,
+            }
+          : {}),
+      }
+    );
+
+    return true;
+  }
+
   bot.action(/mgr_pay_paid:(.+)/, async (ctx) => {
     try {
       const orderId = String(ctx.match?.[1] || "").trim();
@@ -12397,6 +12542,13 @@ if (TG_BOT_TOKEN) {
 
       const order = await Order.findById(orderId);
       if (!order) return ctx.answerCbQuery("Заказ не найден");
+
+      const previousPaymentStatus =
+      String(
+        order?.payment?.status || ""
+      )
+        .trim()
+        .toLowerCase();
 
       // списываем склад только один раз
       if (String(order?.payment?.method || "").trim().toLowerCase() !== "cash") {
@@ -12439,6 +12591,35 @@ if (TG_BOT_TOKEN) {
 
       await refreshManagerOrderMessage(freshPaidOrder);
       stopPaymentReminder(order._id);
+
+      const nextPaymentStatus =
+        String(
+          freshPaidOrder?.payment?.status ||
+            ""
+        )
+          .trim()
+          .toLowerCase();
+
+      /*
+      * Не отправляем одинаковое сообщение
+      * повторно при повторном нажатии кнопки.
+      */
+      if (
+        previousPaymentStatus !==
+        nextPaymentStatus
+      ) {
+        try {
+          await notifyPickupClientAfterManagerPaymentStatus(
+            freshPaidOrder,
+            String(ctx.from?.id || "")
+          );
+        } catch (notifyError) {
+          console.error(
+            "mgr_pay_paid client notification error:",
+            notifyError
+          );
+        }
+      }
       // --- END PATCH 1 ---
 
       // Для доставки отправляем отдельное сообщение-напоминание менеджеру
