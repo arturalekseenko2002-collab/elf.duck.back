@@ -5941,13 +5941,6 @@ if (order.deliveryType === "delivery" && order.deliveryMethod === "courier") {
       ],
     });
 
-const contactClientButton = {
-  text: "💬 Написать клиенту",
-  url: `tg://user?id=${encodeURIComponent(
-    String(order?.userTelegramId || "")
-  )}`,
-};
-
 const changeStatusButton = {
   text: "🔄 Изменить статус",
   callback_data: `mgr_change_status:${order._id}`,
