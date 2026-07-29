@@ -6343,12 +6343,6 @@ const replyMarkup = {
     ...permanentManagerButtons,
   ],
 };
-
-const replyMarkup =
-  appendPermanentManagerButtons(
-    baseReplyMarkup
-  );
-
     try {
       await bot.telegram.editMessageText(
         messageChatId,
