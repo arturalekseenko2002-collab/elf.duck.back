@@ -57,6 +57,8 @@ const CART_AUTO_CLEAR_INTERVAL_MS = Number(process.env.CART_AUTO_CLEAR_INTERVAL_
 
 let bot = null;
 
+const inpostTrackingInputState = new Map();
+
 const broadcastJobs = new Map();
 
 const PROMO_CODES_COLLECTION = "promo_codes";
@@ -610,6 +612,299 @@ function escapeHtml(s) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function normalizeInpostTrackingNumber(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "")
+    .replace(/[^A-Z0-9-]/g, "")
+    .slice(0, 64);
+}
+
+function getInpostTrackingUrl(trackingNumber) {
+  const safeTrackingNumber =
+    normalizeInpostTrackingNumber(trackingNumber);
+
+  if (!safeTrackingNumber) return "";
+
+  return `https://inpost.pl/sledzenie-przesylek?number=${encodeURIComponent(
+    safeTrackingNumber
+  )}`;
+}
+
+async function notifyClientAboutInpostShipment(order) {
+  if (!bot || !order) return false;
+
+  const deliveryType = String(order?.deliveryType || "")
+    .trim()
+    .toLowerCase();
+
+  const deliveryMethod = String(order?.deliveryMethod || "")
+    .trim()
+    .toLowerCase();
+
+  if (
+    deliveryType !== "delivery" ||
+    deliveryMethod !== "inpost"
+  ) {
+    return false;
+  }
+
+  const clientTelegramId = String(
+    order?.userTelegramId || ""
+  ).trim();
+
+  const trackingNumber =
+    normalizeInpostTrackingNumber(
+      order?.inpostTrackingNumber || ""
+    );
+
+  if (!clientTelegramId || !trackingNumber) {
+    return false;
+  }
+
+  const trackingUrl =
+    getInpostTrackingUrl(trackingNumber);
+
+  const lockerAddress = String(
+    order?.inpostData?.lockerAddress ||
+      order?.inpostLockerAddress ||
+      order?.deliveryAddress ||
+      ""
+  ).trim();
+
+  const lines = [
+    "📦 <b>ВАШ ЗАКАЗ ОТПРАВЛЕН!</b>",
+    "",
+    `Заказ <b>#${escapeHtml(
+      order?.orderNo || "—"
+    )}</b> передан в InPost.`,
+    "",
+    `Трекинг-номер: <code>${escapeHtml(
+      trackingNumber
+    )}</code>`,
+  ];
+
+  if (lockerAddress) {
+    lines.push("");
+    lines.push(
+      `Пачкомат: <b>${escapeHtml(
+        lockerAddress
+      )}</b>`
+    );
+  }
+
+  lines.push("");
+  lines.push("Спасибо за покупку ❤️");
+
+  await bot.telegram.sendMessage(
+    clientTelegramId,
+    lines.join("\n"),
+    {
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "📦 Отследить посылку",
+              url: trackingUrl,
+            },
+          ],
+        ],
+      },
+    }
+  );
+
+  return true;
+}
+
+async function completeInpostShipment(
+  order,
+  managerTelegramId
+) {
+  if (!order) {
+    throw new Error("ORDER_NOT_FOUND");
+  }
+
+  const deliveryType = String(
+    order?.deliveryType || ""
+  )
+    .trim()
+    .toLowerCase();
+
+  const deliveryMethod = String(
+    order?.deliveryMethod || ""
+  )
+    .trim()
+    .toLowerCase();
+
+  if (
+    deliveryType !== "delivery" ||
+    deliveryMethod !== "inpost"
+  ) {
+    throw new Error(
+      "ORDER_IS_NOT_INPOST"
+    );
+  }
+
+  const trackingNumber =
+    normalizeInpostTrackingNumber(
+      order?.inpostTrackingNumber || ""
+    );
+
+  if (!trackingNumber) {
+    throw new Error(
+      "INPOST_TRACKING_REQUIRED"
+    );
+  }
+
+  /*
+   * Если заказ уже был отправлен,
+   * повторно склад и кэшбек не трогаем.
+   */
+  const wasAlreadyShipped =
+    String(order?.status || "")
+      .trim()
+      .toLowerCase() === "shipped";
+
+  if (!wasAlreadyShipped) {
+    /*
+     * Окончательно списываем
+     * зарезервированный товар.
+     */
+    if (!order?.stockCommittedAt) {
+      await commitOrderStock(order);
+
+      order.stockCommittedAt =
+        new Date();
+    }
+
+    order.status = "shipped";
+    order.shippedAt =
+      order?.shippedAt || new Date();
+  }
+
+  order.inpostTrackingNumber =
+    trackingNumber;
+
+  order.inpostTrackingAddedAt =
+    order?.inpostTrackingAddedAt ||
+    new Date();
+
+  order.inpostTrackingAddedByTelegramId =
+    String(
+      order
+        ?.inpostTrackingAddedByTelegramId ||
+        managerTelegramId ||
+        ""
+    ).trim();
+
+  await order.save();
+
+  /*
+   * Начисляем кэшбек только после того,
+   * как посылка реально отправлена.
+   *
+   * Внутри applyOrderCashback должна быть
+   * собственная защита от повторного начисления.
+   */
+  if (!wasAlreadyShipped) {
+    await applyOrderCashback(order);
+  }
+
+  /*
+   * Уведомляем клиента только один раз.
+   */
+  if (!order?.inpostShippedNotifiedAt) {
+    await notifyClientAboutInpostShipment(
+      order
+    );
+
+    order.inpostShippedNotifiedAt =
+      new Date();
+
+    await order.save();
+  }
+
+  /*
+   * Удаляем дополнительное сообщение менеджеру:
+   * «ЗАКАЗ ГОТОВ К ОТПРАВКЕ».
+   */
+  const deliveryMessageIds =
+    Array.isArray(
+      order?.managerDeliveryMessageIds
+    )
+      ? order.managerDeliveryMessageIds
+          .map((value) =>
+            Number(value || 0)
+          )
+          .filter(Boolean)
+      : [];
+
+  const deliveryChatId = String(
+    order?.payment
+      ?.managerMessageChatId || ""
+  ).trim();
+
+  for (
+    const messageId of deliveryMessageIds
+  ) {
+    try {
+      if (
+        deliveryChatId &&
+        messageId
+      ) {
+        await bot.telegram.deleteMessage(
+          deliveryChatId,
+          messageId
+        );
+      }
+    } catch (deleteError) {
+      const description = String(
+        deleteError?.response
+          ?.description ||
+          deleteError?.message ||
+          ""
+      ).toLowerCase();
+
+      if (
+        !description.includes(
+          "message to delete not found"
+        )
+      ) {
+        console.error(
+          "completeInpostShipment delete message error:",
+          deleteError
+        );
+      }
+    }
+  }
+
+  if (deliveryMessageIds.length) {
+    order.managerDeliveryMessageIds =
+      [];
+
+    await order.save();
+  }
+
+  const freshOrder =
+    await Order.findById(order._id);
+
+  if (!freshOrder) {
+    throw new Error(
+      "ORDER_NOT_FOUND_AFTER_INPOST_SHIPMENT"
+    );
+  }
+
+  await refreshManagerOrderMessage(
+    freshOrder
+  );
+
+  return freshOrder;
 }
 
 function formatOrderDate(dt) {
@@ -12755,103 +13050,487 @@ if (TG_BOT_TOKEN) {
 
   bot.action(/mgr_order_shipped:(.+)/, async (ctx) => {
     try {
-      const orderId = String(ctx.match?.[1] || "").trim();
-      if (!orderId) {
-        await ctx.answerCbQuery("Заказ не найден");
-        return;
-      }
+      const orderId = String(
+        ctx.match?.[1] || ""
+      ).trim();
 
-      const order = await Order.findById(orderId);
+      const order = await Order.findById(
+        orderId
+      );
+
       if (!order) {
-        await ctx.answerCbQuery("Заказ не найден");
+        await ctx.answerCbQuery(
+          "Заказ не найден"
+        );
         return;
       }
 
-      if (String(order.status || "") === "shipped") {
-        await ctx.answerCbQuery("Заказ уже отправлен");
+      const deliveryType = String(
+        order?.deliveryType || ""
+      )
+        .trim()
+        .toLowerCase();
+
+      const deliveryMethod = String(
+        order?.deliveryMethod || ""
+      )
+        .trim()
+        .toLowerCase();
+
+      if (
+        deliveryType !== "delivery" ||
+        deliveryMethod !== "inpost"
+      ) {
+        await ctx.answerCbQuery(
+          "Этот заказ не относится к InPost"
+        );
         return;
       }
 
-      order.status = "shipped";
-      order.shippedAt = new Date();
-      await order.save();
+      const trackingNumber =
+        normalizeInpostTrackingNumber(
+          order?.inpostTrackingNumber || ""
+        );
 
-      await applyOrderCashback(order);
+      if (trackingNumber) {
+        await completeInpostShipment(
+          order,
+          String(ctx.from?.id || "")
+        );
 
-      const deliveryMessageIds = Array.isArray(order.managerDeliveryMessageIds)
-        ? order.managerDeliveryMessageIds.filter(Boolean)
-        : [];
+        await ctx.answerCbQuery(
+          "Заказ отмечен как отправленный"
+        );
 
-      const deliveryChatId = String(order?.payment?.managerMessageChatId || "").trim();
-
-      for (const messageId of deliveryMessageIds) {
-        try {
-          if (deliveryChatId && messageId) {
-            await bot.telegram.deleteMessage(deliveryChatId, Number(messageId));
-          }
-        } catch (_) {}
+        return;
       }
 
-      if (deliveryMessageIds.length) {
-        order.managerDeliveryMessageIds = [];
-        await order.save();
-      }
+      const stateKey = String(
+        ctx.from?.id ||
+        ctx.chat?.id ||
+        ""
+      );
 
-      const freshShippedOrder = await Order.findById(order._id);
-      if (!freshShippedOrder) {
-        throw new Error("ORDER_NOT_FOUND_AFTER_SHIPPED");
-      }
+      inpostTrackingInputState.set(
+        stateKey,
+        {
+          orderId: String(order._id),
+          chatId: String(
+            ctx.chat?.id || ""
+          ),
+          requestedAt: Date.now(),
+        }
+      );
 
-      await refreshManagerOrderMessage(freshShippedOrder);
+      await ctx.answerCbQuery();
 
-      try {
-        const mainChatId = String(freshShippedOrder?.payment?.managerMessageChatId || "").trim();
-        const mainMessageId = Number(freshShippedOrder?.payment?.managerMessageId || 0);
+      await ctx.reply(
+        [
+          "📦 <b>Введите трекинг-номер InPost</b>",
+          "",
+          `Заказ: <b>#${escapeHtml(
+            order?.orderNo || "—"
+          )}</b>`,
+          "",
+          "Отправьте трекинг-номер следующим сообщением.",
+        ].join("\n"),
+        {
+          parse_mode: "HTML",
 
-        if (mainChatId && mainMessageId) {
-          await bot.telegram.editMessageReplyMarkup(mainChatId, mainMessageId, undefined, {
+          reply_markup: {
             inline_keyboard: [
-              [{ text: "📦 Заказ отправлен", callback_data: `mgr_order_shipped_done:${freshShippedOrder._id}` }],
+              [
+                {
+                  text: "❌ Отмена",
+
+                  callback_data:
+                    `mgr_inpost_tracking_cancel:${order._id}`,
+                },
+              ],
             ],
-          });
+          },
         }
-      } catch (e) {
-        console.error("mgr_order_shipped main message markup error:", e);
-      }
+      );
+    } catch (error) {
+      console.error(
+        "mgr_order_shipped error:",
+        error
+      );
 
       try {
-        if (bot && order?.userTelegramId) {
-          const orderNo = escapeHtml(order?.orderNo || "—");
-
-          await bot.telegram.sendMessage(
-            String(order.userTelegramId),
-            [
-              `📦 <b>ЗАКАЗ ОТПРАВЛЕН</b>`,
-              ``,
-              `Твой заказ <b>#${orderNo}</b> отправлен через InPost.`,
-            ].join("\n"),
-            {
-              parse_mode: "HTML",
-              disable_web_page_preview: true,
-            }
-          );
-        }
-      } catch (e) {
-        console.error("mgr_order_shipped client notify error:", e);
-      }
-
-      await ctx.answerCbQuery("Заказ отмечен как отправленный");
-
-      try {
-        await ctx.deleteMessage();
-      } catch (_) {}
-    } catch (e) {
-      console.error("mgr_order_shipped error:", e);
-      try {
-        await ctx.answerCbQuery("Не удалось отметить заказ как отправленный");
+        await ctx.answerCbQuery(
+          "Не удалось начать отправку заказа",
+          {
+            show_alert: true,
+          }
+        );
       } catch {}
     }
   });
+
+  bot.action(/mgr_inpost_tracking_cancel:(.+)/, async (ctx) => {
+      try {
+        const orderId = String(
+          ctx.match?.[1] || ""
+        ).trim();
+
+        const stateKey = String(
+          ctx.from?.id ||
+          ctx.chat?.id ||
+          ""
+        );
+
+        const currentState =
+          inpostTrackingInputState.get(
+            stateKey
+          );
+
+        if (
+          currentState &&
+          String(
+            currentState?.orderId || ""
+          ) === orderId
+        ) {
+          inpostTrackingInputState.delete(
+            stateKey
+          );
+        }
+
+        await ctx.answerCbQuery(
+          "Ввод трекинга отменён"
+        );
+
+        try {
+          await ctx.editMessageText(
+            "❌ Ввод трекинг-номера отменён."
+          );
+        } catch {}
+      } catch (error) {
+        console.error(
+          "mgr_inpost_tracking_cancel error:",
+          error
+        );
+
+        try {
+          await ctx.answerCbQuery(
+            "Не удалось отменить ввод",
+            {
+              show_alert: true,
+            }
+          );
+        } catch {}
+      }
+    }
+  );
+
+  bot.action(/mgr_inpost_tracking_confirm:(.+)/, async (ctx) => {
+      try {
+        const orderId = String(
+          ctx.match?.[1] || ""
+        ).trim();
+
+        const stateKey = String(
+          ctx.from?.id ||
+          ctx.chat?.id ||
+          ""
+        );
+
+        const currentState =
+          inpostTrackingInputState.get(
+            stateKey
+          );
+
+        if (
+          !currentState ||
+          String(
+            currentState?.orderId || ""
+          ) !== orderId
+        ) {
+          await ctx.answerCbQuery(
+            "Данные ввода устарели",
+            {
+              show_alert: true,
+            }
+          );
+
+          return;
+        }
+
+        const trackingNumber =
+          normalizeInpostTrackingNumber(
+            currentState?.trackingNumber ||
+              ""
+          );
+
+        if (!trackingNumber) {
+          await ctx.answerCbQuery(
+            "Трекинг-номер не найден",
+            {
+              show_alert: true,
+            }
+          );
+
+          return;
+        }
+
+        const order =
+          await Order.findById(orderId);
+
+        if (!order) {
+          inpostTrackingInputState.delete(
+            stateKey
+          );
+
+          await ctx.answerCbQuery(
+            "Заказ не найден",
+            {
+              show_alert: true,
+            }
+          );
+
+          return;
+        }
+
+        order.inpostTrackingNumber =
+          trackingNumber;
+
+        order.inpostTrackingAddedAt =
+          new Date();
+
+        order.inpostTrackingAddedByTelegramId =
+          String(ctx.from?.id || "");
+
+        order.inpostShippedNotifiedAt =
+          null;
+
+        await order.save();
+
+        await completeInpostShipment(
+          order,
+          String(ctx.from?.id || "")
+        );
+
+        inpostTrackingInputState.delete(
+          stateKey
+        );
+
+        await ctx.answerCbQuery(
+          "Заказ отправлен"
+        );
+
+        try {
+          await ctx.editMessageText(
+            [
+              "✅ <b>Заказ отмечен как отправленный</b>",
+              "",
+              `Трекинг-номер: <code>${escapeHtml(
+                trackingNumber
+              )}</code>`,
+              "",
+              "Клиент получил уведомление со ссылкой на отслеживание.",
+            ].join("\n"),
+            {
+              parse_mode: "HTML",
+              disable_web_page_preview:
+                true,
+            }
+          );
+        } catch {}
+      } catch (error) {
+        console.error(
+          "mgr_inpost_tracking_confirm error:",
+          error
+        );
+
+        try {
+          await ctx.answerCbQuery(
+            "Не удалось отправить заказ",
+            {
+              show_alert: true,
+            }
+          );
+        } catch {}
+      }
+    }
+  );
+
+  bot.on("text", async (ctx, next) => {
+      const stateKey = String(
+        ctx.from?.id ||
+        ctx.chat?.id ||
+        ""
+      );
+
+      const currentState =
+        inpostTrackingInputState.get(
+          stateKey
+        );
+
+      if (!currentState) {
+        return next();
+      }
+
+      try {
+        const currentChatId = String(
+          ctx.chat?.id || ""
+        );
+
+        const expectedChatId = String(
+          currentState?.chatId || ""
+        );
+
+        if (
+          expectedChatId &&
+          currentChatId !== expectedChatId
+        ) {
+          return next();
+        }
+
+        const requestedAt = Number(
+          currentState?.requestedAt || 0
+        );
+
+        if (
+          requestedAt > 0 &&
+          Date.now() - requestedAt >
+            15 * 60 * 1000
+        ) {
+          inpostTrackingInputState.delete(
+            stateKey
+          );
+
+          await ctx.reply(
+            "⌛ Время ввода трекинг-номера истекло. Нажмите «Отправлен» ещё раз."
+          );
+
+          return;
+        }
+
+        const orderId = String(
+          currentState?.orderId || ""
+        ).trim();
+
+        const trackingNumber =
+          normalizeInpostTrackingNumber(
+            ctx.message?.text || ""
+          );
+
+        if (!orderId) {
+          inpostTrackingInputState.delete(
+            stateKey
+          );
+
+          return next();
+        }
+
+        if (
+          !trackingNumber ||
+          trackingNumber.length < 8
+        ) {
+          await ctx.reply(
+            [
+              "⚠️ <b>Некорректный трекинг-номер</b>",
+              "",
+              "Проверьте номер и отправьте его ещё раз.",
+            ].join("\n"),
+            {
+              parse_mode: "HTML",
+            }
+          );
+
+          return;
+        }
+
+        const order =
+          await Order.findById(orderId);
+
+        if (!order) {
+          inpostTrackingInputState.delete(
+            stateKey
+          );
+
+          await ctx.reply(
+            "Заказ не найден."
+          );
+
+          return;
+        }
+
+        inpostTrackingInputState.set(
+          stateKey,
+          {
+            ...currentState,
+            trackingNumber,
+            receivedAt: Date.now(),
+          }
+        );
+
+        const trackingUrl =
+          getInpostTrackingUrl(
+            trackingNumber
+          );
+
+        await ctx.reply(
+          [
+            "📦 <b>Проверьте трекинг-номер</b>",
+            "",
+            `Заказ: <b>#${escapeHtml(
+              order?.orderNo || "—"
+            )}</b>`,
+            `Трекинг: <code>${escapeHtml(
+              trackingNumber
+            )}</code>`,
+            "",
+            "После подтверждения заказ получит статус «Отправлен», а клиенту придёт уведомление.",
+          ].join("\n"),
+          {
+            parse_mode: "HTML",
+            disable_web_page_preview:
+              true,
+
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  {
+                    text:
+                      "✅ Подтвердить отправку",
+
+                    callback_data:
+                      `mgr_inpost_tracking_confirm:${order._id}`,
+                  },
+                ],
+                [
+                  {
+                    text:
+                      "📦 Проверить трекинг",
+
+                    url: trackingUrl,
+                  },
+                ],
+                [
+                  {
+                    text: "❌ Отмена",
+
+                    callback_data:
+                      `mgr_inpost_tracking_cancel:${order._id}`,
+                  },
+                ],
+              ],
+            },
+          }
+        );
+      } catch (error) {
+        console.error(
+          "inpost tracking text input error:",
+          error
+        );
+
+        await ctx.reply(
+          "Не удалось обработать трекинг-номер. Попробуйте ещё раз."
+        );
+      }
+    }
+  );
 
   bot.action(/mgr_order_delivered:(.+)/, async (ctx) => {
     try {

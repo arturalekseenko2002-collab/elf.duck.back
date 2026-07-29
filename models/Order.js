@@ -108,6 +108,26 @@ const orderSchema = new mongoose.Schema(
     inpostDeliveryFeeZl: { type: Number, default: 0 },
     inpostPackageUnits: { type: Number, default: 0 },
 
+    inpostTrackingNumber: {
+      type: String,
+      default: "",
+    },
+
+    inpostTrackingAddedAt: {
+      type: Date,
+      default: null,
+    },
+
+    inpostTrackingAddedByTelegramId: {
+      type: String,
+      default: "",
+    },
+
+    inpostShippedNotifiedAt: {
+      type: Date,
+      default: null,
+    },
+
     arrivalTime: { type: String, default: null },
     deliveryTimeWindow: { type: String, default: null },
     comment: { type: String, default: null, maxlength: 500 },
