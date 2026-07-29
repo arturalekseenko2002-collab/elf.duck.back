@@ -72,6 +72,12 @@ const orderSchema = new mongoose.Schema(
     // кто обработал (менеджер)
     handledByTelegramId: { type: String, default: "" },
 
+    // последнее ручное изменение статуса менеджером
+
+    managerEditedAt: { type: Date, default: null },
+
+    managerEditedByTelegramId: { type: String, default: "" },
+
     orderNo: { type: String, required: true, unique: true, index: true },
 
     totalZl: { type: Number, default: 0 },
@@ -143,7 +149,13 @@ const orderSchema = new mongoose.Schema(
     arrivedNotifiedAt: { type: Date, default: null }, // клиент нажал "Я на месте"
     managerArrivalMessageIds: { type: [String], default: [] },
     completedAt: { type: Date, default: null },
+
+    canceledAt: { type: Date, default: null },
+
+    canceledByTelegramId: { type: String, default: "" },
+
     annulledAt: { type: Date, default: null },
+
     annulledReason: { type: String, default: "" },
 
     cashbackPercent: { type: Number, default: 0 },

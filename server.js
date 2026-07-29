@@ -2253,6 +2253,680 @@ async function refundOrderCashback(order) {
   return { refunded: true, amount: cashbackAppliedZl };
 }
 
+async function deductRefundedOrderCashback(order) {
+  if (!order) {
+    return {
+      deducted: false,
+      amount: 0,
+    };
+  }
+
+  const freshOrder = await Order.findById(
+    String(order?._id || "")
+  );
+
+  if (!freshOrder) {
+    return {
+      deducted: false,
+      amount: 0,
+    };
+  }
+
+  const payment = freshOrder.payment?.toObject
+    ? freshOrder.payment.toObject()
+    : freshOrder.payment || {};
+
+  const refundedAt = payment?.cashbackRefundedAt
+    ? new Date(payment.cashbackRefundedAt)
+    : null;
+
+  /*
+   * Если по заказу кэшбек не возвращался,
+   * повторно снимать ничего не нужно.
+   */
+  if (!refundedAt) {
+    return {
+      deducted: false,
+      amount: 0,
+    };
+  }
+
+  const user = await User.findOne({
+    telegramId: String(
+      freshOrder.userTelegramId || ""
+    ),
+  });
+
+  if (!user) {
+    throw new Error(
+      "USER_NOT_FOUND_FOR_CASHBACK_REDEDUCT"
+    );
+  }
+
+  user.cashbackLedger = Array.isArray(
+    user.cashbackLedger
+  )
+    ? user.cashbackLedger
+    : [];
+
+  const orderId = String(freshOrder._id || "");
+
+  /*
+   * refundOrderCashback создаёт новую запись
+   * cashbackLedger с sourceOrderId этого заказа.
+   *
+   * Берём записи, которые были созданы после
+   * cashbackRefundedAt.
+   */
+  const refundRows = user.cashbackLedger.filter(
+    (row) => {
+      const sameOrder =
+        String(row?.sourceOrderId || "") ===
+        orderId;
+
+      const earnedAt = row?.earnedAt
+        ? new Date(row.earnedAt)
+        : null;
+
+      return (
+        sameOrder &&
+        earnedAt &&
+        earnedAt.getTime() >=
+          refundedAt.getTime() - 5000
+      );
+    }
+  );
+
+  const amount = Number(
+    refundRows
+      .reduce(
+        (sum, row) =>
+          sum + Number(row?.amountZl || 0),
+        0
+      )
+      .toFixed(2)
+  );
+
+  if (!(amount > 0)) {
+    return {
+      deducted: false,
+      amount: 0,
+    };
+  }
+
+  let leftToDeduct = amount;
+
+  /*
+   * Списываем кэшбек с активных частей,
+   * начиная с той, которая сгорит раньше.
+   */
+  const activeRows = [
+    ...user.cashbackLedger,
+  ]
+    .filter(
+      (row) =>
+        !row?.expiredAt &&
+        Number(row?.remainingZl || 0) > 0
+    )
+    .sort(
+      (a, b) =>
+        new Date(
+          a?.expiresAt || 0
+        ).getTime() -
+        new Date(
+          b?.expiresAt || 0
+        ).getTime()
+    );
+
+  for (const row of activeRows) {
+    if (leftToDeduct <= 0) break;
+
+    const available = Math.max(
+      0,
+      Number(row?.remainingZl || 0)
+    );
+
+    if (available <= 0) continue;
+
+    const used = Math.min(
+      available,
+      leftToDeduct
+    );
+
+    row.remainingZl = Number(
+      (available - used).toFixed(2)
+    );
+
+    leftToDeduct = Number(
+      (leftToDeduct - used).toFixed(2)
+    );
+  }
+
+  /*
+   * Если клиент уже успел потратить
+   * возвращённый кэшбек, не переводим
+   * заказ обратно в выполненные.
+   */
+  if (leftToDeduct > 0) {
+    throw new Error(
+      "INSUFFICIENT_CASHBACK_BALANCE_FOR_STATUS_CHANGE"
+    );
+  }
+
+  recalcUserCashbackBalanceFromLedger(user);
+
+  user.markModified?.("cashbackLedger");
+
+  await user.save();
+
+  freshOrder.payment = {
+    ...payment,
+
+    cashbackAppliedZl: amount,
+
+    cashbackRemainingToPayZl: Number(
+      Math.max(
+        0,
+        Number(freshOrder.totalZl || 0) -
+          amount
+      ).toFixed(2)
+    ),
+
+    cashbackFullyPaid:
+      Number(freshOrder.totalZl || 0) -
+        amount <=
+      0,
+
+    cashbackAppliedAt: new Date(),
+
+    cashbackRefundedAt: null,
+
+    method:
+      Number(freshOrder.totalZl || 0) -
+          amount <=
+        0
+        ? "cashback"
+        : payment?.method || null,
+  };
+
+  await freshOrder.save();
+
+  return {
+    deducted: true,
+    amount,
+  };
+}
+
+async function rollbackEarnedOrderCashback(
+  order
+) {
+  if (!order?.cashbackAppliedAt) {
+    return {
+      rolledBack: false,
+      amount: 0,
+    };
+  }
+
+  const orderId = String(
+    order?._id || ""
+  ).trim();
+
+  const user = await User.findOne({
+    telegramId: String(
+      order?.userTelegramId || ""
+    ),
+  });
+
+  if (!user) {
+    return {
+      rolledBack: false,
+      amount: 0,
+    };
+  }
+
+  user.cashbackLedger = Array.isArray(
+    user.cashbackLedger
+  )
+    ? user.cashbackLedger
+    : [];
+
+  let removed = 0;
+
+  /*
+   * applyOrderCashback создаёт строку ledger
+   * с sourceOrderId и временем earnedAt,
+   * близким к cashbackAppliedAt.
+   */
+  user.cashbackLedger =
+    user.cashbackLedger.filter((row) => {
+      const sameOrder =
+        String(row?.sourceOrderId || "") ===
+        orderId;
+
+      const earnedAt = row?.earnedAt
+        ? new Date(row.earnedAt)
+        : null;
+
+      const appliedAt = new Date(
+        order.cashbackAppliedAt
+      );
+
+      const isEarnedCashback =
+        sameOrder &&
+        earnedAt &&
+        Math.abs(
+          earnedAt.getTime() -
+            appliedAt.getTime()
+        ) < 60000;
+
+      if (isEarnedCashback) {
+        removed += Number(
+          row?.remainingZl || 0
+        );
+
+        return false;
+      }
+
+      return true;
+    });
+
+  recalcUserCashbackBalanceFromLedger(user);
+
+  user.markModified?.("cashbackLedger");
+
+  await user.save();
+
+  /*
+   * Разрешаем applyOrderCashback
+   * начислить кэшбек заново,
+   * если заказ снова станет выполненным.
+   */
+  await Order.updateOne(
+    {
+      _id: orderId,
+    },
+    {
+      $set: {
+        cashbackAppliedAt: null,
+        cashbackZl: 0,
+        cashbackPercent: 0,
+      },
+    }
+  );
+
+  return {
+    rolledBack: true,
+    amount: Number(
+      removed.toFixed(2)
+    ),
+  };
+}
+
+async function restoreCommittedOrderStock(
+  order
+) {
+  if (!order || !order?.stockCommittedAt) {
+    return false;
+  }
+
+  const pickupPointIds =
+    await resolveOrderReservePickupPointIds(
+      order
+    );
+
+  if (!pickupPointIds.length) {
+    return false;
+  }
+
+  const pointObjIds =
+    pickupPointIds.map(
+      (pickupPointId) =>
+        pickupPointId instanceof
+        mongoose.Types.ObjectId
+          ? pickupPointId
+          : new mongoose.Types.ObjectId(
+              String(pickupPointId)
+            )
+    );
+
+  const normFlavorKey = (value) =>
+    String(value || "")
+      .trim()
+      .replace(/,+$/, "");
+
+  for (const item of order.items || []) {
+    const productKey = String(
+      item?.productKey || ""
+    ).trim();
+
+    if (!productKey) continue;
+
+    for (
+      const flavor of item?.flavors || []
+    ) {
+      const qty = Math.max(
+        0,
+        Number(flavor?.qty || 0)
+      );
+
+      if (!qty) continue;
+
+      const normalizedFlavorKey =
+        normFlavorKey(
+          flavor?.flavorKey
+        );
+
+      const flavorKeyCandidates =
+        Array.from(
+          new Set(
+            [
+              String(
+                flavor?.flavorKey || ""
+              ).trim(),
+
+              normalizedFlavorKey,
+
+              `${normalizedFlavorKey},`,
+            ].filter(Boolean)
+          )
+        );
+
+      for (
+        const pointObjId of pointObjIds
+      ) {
+        await Product.updateOne(
+          {
+            productKey,
+
+            "flavors.flavorKey": {
+              $in: flavorKeyCandidates,
+            },
+
+            "flavors.stockByPickupPoint.pickupPointId":
+              pointObjId,
+          },
+          {
+            $inc: {
+              "flavors.$[f].stockByPickupPoint.$[s].totalQty":
+                qty,
+            },
+          },
+          {
+            arrayFilters: [
+              {
+                "f.flavorKey": {
+                  $in: flavorKeyCandidates,
+                },
+              },
+              {
+                "s.pickupPointId":
+                  pointObjId,
+              },
+            ],
+          }
+        );
+      }
+    }
+  }
+
+  cacheInvalidate("products:");
+
+  return true;
+}
+
+async function changePickupOrderStatusByManager(
+  order,
+  nextStatus,
+  managerTelegramId
+) {
+  if (!order) {
+    throw new Error(
+      "ORDER_NOT_FOUND"
+    );
+  }
+
+  /*
+   * Сейчас функция предназначена
+   * только для самовывоза.
+   */
+  if (
+    String(
+      order?.deliveryType || ""
+    ) !== "pickup"
+  ) {
+    throw new Error(
+      "ONLY_PICKUP_ORDERS_ALLOWED"
+    );
+  }
+
+  const target = String(
+    nextStatus || ""
+  )
+    .trim()
+    .toLowerCase();
+
+  if (
+    ![
+      "completed",
+      "canceled",
+    ].includes(target)
+  ) {
+    throw new Error(
+      "INVALID_ORDER_STATUS"
+    );
+  }
+
+  const current = String(
+    order?.status || ""
+  )
+    .trim()
+    .toLowerCase();
+
+  /*
+   * Защита от повторного нажатия.
+   */
+  if (current === target) {
+    return order;
+  }
+
+  /*
+   * ПЕРЕХОД В ОТМЕНЁННЫЙ
+   */
+  if (target === "canceled") {
+    /*
+     * Если товар уже был реально списан,
+     * возвращаем totalQty.
+     */
+    if (order?.stockCommittedAt) {
+      await restoreCommittedOrderStock(
+        order
+      );
+
+      order.stockCommittedAt = null;
+    } else if (!order?.stockReleasedAt) {
+      /*
+       * Если заказ ещё не выполнялся,
+       * но товар был зарезервирован,
+       * снимаем резерв.
+       */
+      await releaseOrderReservedStock(
+        order
+      );
+    }
+
+    order.stockReleasedAt =
+      new Date();
+
+    /*
+     * Убираем кэшбек, который клиент
+     * получил за выполненный заказ.
+     */
+    await rollbackEarnedOrderCashback(
+      order
+    );
+
+    /*
+     * Возвращаем кэшбек,
+     * которым клиент платил.
+     */
+    await refundOrderCashback(order);
+
+    /*
+     * refundOrderCashback сохраняет
+     * отдельный экземпляр Order,
+     * поэтому перечитываем заказ.
+     */
+    const fresh =
+      await Order.findById(
+        order._id
+      );
+
+    if (!fresh) {
+      throw new Error(
+        "ORDER_NOT_FOUND_AFTER_CANCEL"
+      );
+    }
+
+    fresh.status = "canceled";
+
+    fresh.completedAt = null;
+
+    fresh.canceledAt = new Date();
+
+    fresh.canceledByTelegramId =
+      String(
+        managerTelegramId || ""
+      );
+
+    fresh.stockCommittedAt = null;
+
+    fresh.stockReleasedAt =
+      new Date();
+
+    fresh.payment = {
+      ...(fresh.payment?.toObject
+        ? fresh.payment.toObject()
+        : fresh.payment || {}),
+
+      status: "unpaid",
+
+      paidAt: null,
+
+      checkedAt: new Date(),
+
+      checkedByTelegramId:
+        String(
+          managerTelegramId || ""
+        ),
+    };
+
+    /*
+     * Метка ручного изменения.
+     *
+     * Если таких полей нет в строгой
+     * Mongoose-схеме Order, их нужно
+     * добавить в models/Order.js.
+     */
+    fresh.managerEditedAt =
+      new Date();
+
+    fresh.managerEditedByTelegramId =
+      String(
+        managerTelegramId || ""
+      );
+
+    await fresh.save();
+
+    return fresh;
+  }
+
+  /*
+   * ПЕРЕХОД В ВЫПОЛНЕННЫЙ
+   */
+
+  /*
+   * Забираем ранее возвращённый
+   * кэшбек оплаты.
+   */
+  await deductRefundedOrderCashback(
+    order
+  );
+
+  const fresh =
+    await Order.findById(order._id);
+
+  if (!fresh) {
+    throw new Error(
+      "ORDER_NOT_FOUND_BEFORE_COMPLETE"
+    );
+  }
+
+  /*
+   * commitOrderStock имеет защиту:
+   *
+   * if (order.stockCommittedAt) return false;
+   *
+   * Поэтому перед повторным списанием
+   * сбрасываем флаг.
+   */
+  fresh.stockCommittedAt = null;
+
+  await commitOrderStock(fresh);
+
+  fresh.stockCommittedAt =
+    new Date();
+
+  fresh.stockReleasedAt = null;
+
+  fresh.status = "completed";
+
+  fresh.completedAt = new Date();
+
+  fresh.canceledAt = null;
+
+  fresh.canceledByTelegramId = "";
+
+  fresh.managerEditedAt =
+    new Date();
+
+  fresh.managerEditedByTelegramId =
+    String(
+      managerTelegramId || ""
+    );
+
+  fresh.payment = {
+    ...(fresh.payment?.toObject
+      ? fresh.payment.toObject()
+      : fresh.payment || {}),
+
+    status: "paid",
+
+    paidAt: new Date(),
+
+    checkedAt: new Date(),
+
+    checkedByTelegramId:
+      String(
+        managerTelegramId || ""
+      ),
+  };
+
+  await fresh.save();
+
+  /*
+   * Заново начисляем награду
+   * за выполненный заказ.
+   *
+   * При отмене cashbackAppliedAt
+   * был сброшен.
+   */
+  await applyOrderCashback(fresh);
+
+  return await Order.findById(
+    fresh._id
+  );
+}
+
 async function resolveOrderNotificationPoint(order) {
   if (!order) return null;
 
@@ -4674,22 +5348,84 @@ async function sendOrderCreatedNotification(order) {
 
     const text = lines.filter((line) => line !== null && line !== undefined).join("\n");
 
+    const contactClientButton = {
+      text: "💬 Написать клиенту",
+
+      url: `tg://user?id=${encodeURIComponent(
+        String(
+          order?.userTelegramId || ""
+        )
+      )}`,
+    };
+
 const initialReplyMarkup =
-  String(order?.deliveryType || "") === "pickup" &&
-  String(order?.payment?.method || "") === "cash"
+  String(
+    order?.deliveryType || ""
+  ) === "pickup" &&
+  String(
+    order?.payment?.method || ""
+  ) === "cash"
     ? {
         inline_keyboard: [
           [
-            { text: "🕒 Ожидаю", callback_data: `mgr_pay_paid:${order._id}` },
-            { text: "❌ Отклонить", callback_data: `mgr_pay_unpaid:${order._id}` },
+            {
+              text: "🕒 Ожидаю",
+
+              callback_data:
+                `mgr_pay_paid:${order._id}`,
+            },
+            {
+              text: "❌ Отклонить",
+
+              callback_data:
+                `mgr_pay_unpaid:${order._id}`,
+            },
+          ],
+
+          [
+            contactClientButton,
+          ],
+
+          [
+            {
+              text:
+                "🔄 Изменить статус",
+
+              callback_data:
+                `mgr_change_status:${order._id}`,
+            },
           ],
         ],
       }
     : {
         inline_keyboard: [
           [
-            { text: "✅ Оплачено", callback_data: `mgr_pay_paid:${order._id}` },
-            { text: "❌ Отклонить", callback_data: `mgr_pay_unpaid:${order._id}` },
+            {
+              text: "✅ Оплачено",
+
+              callback_data:
+                `mgr_pay_paid:${order._id}`,
+            },
+            {
+              text: "❌ Отклонить",
+
+              callback_data:
+                `mgr_pay_unpaid:${order._id}`,
+            },
+          ],
+
+          [
+            contactClientButton,
+          ],
+
+          [
+            {
+              text:
+                "🔄 Изменить статус",
+
+              callback_data:
+                `mgr_change_status:${order._id}`,
+            },
           ],
         ],
       };
@@ -5142,76 +5878,163 @@ if (order.deliveryType === "delivery" && order.deliveryMethod === "courier") {
 
     const text = lines.filter((line) => line !== null && line !== undefined).join("\n");
 
+    const contactClientButton = {
+      text: "💬 Написать клиенту",
+
+      url: `tg://user?id=${encodeURIComponent(
+        String(
+          order?.userTelegramId || ""
+        )
+      )}`,
+    };
+
+    const changeStatusButton = {
+      text: "🔄 Изменить статус",
+
+      callback_data:
+        `mgr_change_status:${order._id}`,
+    };
+
+    const withCommonManagerButtons = (
+      rows = []
+    ) => ({
+      inline_keyboard: [
+        ...rows,
+
+        [
+          contactClientButton,
+        ],
+
+        [
+          changeStatusButton,
+        ],
+      ],
+    });
+
 const replyMarkup =
   orderStatusKey === "completed"
-    ? {
-        inline_keyboard: [
-          [{
+    ? withCommonManagerButtons([
+        [
+          {
             text:
-              String(order?.deliveryType || "") === "delivery" &&
-              String(order?.deliveryMethod || "") === "courier"
-                ? "🚚 Заказ доставлен"
-                : "✅ Заказ выполнен",
-            callback_data: `mgr_order_completed_done:${order._id}`,
-          }],
+              "✅ Заказ выполнен",
+
+            callback_data:
+              `mgr_order_completed_done:${order._id}`,
+          },
         ],
-      }
+      ])
+
     : orderStatusKey === "shipped"
-    ? {
-        inline_keyboard: [
-          [{ text: "📦 Заказ отправлен", callback_data: `mgr_order_shipped_done:${order._id}` }],
+    ? withCommonManagerButtons([
+        [
+          {
+            text:
+              "📦 Заказ отправлен",
+
+            callback_data:
+              `mgr_order_shipped_done:${order._id}`,
+          },
         ],
-      }
+      ])
+
     : orderStatusKey === "annulled"
-    ? {
-        inline_keyboard: [
-          [{ text: "⌛️ Заказ аннулирован", callback_data: `mgr_order_annulled_done:${order._id}` }],
+    ? withCommonManagerButtons([
+        [
+          {
+            text:
+              "⌛️ Заказ аннулирован",
+
+            callback_data:
+              `mgr_order_annulled_done:${order._id}`,
+          },
         ],
-      }
+      ])
+
     : orderStatusKey === "canceled"
-    ? {
-        inline_keyboard: [
-          [
-            {
-              text: canceledByClient
-                ? "❌ Заказ отменен клиентом"
-                : "❌ Заказ отклонен менеджером",
-              callback_data: `mgr_order_canceled_done:${order._id}`,
-            },
-          ],
+    ? withCommonManagerButtons([
+        [
+          {
+            text: canceledByClient
+              ? "❌ Заказ отменен клиентом"
+              : "❌ Заказ отклонен менеджером",
+
+            callback_data:
+              `mgr_order_canceled_done:${order._id}`,
+          },
         ],
-      }
-    : String(order?.payment?.status || "") === "awaiting"
-    ? {
-        inline_keyboard: [
-          [{ text: "🕒 Ожидаю", callback_data: `mgr_done:${order._id}` }],
+      ])
+
+    : String(
+        order?.payment?.status || ""
+      ) === "awaiting"
+    ? withCommonManagerButtons([
+        [
+          {
+            text: "🕒 Ожидаю",
+
+            callback_data:
+              `mgr_done:${order._id}`,
+          },
         ],
-      }
-    : String(order?.deliveryType || "") === "pickup" &&
-      String(order?.payment?.method || "") === "cash" &&
-      String(order?.payment?.status || "") !== "awaiting"
-    ? {
-        inline_keyboard: [
-          [
-            { text: "🕒 Ожидаю", callback_data: `mgr_pay_paid:${order._id}` },
-            { text: "❌ Отклонить", callback_data: `mgr_pay_unpaid:${order._id}` },
-          ],
+      ])
+
+    : String(
+        order?.deliveryType || ""
+      ) === "pickup" &&
+      String(
+        order?.payment?.method || ""
+      ) === "cash" &&
+      String(
+        order?.payment?.status || ""
+      ) !== "awaiting"
+    ? withCommonManagerButtons([
+        [
+          {
+            text: "🕒 Ожидаю",
+
+            callback_data:
+              `mgr_pay_paid:${order._id}`,
+          },
+          {
+            text: "❌ Отклонить",
+
+            callback_data:
+              `mgr_pay_unpaid:${order._id}`,
+          },
         ],
-      }
-    : String(order?.payment?.status || "") === "paid"
-    ? {
-        inline_keyboard: [
-          [{ text: "✅ Оплачено", callback_data: `mgr_done:${order._id}` }],
+      ])
+
+    : String(
+        order?.payment?.status || ""
+      ) === "paid"
+    ? withCommonManagerButtons([
+        [
+          {
+            text: "✅ Оплачено",
+
+            callback_data:
+              `mgr_done:${order._id}`,
+          },
         ],
-      }
-    : {
-        inline_keyboard: [
-          [
-            { text: "✅ Оплачено", callback_data: `mgr_pay_paid:${order._id}` },
-            { text: "❌ Отклонить", callback_data: `mgr_pay_unpaid:${order._id}` },
-          ],
+      ])
+
+    : withCommonManagerButtons([
+        [
+          {
+            text: "✅ Оплачено",
+
+            callback_data:
+              `mgr_pay_paid:${order._id}`,
+          },
+          {
+            text: "❌ Отклонить",
+
+            callback_data:
+              `mgr_pay_unpaid:${order._id}`,
+          },
         ],
-      };
+      ]);
 
     try {
       await bot.telegram.editMessageText(
@@ -11744,6 +12567,188 @@ try {
       } catch {}
     }
   });
+
+  bot.action(
+    /mgr_change_status:(.+)/,
+    async (ctx) => {
+      try {
+        const orderId = String(
+          ctx.match?.[1] || ""
+        ).trim();
+
+        const order =
+          await Order.findById(orderId);
+
+        if (!order) {
+          await ctx.answerCbQuery(
+            "Заказ не найден"
+          );
+
+          return;
+        }
+
+        if (
+          String(
+            order?.deliveryType || ""
+          ) !== "pickup"
+        ) {
+          await ctx.answerCbQuery(
+            "Доступно только для самовывоза"
+          );
+
+          return;
+        }
+
+        await ctx.answerCbQuery();
+
+        await ctx.editMessageReplyMarkup({
+          inline_keyboard: [
+            [
+              {
+                text:
+                  "✅ Заказ выполнен",
+
+                callback_data:
+                  `mgr_change_status_apply:completed:${order._id}`,
+              },
+            ],
+
+            [
+              {
+                text:
+                  "❌ Заказ отменён",
+
+                callback_data:
+                  `mgr_change_status_apply:canceled:${order._id}`,
+              },
+            ],
+
+            [
+              {
+                text: "⬅️ Назад",
+
+                callback_data:
+                  `mgr_change_status_back:${order._id}`,
+              },
+            ],
+          ],
+        });
+      } catch (error) {
+        console.error(
+          "mgr_change_status error:",
+          error
+        );
+
+        try {
+          await ctx.answerCbQuery(
+            "Не удалось открыть смену статуса"
+          );
+        } catch {}
+      }
+    }
+  );
+
+  bot.action(
+    /mgr_change_status_back:(.+)/,
+    async (ctx) => {
+      try {
+        const orderId = String(
+          ctx.match?.[1] || ""
+        ).trim();
+
+        const order =
+          await Order.findById(orderId);
+
+        if (!order) {
+          await ctx.answerCbQuery(
+            "Заказ не найден"
+          );
+
+          return;
+        }
+
+        await refreshManagerOrderMessage(
+          order
+        );
+
+        await ctx.answerCbQuery();
+      } catch (error) {
+        console.error(
+          "mgr_change_status_back error:",
+          error
+        );
+
+        try {
+          await ctx.answerCbQuery(
+            "Не удалось вернуться"
+          );
+        } catch {}
+      }
+    }
+  );
+
+  bot.action(
+    /mgr_change_status_apply:(completed|canceled):(.+)/,
+    async (ctx) => {
+      try {
+        const nextStatus = String(
+          ctx.match?.[1] || ""
+        ).trim();
+
+        const orderId = String(
+          ctx.match?.[2] || ""
+        ).trim();
+
+        const order =
+          await Order.findById(orderId);
+
+        if (!order) {
+          await ctx.answerCbQuery(
+            "Заказ не найден"
+          );
+
+          return;
+        }
+
+        const changedOrder =
+          await changePickupOrderStatusByManager(
+            order,
+            nextStatus,
+            String(ctx.from?.id || "")
+          );
+
+        await refreshManagerOrderMessage(
+          changedOrder
+        );
+
+        await ctx.answerCbQuery(
+          nextStatus === "completed"
+            ? "Заказ отмечен как выполненный"
+            : "Заказ отмечен как отменённый"
+        );
+      } catch (error) {
+        console.error(
+          "mgr_change_status_apply error:",
+          error
+        );
+
+        const message =
+          String(error?.message || "") ===
+          "INSUFFICIENT_CASHBACK_BALANCE_FOR_STATUS_CHANGE"
+            ? "У клиента недостаточно кэшбека для возврата статуса"
+            : "Не удалось изменить статус";
+
+        try {
+          await ctx.answerCbQuery(
+            message,
+            {
+              show_alert: true,
+            }
+          );
+        } catch {}
+      }
+    }
+  );
 
   bot.action(/mgr_order_completed:(.+)/, async (ctx) => {
     try {
