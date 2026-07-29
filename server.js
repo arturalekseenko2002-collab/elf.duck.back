@@ -6637,6 +6637,114 @@ app.post("/admin/users/cashback/grant-by-username", async (req, res) => {
   }
 });
 
+const buildBroadcastUserFilter = async ({
+  audienceType,
+  segmentType,
+  segmentValue,
+  username,
+}) => {
+  const userFilter = {
+    telegramId: { $exists: true, $ne: "" },
+  };
+
+  // Один пользователь по username
+  if (audienceType === "username") {
+    const safeUsername = String(username || "")
+      .trim()
+      .replace(/^@/, "");
+
+    if (!safeUsername) {
+      userFilter.telegramId = { $in: [] };
+
+      return userFilter;
+    }
+
+    const escapedUsername = safeUsername.replace(
+      /[.*+?^${}()|[\]\\]/g,
+      "\\$&"
+    );
+
+    userFilter.username = {
+      $regex: `^${escapedUsername}$`,
+      $options: "i",
+    };
+
+    return userFilter;
+  }
+
+  // Рассылка всем
+  if (audienceType !== "segment") {
+    return userFilter;
+  }
+
+  const orderFilter = {
+    status: {
+      $nin: ["canceled", "annulled"],
+    },
+  };
+
+  // Покупатели определённой категории
+  if (segmentType === "category") {
+    const productIds = await Product.distinct("_id", {
+      categoryKey: segmentValue,
+    });
+
+    if (!productIds.length) {
+      userFilter.telegramId = { $in: [] };
+
+      return userFilter;
+    }
+
+    orderFilter["items.productId"] = {
+      $in: productIds,
+    };
+  }
+
+  // Покупатели определённой точки самовывоза
+  else if (segmentType === "pickupPoint") {
+    orderFilter.deliveryType = "pickup";
+    orderFilter.pickupPointId = segmentValue;
+  }
+
+  // Покупатели по способу получения
+  else if (segmentType === "deliveryMethod") {
+    if (segmentValue === "pickup") {
+      orderFilter.deliveryType = "pickup";
+    } else if (segmentValue === "courier") {
+      orderFilter.deliveryType = "delivery";
+      orderFilter.deliveryMethod = "courier";
+    } else if (segmentValue === "inpost") {
+      orderFilter.deliveryType = "delivery";
+      orderFilter.deliveryMethod = "inpost";
+    } else {
+      userFilter.telegramId = { $in: [] };
+
+      return userFilter;
+    }
+  } else {
+    userFilter.telegramId = { $in: [] };
+
+    return userFilter;
+  }
+
+  const telegramIds = (
+    await Order.distinct(
+      "userTelegramId",
+      orderFilter
+    )
+  )
+    .map((value) =>
+      String(value || "").trim()
+    )
+    .filter(Boolean);
+
+  userFilter.telegramId = {
+    $in: telegramIds,
+  };
+
+  return userFilter;
+};
+
 app.post("/admin/users/broadcast-photo", async (req, res) => {
   try {
     const adminToken = String(req.headers["x-admin-token"] || "").trim();
@@ -6662,6 +6770,23 @@ app.post("/admin/users/broadcast-photo", async (req, res) => {
     const buttonText = String(req.body?.buttonText || "").trim();
     const buttonUrl = String(req.body?.buttonUrl || "").trim();
     const limit = Math.max(0, Number(req.body?.limit || 0));
+
+    const audienceType = String(
+      req.body?.audienceType || "all"
+    ).trim();
+
+    const segmentType = String(
+      req.body?.segmentType || ""
+    ).trim();
+
+    const segmentValue = String(
+      req.body?.segmentValue || ""
+    ).trim();
+
+    const username = String(
+      req.body?.username || ""
+    ).trim();
+
 
     if (!photoUrl) {
       return res.status(400).json({
@@ -6695,10 +6820,16 @@ app.post("/admin/users/broadcast-photo", async (req, res) => {
       });
     }
 
+    const userFilter =
+      await buildBroadcastUserFilter({
+        audienceType,
+        segmentType,
+        segmentValue,
+        username,
+      });
+
     const users = await User.find(
-      {
-        telegramId: { $exists: true, $ne: "" },
-      },
+      userFilter,
       {
         telegramId: 1,
         username: 1,
@@ -6784,10 +6915,23 @@ app.post("/admin/users/broadcast-photo", async (req, res) => {
       failed,
       blocked,
       preview: {
+
+        audienceType,
+
+        segmentType,
+
+        segmentValue,
+
+        username,
+
         photoUrl,
+
         text,
+
         buttonText,
+
         buttonUrl,
+
       },
       results: dryRun ? [] : results.slice(0, 200),
     });
@@ -6827,6 +6971,22 @@ app.post("/admin/users/broadcast-photo-async", async (req, res) => {
     const buttonUrl = String(req.body?.buttonUrl || "").trim();
     const limit = Math.max(0, Number(req.body?.limit || 0));
 
+    const audienceType = String(
+      req.body?.audienceType || "all"
+    ).trim();
+
+    const segmentType = String(
+      req.body?.segmentType || ""
+    ).trim();
+
+    const segmentValue = String(
+      req.body?.segmentValue || ""
+    ).trim();
+
+    const username = String(
+      req.body?.username || ""
+    ).trim();
+
     if (!photoUrl) {
       return res.status(400).json({ ok: false, error: "PHOTO_REQUIRED" });
     }
@@ -6843,9 +7003,45 @@ app.post("/admin/users/broadcast-photo-async", async (req, res) => {
       return res.status(400).json({ ok: false, error: "BUTTON_URL_REQUIRED" });
     }
 
+    const filter = {
+      telegramId: { $exists: true, $ne: "" },
+    };
+
+    if (audienceType === "username") {
+      filter.username = username;
+    }
+
+    if (audienceType === "segment") {
+      switch (segmentType) {
+        case "category":
+          filter.lastOrderCategoryKey = segmentValue;
+          break;
+
+        case "pickupPoint":
+          filter.lastPickupPointId = segmentValue;
+          break;
+
+        case "deliveryMethod":
+          filter.lastDeliveryMethod = segmentValue;
+          break;
+      }
+    }
+
+    const userFilter =
+      await buildBroadcastUserFilter({
+        audienceType,
+        segmentType,
+        segmentValue,
+        username,
+      });
+
     const users = await User.find(
-      { telegramId: { $exists: true, $ne: "" } },
-      { telegramId: 1, username: 1, firstName: 1 }
+      userFilter,
+      {
+        telegramId: 1,
+        username: 1,
+        firstName: 1,
+      }
     )
       .sort({ createdAt: 1 })
       .limit(limit > 0 ? limit : 0)
@@ -6887,10 +7083,23 @@ app.post("/admin/users/broadcast-photo-async", async (req, res) => {
       jobId,
       totalUsers: users.length,
       preview: {
+
+        audienceType,
+
+        segmentType,
+
+        segmentValue,
+
+        username,
+
         photoUrl,
+
         text,
+
         buttonText,
+
         buttonUrl,
+
       },
     });
 
