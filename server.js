@@ -2357,9 +2357,7 @@ async function refundOrderCashback(order) {
   };
 }
 
-async function deductRefundedOrderCashback(
-  order
-) {
+async function deductRefundedOrderCashback(order) {
   if (!order?._id) {
     return {
       deducted: false,
@@ -2367,10 +2365,9 @@ async function deductRefundedOrderCashback(
     };
   }
 
-  const freshOrder =
-    await Order.findById(
-      String(order._id || "")
-    );
+  const freshOrder = await Order.findById(
+    String(order._id || "")
+  );
 
   if (!freshOrder) {
     return {
@@ -2384,20 +2381,11 @@ async function deductRefundedOrderCashback(
       ? freshOrder.payment.toObject()
       : freshOrder.payment || {};
 
-  const amount = Number(
-    payment?.cashbackRefundedAmountZl ||
-      payment?.cashbackOriginalAppliedZl ||
-      0
-  );
-
   /*
-   * Снимать повторно нужно только тогда,
-   * когда ранее реально был возврат.
+   * Если возврата не было — повторно
+   * снимать ничего не нужно.
    */
-  if (
-    !(amount > 0) ||
-    !payment?.cashbackRefundedAt
-  ) {
+  if (!payment?.cashbackRefundedAt) {
     return {
       deducted: false,
       amount: 0,
@@ -2422,23 +2410,17 @@ async function deductRefundedOrderCashback(
     ? user.cashbackLedger
     : [];
 
-  let leftToDeduct =
-    Number(amount.toFixed(2));
+  const orderId = String(
+    freshOrder._id || ""
+  );
 
-  /*
-   * Сначала списываем конкретно запись,
-   * созданную возвратом оплаты.
-   */
   const refundRows =
     user.cashbackLedger
       .filter(
         (row) =>
           String(
             row?.sourceOrderId || ""
-          ) ===
-            String(
-              freshOrder._id || ""
-            ) &&
+          ) === orderId &&
 
           String(
             row?.source || ""
@@ -2454,23 +2436,61 @@ async function deductRefundedOrderCashback(
       .sort(
         (a, b) =>
           new Date(
-            a?.earnedAt || 0
+            b?.earnedAt || 0
           ).getTime() -
           new Date(
-            b?.earnedAt || 0
+            a?.earnedAt || 0
           ).getTime()
       );
 
-  for (
-    const row of refundRows
-  ) {
+  const amountFromLedger = Number(
+    refundRows
+      .reduce(
+        (sum, row) =>
+          sum +
+          Math.max(
+            0,
+            Number(
+              row?.remainingZl || 0
+            )
+          ),
+        0
+      )
+      .toFixed(2)
+  );
+
+  const amountFromPayment = Number(
+    Math.max(
+      0,
+      Number(
+        payment?.cashbackRefundedAmountZl ||
+          payment?.cashbackOriginalAppliedZl ||
+          0
+      )
+    ).toFixed(2)
+  );
+
+  const amount = Number(
+    Math.max(
+      amountFromLedger,
+      amountFromPayment
+    ).toFixed(2)
+  );
+
+  if (!(amount > 0)) {
+    throw new Error(
+      "CASHBACK_REFUND_AMOUNT_NOT_FOUND"
+    );
+  }
+
+  let leftToDeduct = amount;
+
+  for (const row of refundRows) {
     if (leftToDeduct <= 0) break;
 
     const available = Math.max(
       0,
-      Number(
-        row?.remainingZl || 0
-      )
+      Number(row?.remainingZl || 0)
     );
 
     const used = Math.min(
@@ -2479,33 +2499,24 @@ async function deductRefundedOrderCashback(
     );
 
     row.remainingZl = Number(
-      (
-        available - used
-      ).toFixed(2)
+      (available - used).toFixed(2)
     );
 
     leftToDeduct = Number(
-      (
-        leftToDeduct - used
-      ).toFixed(2)
+      (leftToDeduct - used).toFixed(2)
     );
   }
 
-  /*
-   * Если клиент успел потратить часть
-   * возвращённого кэшбека, добираем
-   * из других активных частей баланса.
-   */
   if (leftToDeduct > 0) {
     const otherActiveRows =
       user.cashbackLedger
         .filter(
           (row) =>
             !row?.expiredAt &&
-
             Number(
               row?.remainingZl || 0
-            ) > 0
+            ) > 0 &&
+            !refundRows.includes(row)
         )
         .sort(
           (a, b) =>
@@ -2524,9 +2535,7 @@ async function deductRefundedOrderCashback(
 
       const available = Math.max(
         0,
-        Number(
-          row?.remainingZl || 0
-        )
+        Number(row?.remainingZl || 0)
       );
 
       const used = Math.min(
@@ -2535,15 +2544,11 @@ async function deductRefundedOrderCashback(
       );
 
       row.remainingZl = Number(
-        (
-          available - used
-        ).toFixed(2)
+        (available - used).toFixed(2)
       );
 
       leftToDeduct = Number(
-        (
-          leftToDeduct - used
-        ).toFixed(2)
+        (leftToDeduct - used).toFixed(2)
       );
     }
   }
@@ -2567,16 +2572,15 @@ async function deductRefundedOrderCashback(
   freshOrder.payment = {
     ...payment,
 
-    cashbackAppliedZl:
-      Number(
-        amount.toFixed(2)
-      ),
+    cashbackAppliedZl: amount,
+
+    cashbackOriginalAppliedZl:
+      amount,
 
     cashbackRemainingToPayZl:
       Number(
         Math.max(
           0,
-
           Number(
             freshOrder.totalZl || 0
           ) - amount
@@ -2593,11 +2597,14 @@ async function deductRefundedOrderCashback(
     cashbackAppliedAt:
       new Date(),
 
-    cashbackRefundedAt:
-      null,
+    /*
+     * Критическое исправление:
+     * после повторного выполнения
+     * возврат больше не активен.
+     */
+    cashbackRefundedAt: null,
 
-    cashbackRefundedAmountZl:
-      0,
+    cashbackRefundedAmountZl: 0,
 
     method:
       Number(
@@ -2617,9 +2624,7 @@ async function deductRefundedOrderCashback(
   };
 }
 
-async function rollbackEarnedOrderCashback(
-  order
-) {
+async function rollbackEarnedOrderCashback(order) {
   if (!order?._id) {
     return {
       rolledBack: false,
@@ -2627,12 +2632,32 @@ async function rollbackEarnedOrderCashback(
     };
   }
 
-  const freshOrder =
-    await Order.findById(
-      String(order._id || "")
-    );
+  const freshOrder = await Order.findById(
+    String(order._id || "")
+  );
 
   if (!freshOrder) {
+    return {
+      rolledBack: false,
+      amount: 0,
+    };
+  }
+
+  /*
+   * Единственный источник суммы текущего
+   * начисления — поле самого заказа.
+   *
+   * После успешного отката оно становится 0,
+   * поэтому повторная отмена ничего не снимает.
+   */
+  const earnedCashbackZl = Number(
+    Math.max(
+      0,
+      Number(freshOrder.cashbackZl || 0)
+    ).toFixed(2)
+  );
+
+  if (!(earnedCashbackZl > 0)) {
     return {
       rolledBack: false,
       amount: 0,
@@ -2661,83 +2686,53 @@ async function rollbackEarnedOrderCashback(
     freshOrder._id || ""
   );
 
-  /*
-   * Берём только начисление за покупку.
-   * Возврат оплаты сюда не попадает.
-   */
-  const earnedRows =
-    user.cashbackLedger.filter(
-      (row) =>
-        String(
-          row?.sourceOrderId || ""
-        ) === orderId &&
-
-        String(
-          row?.source || ""
-        ) !==
-          "order_payment_refund"
-    );
-
-  const ledgerAmount = Number(
-    earnedRows
-      .reduce(
-        (sum, row) =>
-          sum +
-          Math.max(
-            0,
-            Number(
-              row?.amountZl || 0
-            )
-          ),
-        0
-      )
-      .toFixed(2)
-  );
-
-  const orderAmount = Number(
-    Math.max(
-      0,
-      Number(
-        freshOrder.cashbackZl || 0
-      )
-    ).toFixed(2)
-  );
-
-  const earnedCashbackZl =
-    Number(
-      Math.max(
-        ledgerAmount,
-        orderAmount
-      ).toFixed(2)
-    );
-
-  /*
-   * Повторная отмена:
-   * cashbackZl уже 0,
-   * remainingZl у строки уже 0.
-   *
-   * Поэтому ничего повторно не снимаем.
-   */
-  if (!(earnedCashbackZl > 0)) {
-    return {
-      rolledBack: false,
-      amount: 0,
-    };
-  }
-
   let leftToDeduct =
     earnedCashbackZl;
 
+  /*
+   * Берём только активные начисления
+   * за покупку. Возврат оплаты исключаем.
+   *
+   * Новейшие строки идут первыми — это важно
+   * после повторного выполнен → отменён.
+   */
+  const activeEarnedRows =
+    user.cashbackLedger
+      .filter(
+        (row) =>
+          String(
+            row?.sourceOrderId || ""
+          ) === orderId &&
+
+          String(
+            row?.source || ""
+          ) !==
+            "order_payment_refund" &&
+
+          !row?.expiredAt &&
+
+          Number(
+            row?.remainingZl || 0
+          ) > 0
+      )
+      .sort(
+        (a, b) =>
+          new Date(
+            b?.earnedAt || 0
+          ).getTime() -
+          new Date(
+            a?.earnedAt || 0
+          ).getTime()
+      );
+
   for (
-    const row of earnedRows
+    const row of activeEarnedRows
   ) {
     if (leftToDeduct <= 0) break;
 
     const available = Math.max(
       0,
-      Number(
-        row?.remainingZl || 0
-      )
+      Number(row?.remainingZl || 0)
     );
 
     const used = Math.min(
@@ -2746,22 +2741,17 @@ async function rollbackEarnedOrderCashback(
     );
 
     row.remainingZl = Number(
-      (
-        available - used
-      ).toFixed(2)
+      (available - used).toFixed(2)
     );
 
     leftToDeduct = Number(
-      (
-        leftToDeduct - used
-      ).toFixed(2)
+      (leftToDeduct - used).toFixed(2)
     );
   }
 
   /*
-   * Если начисленный кэшбек уже был
-   * частично потрачен, добираем сумму
-   * из другого активного баланса.
+   * Если клиент потратил часть начисления,
+   * добираем из другого активного баланса.
    */
   if (leftToDeduct > 0) {
     const otherActiveRows =
@@ -2769,12 +2759,10 @@ async function rollbackEarnedOrderCashback(
         .filter(
           (row) =>
             !row?.expiredAt &&
-
             Number(
               row?.remainingZl || 0
             ) > 0 &&
-
-            !earnedRows.includes(row)
+            !activeEarnedRows.includes(row)
         )
         .sort(
           (a, b) =>
@@ -2793,9 +2781,7 @@ async function rollbackEarnedOrderCashback(
 
       const available = Math.max(
         0,
-        Number(
-          row?.remainingZl || 0
-        )
+        Number(row?.remainingZl || 0)
       );
 
       const used = Math.min(
@@ -2804,15 +2790,11 @@ async function rollbackEarnedOrderCashback(
       );
 
       row.remainingZl = Number(
-        (
-          available - used
-        ).toFixed(2)
+        (available - used).toFixed(2)
       );
 
       leftToDeduct = Number(
-        (
-          leftToDeduct - used
-        ).toFixed(2)
+        (leftToDeduct - used).toFixed(2)
       );
     }
   }
