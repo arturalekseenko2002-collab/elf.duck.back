@@ -7477,6 +7477,15 @@ app.get("/admin/users/broadcast-jobs/:jobId", async (req, res) => {
     const jobId = String(req.params?.jobId || "").trim();
     const job = broadcastJobs.get(jobId);
 
+    console.log("[BROADCAST JOB GET]", {
+      jobId,
+      exists: !!job,
+      status: job?.status,
+      processed: job?.processed,
+      totalUsers: job?.totalUsers,
+      sent: job?.sent,
+    });
+
     if (!job) {
       return res.status(404).json({
         ok: false,
