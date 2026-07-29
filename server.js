@@ -12871,11 +12871,17 @@ if (TG_BOT_TOKEN) {
       return false;
     }
 
+    const point =
+      await resolveOrderNotificationPoint(
+        order
+      ).catch(() => null);
+
     const managerTelegramId = String(
-      order?.courierTelegramId ||
-      order?.handledByTelegramId ||
-      order?.payment?.checkedByTelegramId ||
-      ""
+      Array.isArray(
+        point?.allowedAdminTelegramIds
+      )
+        ? point.allowedAdminTelegramIds[0] || ""
+        : ""
     ).trim();
 
     const deliveryWindow = String(
