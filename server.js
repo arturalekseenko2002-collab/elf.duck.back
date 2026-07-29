@@ -10311,6 +10311,59 @@ app.patch("/admin/products/:id", requireAdmin, async (req, res) => {
   }
 });
 
+// ===== Admin: удалить товар =====
+app.delete("/admin/products/:id", requireAdmin, async (req, res) => {
+  try {
+    const productId = String(
+      req.params?.id || ""
+    ).trim();
+
+    if (!mongoose.isValidObjectId(productId)) {
+      return res.status(400).json({
+        ok: false,
+        error: "INVALID_PRODUCT_ID",
+      });
+    }
+
+    const deletedProduct =
+      await Product.findByIdAndDelete(productId);
+
+    if (!deletedProduct) {
+      return res.status(404).json({
+        ok: false,
+        error: "PRODUCT_NOT_FOUND",
+      });
+    }
+
+    cacheInvalidate("products:");
+
+    return res.json({
+      ok: true,
+
+      deletedProductId: String(
+        deletedProduct._id
+      ),
+
+      deletedProductKey: String(
+        deletedProduct.productKey || ""
+      ),
+    });
+  } catch (error) {
+    console.error(
+      "DELETE /admin/products/:id error:",
+      error
+    );
+
+    return res.status(500).json({
+      ok: false,
+
+      error:
+        error?.message ||
+        "INTERNAL_SERVER_ERROR",
+    });
+  }
+});
+
 // ===== Admin: создать/обновить вкус у товара =====
 app.post("/admin/products/:id/flavors", requireAdmin, async (req, res) => {
   try {
