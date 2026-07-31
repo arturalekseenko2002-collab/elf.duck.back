@@ -5726,6 +5726,191 @@ async function resolveOrderPaymentPoint(order) {
   return null;
 }
 
+function isTelegramUserButtonError(error) {
+  const description = String(
+    error?.response?.description ||
+      error?.description ||
+      error?.message ||
+      ""
+  ).toUpperCase();
+
+  return (
+    description.includes(
+      "BUTTON_USER_PRIVACY_RESTRICTED"
+    ) ||
+    description.includes(
+      "BUTTON_USER_INVALID"
+    )
+  );
+}
+
+function normalizeTelegramUsername(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^@/, "");
+}
+
+function getOrderClientUsername(
+  order,
+  user = null
+) {
+  return normalizeTelegramUsername(
+    user?.username ||
+      order?.username ||
+      order?.userUsername ||
+      order?.clientUsername ||
+      order?.customerUsername ||
+      order?.user?.username ||
+      ""
+  );
+}
+
+function removeTelegramUserContactButtons(
+  replyMarkup
+) {
+  const rows = Array.isArray(
+    replyMarkup?.inline_keyboard
+  )
+    ? replyMarkup.inline_keyboard
+    : [];
+
+  return {
+    ...(replyMarkup || {}),
+
+    inline_keyboard: rows
+      .map((row) =>
+        (Array.isArray(row) ? row : []).filter(
+          (button) => {
+            const url = String(
+              button?.url || ""
+            )
+              .trim()
+              .toLowerCase();
+
+            return !(
+              url.startsWith("tg://user?id=") ||
+              url.startsWith(
+                "tg://openmessage?user_id="
+              )
+            );
+          }
+        )
+      )
+      .filter((row) => row.length > 0),
+  };
+}
+
+function replaceTelegramUserButtonWithUsername(
+  replyMarkup,
+  username
+) {
+  const safeUsername =
+    normalizeTelegramUsername(username);
+
+  if (!safeUsername) {
+    return removeTelegramUserContactButtons(
+      replyMarkup
+    );
+  }
+
+  const rows = Array.isArray(
+    replyMarkup?.inline_keyboard
+  )
+    ? replyMarkup.inline_keyboard
+    : [];
+
+  return {
+    ...(replyMarkup || {}),
+
+    inline_keyboard: rows.map((row) =>
+      (Array.isArray(row) ? row : []).map(
+        (button) => {
+          const url = String(
+            button?.url || ""
+          )
+            .trim()
+            .toLowerCase();
+
+          if (
+            url.startsWith("tg://user?id=") ||
+            url.startsWith(
+              "tg://openmessage?user_id="
+            )
+          ) {
+            return {
+              ...button,
+              url: `https://t.me/${safeUsername}`,
+            };
+          }
+
+          return button;
+        }
+      )
+    ),
+  };
+}
+
+function appendManagerBotContactButton(
+  replyMarkup,
+  order
+) {
+  const orderId = String(
+    order?._id || ""
+  ).trim();
+
+  if (!orderId) {
+    return replyMarkup;
+  }
+
+  const rows = Array.isArray(
+    replyMarkup?.inline_keyboard
+  )
+    ? replyMarkup.inline_keyboard.map(
+        (row) => [
+          ...(Array.isArray(row) ? row : []),
+        ]
+      )
+    : [];
+
+  const callbackData =
+    `manager_message_client:${orderId}`;
+
+  const alreadyExists = rows.some((row) =>
+    row.some(
+      (button) =>
+        String(
+          button?.callback_data || ""
+        ) === callbackData
+    )
+  );
+
+  if (!alreadyExists) {
+    rows.push([
+      {
+        text: "✉️ Написать клиенту через бота",
+        callback_data: callbackData,
+      },
+    ]);
+  }
+
+  return {
+    ...(replyMarkup || {}),
+    inline_keyboard: rows,
+  };
+}
+
+function buildSafeFallbackManagerMarkup(
+  replyMarkup,
+  order
+) {
+  return appendManagerBotContactButton(
+    removeTelegramUserContactButtons(
+      replyMarkup
+    ),
+    order
+  );
+}
+
 async function sendOrderCreatedNotification(order) {
   try {
     if (!bot || !order) return;
@@ -6081,86 +6266,66 @@ console.log("[order-photo-select]", {
   clientPhotoSource,
 });
 
-  let sent;
-
-  try {
-    /*
-    * Первая попытка:
-    * отправляем прямую tg://user?id кнопку.
-    */
-    sent = await bot.telegram.sendMessage(
-      point.notificationChatId,
-      text,
-      {
-        parse_mode: "HTML",
-        disable_web_page_preview: true,
-        reply_markup: initialReplyMarkup,
-      }
-    );
-  } catch (error) {
-    const description = String(
-      error?.response?.description ||
-        error?.message ||
-        ""
-    );
-
-    if (
-      !description.includes(
-        "BUTTON_USER_PRIVACY_RESTRICTED"
-      )
-    ) {
-      throw error;
+const sendManagerMessage = async (safeReplyMarkup) => {
+  return bot.telegram.sendMessage(
+    point.notificationChatId,
+    text,
+    {
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+      reply_markup: safeReplyMarkup,
     }
+  );
+};
 
-    /*
-    * Telegram запретил прямую кнопку.
-    * Заменяем только её на callback-кнопку.
-    */
-    const fallbackReplyMarkup = {
-      inline_keyboard: (
-        initialReplyMarkup?.inline_keyboard ||
-        []
-      ).map((row) => {
-        const hasDirectClientButton =
-          row.some((button) =>
-            String(
-              button?.url || ""
-            ).startsWith(
-              "tg://user?id="
-            )
-          );
+let sent;
 
-        if (!hasDirectClientButton) {
-          return row;
-        }
+try {
+  // Первая попытка: кнопка через Telegram ID
+  sent = await sendManagerMessage(
+    initialReplyMarkup
+  );
+} catch (error) {
+  if (!isTelegramUserButtonError(error)) {
+    throw error;
+  }
 
-        return [
-          {
-            text:
-              "💬 Написать клиенту через бота",
+  const clientUsername =
+    normalizeTelegramUsername(
+      user?.username || ""
+    );
 
-            callback_data:
-              `mgr_client_message:${order._id}`,
-          },
-        ];
-      }),
-    };
-
-    /*
-    * Повторная отправка:
-    * вместо прямого чата — связь через бота.
-    */
-    sent = await bot.telegram.sendMessage(
-      point.notificationChatId,
-      text,
-      {
-        parse_mode: "HTML",
-        disable_web_page_preview: true,
-        reply_markup:
-          fallbackReplyMarkup,
+  // Вторая попытка: ссылка через username
+  if (clientUsername) {
+    try {
+      sent = await sendManagerMessage(
+        replaceTelegramUserButtonWithUsername(
+          initialReplyMarkup,
+          clientUsername
+        )
+      );
+    } catch (usernameError) {
+      if (
+        !isTelegramUserButtonError(
+          usernameError
+        )
+      ) {
+        throw usernameError;
       }
+    }
+  }
+
+  // Третья попытка: заказ без tg:// ссылки,
+  // но с кнопкой отправки сообщения через бота
+  if (!sent) {
+    sent = await sendManagerMessage(
+      buildSafeFallbackManagerMarkup(
+        initialReplyMarkup,
+        order
+      )
     );
   }
+}
 
     await Order.updateOne(
       { _id: order._id },
@@ -6234,324 +6399,6 @@ if (clientOrderPhotoUrl) {
   }
 }
 
-function getTimeZoneOffsetMs(date, timeZone) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(date);
-
-  const values = Object.fromEntries(
-    parts
-      .filter((part) => part.type !== "literal")
-      .map((part) => [
-        part.type,
-        part.value,
-      ])
-  );
-
-  const asUtc = Date.UTC(
-    Number(values.year),
-    Number(values.month) - 1,
-    Number(values.day),
-    Number(values.hour),
-    Number(values.minute),
-    Number(values.second)
-  );
-
-  return asUtc - date.getTime();
-}
-
-function warsawDateTimeToUtc(
-  year,
-  month,
-  day,
-  hour = 0,
-  minute = 0,
-  second = 0
-) {
-  const initialUtc = new Date(
-    Date.UTC(
-      year,
-      month - 1,
-      day,
-      hour,
-      minute,
-      second
-    )
-  );
-
-  const firstOffset =
-    getTimeZoneOffsetMs(
-      initialUtc,
-      "Europe/Warsaw"
-    );
-
-  const firstGuess = new Date(
-    initialUtc.getTime() -
-      firstOffset
-  );
-
-  const secondOffset =
-    getTimeZoneOffsetMs(
-      firstGuess,
-      "Europe/Warsaw"
-    );
-
-  return new Date(
-    initialUtc.getTime() -
-      secondOffset
-  );
-}
-
-function getTodayWarsawUtcRange() {
-  const now = new Date();
-
-  const parts =
-    new Intl.DateTimeFormat(
-      "en-CA",
-      {
-        timeZone:
-          "Europe/Warsaw",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-      }
-    ).formatToParts(now);
-
-  const values =
-    Object.fromEntries(
-      parts
-        .filter(
-          (part) =>
-            part.type !== "literal"
-        )
-        .map((part) => [
-          part.type,
-          part.value,
-        ])
-    );
-
-  const year =
-    Number(values.year);
-
-  const month =
-    Number(values.month);
-
-  const day =
-    Number(values.day);
-
-  const start =
-    warsawDateTimeToUtc(
-      year,
-      month,
-      day
-    );
-
-  const nextCalendarDay =
-    new Date(
-      Date.UTC(
-        year,
-        month - 1,
-        day + 1
-      )
-    );
-
-  const end =
-    warsawDateTimeToUtc(
-      nextCalendarDay
-        .getUTCFullYear(),
-
-      nextCalendarDay
-        .getUTCMonth() + 1,
-
-      nextCalendarDay
-        .getUTCDate()
-    );
-
-  return {
-    start,
-    end,
-  };
-}
-
-let missedTodayOrderNotificationsRecoveryStarted =
-  false;
-
-async function resendMissedTodayOrderNotifications() {
-  if (
-    missedTodayOrderNotificationsRecoveryStarted
-  ) {
-    return;
-  }
-
-  missedTodayOrderNotificationsRecoveryStarted =
-    true;
-
-  const {
-    start,
-    end,
-  } = getTodayWarsawUtcRange();
-
-  console.log(
-    "[MISSED ORDER RECOVERY] scan started",
-    {
-      start:
-        start.toISOString(),
-
-      end:
-        end.toISOString(),
-    }
-  );
-
-  const orders =
-    await Order.find({
-      createdAt: {
-        $gte: start,
-        $lt: end,
-      },
-
-      $or: [
-        {
-          "payment.managerMessageId":
-            {
-              $exists: false,
-            },
-        },
-
-        {
-          "payment.managerMessageId":
-            null,
-        },
-
-        {
-          "payment.managerMessageId":
-            "",
-        },
-      ],
-    }).sort({
-      createdAt: 1,
-    });
-
-  console.log(
-    "[MISSED ORDER RECOVERY] found",
-    orders.length
-  );
-
-  for (const order of orders) {
-    try {
-      /*
-       * Перечитываем заказ перед отправкой,
-       * чтобы не отправить дубль.
-       */
-      const latestOrder =
-        await Order.findById(
-          order._id
-        );
-
-      if (!latestOrder) {
-        continue;
-      }
-
-      const existingMessageId =
-        String(
-          latestOrder?.payment
-            ?.managerMessageId ||
-            ""
-        ).trim();
-
-      if (existingMessageId) {
-        continue;
-      }
-
-      await sendOrderCreatedNotification(
-        latestOrder
-      );
-
-      const refreshedOrder =
-        await Order.findById(
-          latestOrder._id
-        ).lean();
-
-      const savedMessageId =
-        String(
-          refreshedOrder?.payment
-            ?.managerMessageId ||
-            ""
-        ).trim();
-
-      if (!savedMessageId) {
-        console.warn(
-          "[MISSED ORDER RECOVERY] notification returned without managerMessageId",
-          {
-            orderId:
-              String(
-                latestOrder._id
-              ),
-
-            orderNo:
-              String(
-                latestOrder
-                  .orderNo || ""
-              ),
-          }
-        );
-
-        continue;
-      }
-
-      console.log(
-        "[MISSED ORDER RECOVERY] resent",
-        {
-          orderId:
-            String(
-              latestOrder._id
-            ),
-
-          orderNo:
-            String(
-              latestOrder
-                .orderNo || ""
-            ),
-
-          managerMessageId:
-            savedMessageId,
-        }
-      );
-    } catch (error) {
-      console.error(
-        "[MISSED ORDER RECOVERY] failed",
-        {
-          orderId:
-            String(
-              order?._id || ""
-            ),
-
-          orderNo:
-            String(
-              order?.orderNo || ""
-            ),
-
-          error:
-            error?.response
-              ?.description ||
-            error?.message ||
-            error,
-        }
-      );
-    }
-  }
-
-  console.log(
-    "[MISSED ORDER RECOVERY] scan finished"
-  );
-}
-
 setInterval(() => {
   processDailyPointStats().catch((e) => {
     console.error("daily point stats interval error:", e);
@@ -6561,118 +6408,6 @@ setInterval(() => {
 processDailyPointStats().catch((e) => {
   console.error("daily point stats initial run error:", e);
 });
-
-async function resendMissedOrderNotificationsFromEnv() {
-  const rawOrderNos = String(
-    process.env.RESEND_ORDER_NOTIFICATIONS || ""
-  ).trim();
-
-  if (!rawOrderNos) {
-    return;
-  }
-
-  const orderNos = Array.from(
-    new Set(
-      rawOrderNos
-        .split(",")
-        .map((value) =>
-          String(value || "").trim()
-        )
-        .filter(Boolean)
-    )
-  );
-
-  if (!orderNos.length) {
-    return;
-  }
-
-  console.log(
-    "[RESEND MISSED ORDERS] requested:",
-    orderNos
-  );
-
-  for (const orderNo of orderNos) {
-    try {
-      const order = await Order.findOne({
-        orderNo,
-      });
-
-      if (!order) {
-        console.warn(
-          "[RESEND MISSED ORDERS] order not found:",
-          orderNo
-        );
-
-        continue;
-      }
-
-      /*
-       * Если сообщение менеджеру уже было
-       * успешно отправлено — заказ пропускаем.
-       */
-      const existingManagerMessageId =
-        String(
-          order?.payment
-            ?.managerMessageId || ""
-        ).trim();
-
-      if (existingManagerMessageId) {
-        console.log(
-          "[RESEND MISSED ORDERS] skipped, already sent:",
-          orderNo,
-          existingManagerMessageId
-        );
-
-        continue;
-      }
-
-      /*
-       * Повторно используем обычную функцию.
-       * Поэтому применится уже новая fallback-логика:
-       *
-       * tg://user?id
-       * или
-       * «Написать клиенту через бота».
-       */
-      await sendOrderCreatedNotification(
-        order
-      );
-
-      const refreshedOrder =
-        await Order.findById(
-          order._id
-        ).lean();
-
-      console.log(
-        "[RESEND MISSED ORDERS] sent:",
-        orderNo,
-        {
-          managerMessageChatId:
-            String(
-              refreshedOrder?.payment
-                ?.managerMessageChatId ||
-                ""
-            ),
-
-          managerMessageId:
-            String(
-              refreshedOrder?.payment
-                ?.managerMessageId ||
-                ""
-            ),
-        }
-      );
-    } catch (error) {
-      console.error(
-        "[RESEND MISSED ORDERS] failed:",
-        orderNo,
-        error?.response?.description ||
-          error?.message ||
-          error
-      );
-    }
-  }
-}
 
 async function refreshManagerOrderMessage(order) {
   try {
@@ -6701,7 +6436,7 @@ async function refreshManagerOrderMessage(order) {
       0
     );
 
-    if (!chatId || !messageId) {
+    if (!messageChatId || !messageId) {
       return { ok: false, reason: "NO_MANAGER_MESSAGE" };
     }
 
@@ -7153,106 +6888,271 @@ async function refreshManagerOrderMessage(order) {
       ],
     };
 
-    const fallbackReplyMarkup = {
-      inline_keyboard: (
-        replyMarkup?.inline_keyboard || []
-      ).map((row) => {
-        const hasDirectClientButton =
-          row.some((button) =>
-            String(
-              button?.url || ""
-            ).startsWith(
-              "tg://user?id="
-            )
-          );
+    const clientUsername =
+  normalizeTelegramUsername(
+    user?.username || ""
+  );
 
-        if (!hasDirectClientButton) {
-          return row;
-        }
-
-        return [
-          {
-            text:
-              "💬 Написать клиенту через бота",
-
-            callback_data:
-              `mgr_client_message:${order._id}`,
-          },
-        ];
-      }),
-    };
-
+const editCaptionWithContactFallback =
+  async () => {
     try {
-      await bot.telegram.editMessageText(
+      // 1. Сначала кнопка по Telegram ID
+      await bot.telegram.editMessageCaption(
         messageChatId,
         messageId,
         undefined,
         text,
         {
           parse_mode: "HTML",
-          disable_web_page_preview: true,
           reply_markup: replyMarkup,
         }
       );
-    } catch (editErr) {
-      const editMsg = String(
-        editErr?.response?.description ||
-          editErr?.message ||
+
+      return;
+    } catch (error) {
+      const errorMessage = String(
+        error?.response?.description ||
+          error?.message ||
           ""
       ).toLowerCase();
 
-      const needsClientButtonFallback =
-        editMsg.includes(
-          "button_user_privacy_restricted"
+      if (
+        errorMessage.includes(
+          "message is not modified"
         ) ||
-        editMsg.includes(
-          "button_user_invalid"
+        errorMessage.includes(
+          "message content is not modified"
+        )
+      ) {
+        await editReplyMarkupWithContactFallback();
+        return;
+      }
+
+      if (!isTelegramUserButtonError(error)) {
+        throw error;
+      }
+    }
+
+    if (clientUsername) {
+      try {
+        // 2. Затем ссылка по username
+        await bot.telegram.editMessageCaption(
+          messageChatId,
+          messageId,
+          undefined,
+          text,
+          {
+            parse_mode: "HTML",
+            reply_markup:
+              replaceTelegramUserButtonWithUsername(
+                replyMarkup,
+                clientUsername
+              ),
+          }
         );
 
-      if (needsClientButtonFallback) {
-        try {
-          await bot.telegram.editMessageText(
-            messageChatId,
-            messageId,
-            undefined,
-            text,
-            {
-              parse_mode: "HTML",
-              disable_web_page_preview:
-                true,
+        return;
+      } catch (error) {
+        const errorMessage = String(
+          error?.response?.description ||
+            error?.message ||
+            ""
+        ).toLowerCase();
 
-              reply_markup:
-                fallbackReplyMarkup,
-            }
-          );
+        if (
+          errorMessage.includes(
+            "message is not modified"
+          ) ||
+          errorMessage.includes(
+            "message content is not modified"
+          )
+        ) {
+          await editReplyMarkupWithContactFallback();
+          return;
+        }
 
-          return {
-            ok: true,
-          };
-        } catch (fallbackError) {
-          const fallbackMessage =
-            String(
-              fallbackError?.response
-                ?.description ||
-                fallbackError?.message ||
-                ""
-            ).toLowerCase();
-
-          if (
-            !fallbackMessage.includes(
-              "message is not modified"
-            ) &&
-            !fallbackMessage.includes(
-              "message content is not modified"
-            )
-          ) {
-            console.error(
-              "refreshManagerOrderMessage fallback editMessageText error:",
-              fallbackError
-            );
-          }
+        if (!isTelegramUserButtonError(error)) {
+          throw error;
         }
       }
+    }
+
+    // 3. В конце — кнопка отправки через бота
+    await bot.telegram.editMessageCaption(
+      messageChatId,
+      messageId,
+      undefined,
+      text,
+      {
+        parse_mode: "HTML",
+        reply_markup:
+          buildSafeFallbackManagerMarkup(
+            replyMarkup,
+            order
+          ),
+      }
+    );
+  };
+
+const editReplyMarkupWithContactFallback =
+  async () => {
+    try {
+      // 1. Сначала кнопка по Telegram ID
+      await bot.telegram.editMessageReplyMarkup(
+        messageChatId,
+        messageId,
+        undefined,
+        replyMarkup
+      );
+
+      return;
+    } catch (error) {
+      const errorMessage = String(
+        error?.response?.description ||
+          error?.message ||
+          ""
+      ).toLowerCase();
+
+      if (
+        errorMessage.includes(
+          "message is not modified"
+        )
+      ) {
+        return;
+      }
+
+      if (!isTelegramUserButtonError(error)) {
+        throw error;
+      }
+    }
+
+    if (clientUsername) {
+      try {
+        // 2. Затем ссылка по username
+        await bot.telegram.editMessageReplyMarkup(
+          messageChatId,
+          messageId,
+          undefined,
+          replaceTelegramUserButtonWithUsername(
+            replyMarkup,
+            clientUsername
+          )
+        );
+
+        return;
+      } catch (error) {
+        const errorMessage = String(
+          error?.response?.description ||
+            error?.message ||
+            ""
+        ).toLowerCase();
+
+        if (
+          errorMessage.includes(
+            "message is not modified"
+          )
+        ) {
+          return;
+        }
+
+        if (!isTelegramUserButtonError(error)) {
+          throw error;
+        }
+      }
+    }
+
+    // 3. В конце — кнопка отправки через бота
+    await bot.telegram.editMessageReplyMarkup(
+      messageChatId,
+      messageId,
+      undefined,
+      buildSafeFallbackManagerMarkup(
+        replyMarkup,
+        order
+      )
+    );
+  };
+try {
+  const editManagerMessage = async (
+    safeReplyMarkup
+  ) => {
+    return bot.telegram.editMessageText(
+      messageChatId,
+      messageId,
+      undefined,
+      text,
+      {
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
+        reply_markup: safeReplyMarkup,
+      }
+    );
+  };
+
+  try {
+    // Первая попытка:
+    // текущая кнопка через Telegram ID
+    await editManagerMessage(
+      replyMarkup
+    );
+  } catch (buttonError) {
+    if (
+      !isTelegramUserButtonError(
+        buttonError
+      )
+    ) {
+      throw buttonError;
+    }
+
+    const clientUsername =
+
+        normalizeTelegramUsername(
+
+            user?.username || ""
+
+        );
+
+    let edited = false;
+
+    // Вторая попытка:
+    // ссылка через username
+    if (clientUsername) {
+      try {
+        await editManagerMessage(
+          replaceTelegramUserButtonWithUsername(
+            replyMarkup,
+            clientUsername
+          )
+        );
+
+        edited = true;
+      } catch (usernameError) {
+        if (
+          !isTelegramUserButtonError(
+            usernameError
+          )
+        ) {
+          throw usernameError;
+        }
+      }
+    }
+
+    // Третья попытка:
+    // убираем проблемную ссылку
+    // и добавляем отправку через бота
+    if (!edited) {
+      await editManagerMessage(
+        buildSafeFallbackManagerMarkup(
+          replyMarkup,
+          order
+        )
+      );
+    }
+  }
+
+  return { ok: true };
+} catch (editErr) {
+      const editMsg = String(editErr?.response?.description || editErr?.message || "").toLowerCase();
 
       if (
         editMsg.includes("there is no text in the message to edit") ||
@@ -7260,89 +7160,40 @@ async function refreshManagerOrderMessage(order) {
         editMsg.includes("message is not modified") ||
         editMsg.includes("message can't be edited")
       ) {
-        try {
-          await bot.telegram.editMessageCaption(
-            messageChatId,
-            messageId,
-            undefined,
-            text,
-            {
-              parse_mode: "HTML",
-              reply_markup:
-              needsClientButtonFallback
+try {
+  await editCaptionWithContactFallback();
 
-                ? fallbackReplyMarkup
-
-                : replyMarkup,
-            }
-          );
-          return { ok: true };
-        } catch (captionErr) {
-          const captionMsg = String(
-            captionErr?.response?.description || captionErr?.message || ""
-          ).toLowerCase();
-
-          if (
-            captionMsg.includes("message is not modified") ||
-            captionMsg.includes("message content is not modified")
-          ) {
-            try {
-              await bot.telegram.editMessageReplyMarkup(
-
-                messageChatId,
-
-                messageId,
-
-                undefined,
-
-                needsClientButtonFallback
-
-                  ? fallbackReplyMarkup
-
-                  : replyMarkup
-
-              );
-            } catch (markupErr) {
-              const markupMsg = String(
-                markupErr?.response?.description || markupErr?.message || ""
-              ).toLowerCase();
-
-              if (!markupMsg.includes("message is not modified")) {
-                console.error("refreshManagerOrderMessage editMessageReplyMarkup error:", markupErr);
-              }
-            }
-            return { ok: true };
-          }
-
-          console.error("refreshManagerOrderMessage editMessageCaption error:", captionErr);
-        }
+  return { ok: true };
+} catch (captionErr) {
+  console.error(
+    "refreshManagerOrderMessage editMessageCaption error:",
+    captionErr
+  );
+}
       } else {
         console.error("refreshManagerOrderMessage editMessageText error:", editErr);
       }
 
-      try {
-        await bot.telegram.editMessageReplyMarkup(
+try {
+  await editReplyMarkupWithContactFallback();
+} catch (e) {
+  const msg = String(
+    e?.response?.description ||
+      e?.message ||
+      ""
+  ).toLowerCase();
 
-          messageChatId,
-
-          messageId,
-
-          undefined,
-
-          needsClientButtonFallback
-
-            ? fallbackReplyMarkup
-
-            : replyMarkup
-
-        );
-      } catch (e) {
-        const msg = String(e?.response?.description || e?.message || "").toLowerCase();
-
-        if (!msg.includes("message is not modified")) {
-          console.error("refreshManagerOrderMessage editMessageReplyMarkup error:", e);
-        }
-      }
+  if (
+    !msg.includes(
+      "message is not modified"
+    )
+  ) {
+    console.error(
+      "refreshManagerOrderMessage editMessageReplyMarkup error:",
+      e
+    );
+  }
+}
     }
 
     return { ok: true };
@@ -12427,39 +12278,7 @@ app.post("/orders/:id/payment-check", async (req, res) => {
 
     await order.save();
     stopPaymentReminder(order._id);
-    try {
-  console.log("[ORDER NOTIFY] start", {
-    orderId: String(order?._id || ""),
-    orderNo: String(order?.orderNo || ""),
-    userTelegramId: String(
-      order?.userTelegramId || ""
-    ),
-  });
-
-  await sendOrderCreatedNotification(
-    order
-  );
-
-  console.log("[ORDER NOTIFY] success", {
-    orderId: String(order?._id || ""),
-    orderNo: String(order?.orderNo || ""),
-  });
-} catch (notifyError) {
-  console.error("[ORDER NOTIFY] failed", {
-    orderId: String(order?._id || ""),
-    orderNo: String(order?.orderNo || ""),
-
-    error:
-      notifyError?.response?.description ||
-      notifyError?.message ||
-      notifyError,
-
-    stack:
-      notifyError?.stack || "",
-  });
-
-  throw notifyError;
-}
+    await sendOrderCreatedNotification(order);
     return res.json({ ok: true, order });
   } catch (e) {
     console.error("POST /orders/:id/payment-check error:", e);
@@ -14262,150 +14081,6 @@ if (TG_BOT_TOKEN) {
     }
   });
 
-  bot.action(/mgr_client_message:(.+)/, async (ctx) => {
-      try {
-        const orderId = String(
-          ctx.match?.[1] || ""
-        ).trim();
-
-        const order =
-          await Order.findById(orderId);
-
-        if (!order) {
-          await ctx.answerCbQuery(
-            "Заказ не найден",
-            {
-              show_alert: true,
-            }
-          );
-
-          return;
-        }
-
-        const managerTelegramId =
-          String(
-            ctx.from?.id || ""
-          ).trim();
-
-        const managerChatId =
-          String(
-            ctx.chat?.id || ""
-          ).trim();
-
-        const clientTelegramId =
-          String(
-            order?.userTelegramId || ""
-          ).trim();
-
-        if (
-          !managerTelegramId ||
-          !managerChatId ||
-          !clientTelegramId
-        ) {
-          await ctx.answerCbQuery(
-            "Не удалось определить клиента",
-            {
-              show_alert: true,
-            }
-          );
-
-          return;
-        }
-
-        /*
-        * Сохраняем:
-        * какой менеджер сейчас пишет
-        * какому клиенту и по какому заказу.
-        */
-        managerClientMessageState.set(
-          managerTelegramId,
-          {
-            orderId: String(
-              order._id
-            ),
-
-            orderNo: String(
-              order?.orderNo || ""
-            ),
-
-            clientTelegramId,
-
-            managerChatId,
-
-            requestedAt:
-              Date.now(),
-          }
-        );
-
-        await ctx.answerCbQuery();
-
-        await ctx.reply(
-          [
-            "💬 <b>Введите сообщение клиенту</b>",
-            "",
-            `Заказ: <b>#${escapeHtml(
-              order?.orderNo || "—"
-            )}</b>`,
-            "",
-            "Следующее текстовое сообщение будет отправлено клиенту через бота.",
-          ].join("\n"),
-          {
-            parse_mode: "HTML",
-
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  {
-                    text: "❌ Отмена",
-
-                    callback_data:
-                      "mgr_client_message_cancel",
-                  },
-                ],
-              ],
-            },
-          }
-        );
-      } catch (error) {
-        console.error(
-          "mgr_client_message error:",
-          error
-        );
-
-        try {
-          await ctx.answerCbQuery(
-            "Не удалось начать отправку сообщения",
-            {
-              show_alert: true,
-            }
-          );
-        } catch {}
-      }
-    }
-  );
-
-  bot.action("mgr_client_message_cancel", async (ctx) => {
-      const managerTelegramId =
-        String(
-          ctx.from?.id || ""
-        ).trim();
-
-      managerClientMessageState.delete(
-        managerTelegramId
-      );
-
-      try {
-        await ctx.answerCbQuery(
-          "Отправка отменена"
-        );
-      } catch {}
-
-      try {
-        await ctx.deleteMessage();
-      } catch {}
-    }
-  );
-
   bot.action(/mgr_inpost_tracking_cancel:(.+)/, async (ctx) => {
       try {
         const orderId = String(
@@ -14659,125 +14334,6 @@ if (TG_BOT_TOKEN) {
         ctx.chat?.id ||
         ""
       );
-
-      const managerTelegramId =
-        String(
-          ctx.from?.id || ""
-        ).trim();
-
-      const clientMessageState =
-        managerClientMessageState.get(
-          managerTelegramId
-        );
-
-      if (clientMessageState) {
-        const currentChatId =
-          String(
-            ctx.chat?.id || ""
-          ).trim();
-
-        const expectedChatId =
-          String(
-            clientMessageState
-              ?.managerChatId || ""
-          ).trim();
-
-        /*
-        * Сообщение принимаем только
-        * из того чата, где нажали кнопку.
-        */
-        if (
-          expectedChatId &&
-          currentChatId !==
-            expectedChatId
-        ) {
-          return next();
-        }
-
-        const requestedAt =
-          Number(
-            clientMessageState
-              ?.requestedAt || 0
-          );
-
-        /*
-        * Состояние действует 15 минут.
-        */
-        if (
-          requestedAt > 0 &&
-          Date.now() - requestedAt >
-            15 * 60 * 1000
-        ) {
-          managerClientMessageState.delete(
-            managerTelegramId
-          );
-
-          await ctx.reply(
-            "⌛ Время ввода сообщения истекло. Нажмите кнопку связи с клиентом ещё раз."
-          );
-
-          return;
-        }
-
-        const clientTelegramId =
-          String(
-            clientMessageState
-              ?.clientTelegramId || ""
-          ).trim();
-
-        const managerText =
-          String(
-            ctx.message?.text || ""
-          ).trim();
-
-        if (
-          !clientTelegramId ||
-          !managerText
-        ) {
-          return;
-        }
-
-        try {
-          await bot.telegram.sendMessage(
-            clientTelegramId,
-            [
-              "💬 <b>Сообщение от менеджера ELF DUCK</b>",
-              "",
-              escapeHtml(managerText),
-            ].join("\n"),
-            {
-              parse_mode: "HTML",
-            }
-          );
-
-          managerClientMessageState.delete(
-            managerTelegramId
-          );
-
-          await ctx.reply(
-            "✅ Сообщение отправлено клиенту"
-          );
-        } catch (error) {
-          console.error(
-            "manager send client message error:",
-            error
-          );
-
-          managerClientMessageState.delete(
-            managerTelegramId
-          );
-
-          await ctx.reply(
-            "❌ Не удалось отправить сообщение. Возможно, клиент заблокировал бота."
-          );
-        }
-
-        /*
-        * Не передаём это сообщение
-        * обработчику трекинга InPost.
-        */
-        return;
-      }
 
       const currentState =
         inpostTrackingInputState.get(
@@ -15413,16 +14969,6 @@ if (TG_BOT_TOKEN) {
     .catch((e) => {
       console.error("❌ bot.launch error:", e);
     });
-
-  setTimeout(() => {
-    resendMissedTodayOrderNotifications()
-      .catch((error) => {
-        console.error(
-          "[MISSED ORDER RECOVERY] startup error",
-          error
-        );
-      });
-  }, 5000);
     
   process.once("SIGINT", () => {
     try {
