@@ -6089,7 +6089,7 @@ console.log("[order-photo-select]", {
     * отправляем прямую tg://user?id кнопку.
     */
     sent = await bot.telegram.sendMessage(
-      notificationChatId,
+      point.notificationChatId,
       text,
       {
         parse_mode: "HTML",
@@ -6151,7 +6151,7 @@ console.log("[order-photo-select]", {
     * вместо прямого чата — связь через бота.
     */
     sent = await bot.telegram.sendMessage(
-      notificationChatId,
+      point.notificationChatId,
       text,
       {
         parse_mode: "HTML",
