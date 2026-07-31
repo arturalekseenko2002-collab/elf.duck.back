@@ -14489,26 +14489,99 @@ if (TG_BOT_TOKEN) {
     );
 
     try {
-      await bot.telegram.sendMessage(
-        clientMessageState.clientTelegramId,
-        [
-          "💬 <b>Сообщение от менеджера</b>",
-          "",
-          `Заказ: <b>#${escapeHtml(
-            clientMessageState.orderNo ||
-              "—"
-          )}</b>`,
-          "",
-          escapeHtml(messageText),
-        ].join("\n"),
-        {
-          parse_mode: "HTML",
-        }
-      );
+await bot.telegram.sendMessage(
+  clientMessageState.clientTelegramId,
+  [
+    "💬 <b>Сообщение от менеджера</b>",
+    "",
+    `Заказ: <b>#${escapeHtml(
+      clientMessageState.orderNo || "—"
+    )}</b>`,
+    "",
+    escapeHtml(messageText),
+  ].join("\n"),
+  {
+    parse_mode: "HTML",
+  }
+);
 
-      await ctx.reply(
-        "✅ Сообщение отправлено клиенту."
-      );
+const confirmationMessage =
+  await ctx.reply(
+    "✅ Сообщение отправлено клиенту."
+  );
+
+/*
+ * Небольшая задержка, чтобы менеджер
+ * успел увидеть подтверждение.
+ */
+await new Promise((resolve) =>
+  setTimeout(resolve, 100)
+);
+
+const managerChatId = String(
+  clientMessageState.managerChatId ||
+    ctx?.chat?.id ||
+    ""
+).trim();
+
+const messageIdsToDelete = [
+  /*
+   * Сообщение-инструкция.
+   */
+  Number(
+    clientMessageState
+      .instructionMessageId || 0
+  ),
+
+  /*
+   * Текст, который написал менеджер.
+   */
+  Number(
+    ctx?.message?.message_id || 0
+  ),
+
+  /*
+   * Подтверждение успешной отправки.
+   */
+  Number(
+    confirmationMessage?.message_id || 0
+  ),
+].filter(Boolean);
+
+if (managerChatId) {
+  const deleteResults =
+    await Promise.allSettled(
+      messageIdsToDelete.map(
+        (messageId) =>
+          bot.telegram.deleteMessage(
+            managerChatId,
+            messageId
+          )
+      )
+    );
+
+  deleteResults.forEach(
+    (result, index) => {
+      if (result.status === "rejected") {
+        console.warn(
+          "manager client message cleanup failed:",
+          {
+            managerChatId,
+
+            messageId:
+              messageIdsToDelete[index],
+
+            error:
+              result.reason?.response
+                ?.description ||
+              result.reason?.message ||
+              result.reason,
+          }
+        );
+      }
+    }
+  );
+}
     } catch (error) {
       console.error(
         "manager client message send error:",
@@ -15179,9 +15252,7 @@ if (TG_BOT_TOKEN) {
   console.warn("⚠️ TELEGRAM_BOT_TOKEN not set — bot disabled");
 }
 
-bot.action(
-  /^manager_message_client:(.+)$/,
-  async (ctx) => {
+bot.action(/^manager_message_client:(.+)$/, async (ctx) => {
     try {
       await ctx.answerCbQuery();
 
@@ -15234,31 +15305,44 @@ bot.action(
         }
       );
 
-      managerClientMessageState.set(
-        managerTelegramId,
-        {
-          orderId: String(order._id),
-          orderNo: String(
-            order?.orderNo || ""
-          ),
-          clientTelegramId,
-        }
-      );
+const instructionMessage =
+  await ctx.reply(
+    [
+      "✉️ <b>СООБЩЕНИЕ КЛИЕНТУ</b>",
+      "",
+      `Заказ: <b>#${escapeHtml(
+        order?.orderNo || "—"
+      )}</b>`,
+      "",
+      "Отправьте следующим сообщением текст, который нужно передать клиенту.",
+    ].join("\n"),
+    {
+      parse_mode: "HTML",
+    }
+  );
 
-      return ctx.reply(
-        [
-          "✉️ <b>СООБЩЕНИЕ КЛИЕНТУ</b>",
-          "",
-          `Заказ: <b>#${escapeHtml(
-            order?.orderNo || "—"
-          )}</b>`,
-          "",
-          "Отправьте следующим сообщением текст, который нужно передать клиенту.",
-        ].join("\n"),
-        {
-          parse_mode: "HTML",
-        }
-      );
+managerClientMessageState.set(
+  managerTelegramId,
+  {
+    orderId: String(order._id),
+
+    orderNo: String(
+      order?.orderNo || ""
+    ),
+
+    clientTelegramId,
+
+    managerChatId: String(
+      ctx?.chat?.id || ""
+    ),
+
+    instructionMessageId: Number(
+      instructionMessage?.message_id || 0
+    ),
+  }
+);
+
+return instructionMessage;
     } catch (error) {
       console.error(
         "manager_message_client action error:",
