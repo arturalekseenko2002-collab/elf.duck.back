@@ -4092,19 +4092,49 @@ async function processOrdersWithoutPaymentConfirm() {
           continue;
         }
 
+        const freshOrder = await Order.findById(
+          order._id
+        );
+
+        if (!freshOrder) {
+          continue;
+        }
+
+        const freshOrderStatus = String(
+          freshOrder?.status || ""
+        )
+          .trim()
+          .toLowerCase();
+
+        const freshPaymentStatus = String(
+          freshOrder?.payment?.status || ""
+        )
+          .trim()
+          .toLowerCase();
+
+        const canSendPaymentReminder =
+          ["created", "processing"].includes(
+            freshOrderStatus
+          ) &&
+          freshPaymentStatus === "unpaid";
+
+        if (!canSendPaymentReminder) {
+          continue;
+        }
+
         if (
           !bot ||
-          !order?.userTelegramId
+          !freshOrder?.userTelegramId
         ) {
           console.warn(
             "processOrdersWithoutPaymentConfirm reminder skipped:",
             {
               orderId: String(
-                order?._id || ""
+                freshOrder?._id || ""
               ),
 
               orderNo: String(
-                order?.orderNo || ""
+                freshOrder?.orderNo || ""
               ),
 
               reason:
@@ -4117,7 +4147,7 @@ async function processOrdersWithoutPaymentConfirm() {
 
         const orderNo =
           escapeHtml(
-            order?.orderNo || "—"
+            freshOrder?.orderNo || "—"
           );
 
         const reminderText =
@@ -4142,9 +4172,25 @@ async function processOrdersWithoutPaymentConfirm() {
          * Только после успешной отправки
          * сохраняем отметку.
          */
+
+        const stillUnpaidOrder =
+          await Order.findOne({
+            _id: freshOrder._id,
+
+            status: {
+              $in: ["created", "processing"],
+            },
+
+            "payment.status": "unpaid",
+          });
+
+        if (!stillUnpaidOrder) {
+          continue;
+        }
+
         await bot.telegram.sendMessage(
           String(
-            order.userTelegramId
+            stillUnpaidOrder.userTelegramId
           ),
           reminderText,
           {
@@ -4155,39 +4201,45 @@ async function processOrdersWithoutPaymentConfirm() {
           }
         );
 
+        const freshPayment =
+          stillUnpaidOrder?.payment
+            ?.toObject?.() ||
+          stillUnpaidOrder?.payment ||
+          {};
+
         if (
           shouldSendNineMinuteReminder
         ) {
-          order.payment = {
-            ...payment,
+          stillUnpaidOrder.payment = {
+            ...freshPayment,
 
             paymentReminder9SentAt:
               new Date(),
           };
         } else {
-          order.payment = {
-            ...payment,
+          stillUnpaidOrder.payment = {
+            ...freshPayment,
 
             paymentReminder5SentAt:
               new Date(),
           };
         }
 
-        order.markModified?.(
+        stillUnpaidOrder.markModified?.(
           "payment"
         );
 
-        await order.save();
+        await stillUnpaidOrder.save();
 
         console.log(
           "[PAYMENT REMINDER SENT]",
           {
             orderId: String(
-              order?._id || ""
+              stillUnpaidOrder?._id || ""
             ),
 
             orderNo: String(
-              order?.orderNo || ""
+              stillUnpaidOrder?.orderNo || ""
             ),
 
             reminderMinute:
@@ -4196,7 +4248,7 @@ async function processOrdersWithoutPaymentConfirm() {
                 : 5,
 
             userTelegramId: String(
-              order?.userTelegramId || ""
+              stillUnpaidOrder?.userTelegramId || ""
             ),
           }
         );
@@ -4205,11 +4257,11 @@ async function processOrdersWithoutPaymentConfirm() {
           "processOrdersWithoutPaymentConfirm order error:",
           {
             orderId: String(
-              order?._id || ""
+              stillUnpaidOrder?._id || ""
             ),
 
             orderNo: String(
-              order?.orderNo || ""
+              stillUnpaidOrder?.orderNo || ""
             ),
 
             error:
