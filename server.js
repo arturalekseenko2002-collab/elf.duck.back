@@ -2280,9 +2280,71 @@ async function sendCashbackExpiringSoonNotification(user, expiringRows) {
       parse_mode: "HTML",
       disable_web_page_preview: true,
     });
-  } catch (e) {
-    console.error("sendCashbackExpiringSoonNotification error:", e);
+
+    return {
+  ok: true,
+  skipped: false,
+};
+} catch (e) {
+  const errorCode = Number(
+    e?.response?.error_code || 0
+  );
+
+  const description = String(
+    e?.response?.description ||
+      e?.description ||
+      e?.message ||
+      ""
+  );
+
+  const isUnavailableChat =
+    (
+      errorCode === 400 &&
+      /chat not found/i.test(description)
+    ) ||
+    (
+      errorCode === 403 &&
+      /bot was blocked by the user/i.test(
+        description
+      )
+    ) ||
+    (
+      errorCode === 403 &&
+      /user is deactivated/i.test(
+        description
+      )
+    );
+
+  if (isUnavailableChat) {
+    console.warn(
+      "sendCashbackExpiringSoonNotification skipped: user chat unavailable",
+      {
+        telegramId: String(
+          user?.telegramId || ""
+        ),
+        errorCode,
+        description,
+      }
+    );
+
+    return {
+      ok: false,
+      skipped: true,
+      reason: "USER_CHAT_UNAVAILABLE",
+    };
   }
+
+  console.error(
+    "sendCashbackExpiringSoonNotification error:",
+    e
+  );
+
+  return {
+    ok: false,
+    skipped: false,
+    reason: "SEND_FAILED",
+  };
+}
 }
 
 function formatCashbackExpireDate(date) {
@@ -2348,9 +2410,70 @@ async function sendCashbackExpiredNotification(user, expiredRows) {
       parse_mode: "HTML",
       disable_web_page_preview: true,
     });
-  } catch (e) {
-    console.error("sendCashbackExpiredNotification error:", e);
+    return {
+      ok: true,
+      skipped: false,
+    };
+} catch (e) {
+  const errorCode = Number(
+    e?.response?.error_code || 0
+  );
+
+  const description = String(
+    e?.response?.description ||
+      e?.description ||
+      e?.message ||
+      ""
+  );
+
+  const isUnavailableChat =
+    (
+      errorCode === 400 &&
+      /chat not found/i.test(description)
+    ) ||
+    (
+      errorCode === 403 &&
+      /bot was blocked by the user/i.test(
+        description
+      )
+    ) ||
+    (
+      errorCode === 403 &&
+      /user is deactivated/i.test(
+        description
+      )
+    );
+
+  if (isUnavailableChat) {
+    console.warn(
+      "sendCashbackExpiredNotification skipped: user chat unavailable",
+      {
+        telegramId: String(
+          user?.telegramId || ""
+        ),
+        errorCode,
+        description,
+      }
+    );
+
+    return {
+      ok: false,
+      skipped: true,
+      reason: "USER_CHAT_UNAVAILABLE",
+    };
   }
+
+  console.error(
+    "sendCashbackExpiredNotification error:",
+    e
+  );
+
+  return {
+    ok: false,
+    skipped: false,
+    reason: "SEND_FAILED",
+  };
+}
 }
 
 async function processCashbackLedgerExpirations() {
