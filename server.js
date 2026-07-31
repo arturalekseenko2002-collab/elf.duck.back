@@ -7152,6 +7152,36 @@ async function refreshManagerOrderMessage(order) {
         ...permanentManagerButtons,
       ],
     };
+
+    const fallbackReplyMarkup = {
+      inline_keyboard: (
+        replyMarkup?.inline_keyboard || []
+      ).map((row) => {
+        const hasDirectClientButton =
+          row.some((button) =>
+            String(
+              button?.url || ""
+            ).startsWith(
+              "tg://user?id="
+            )
+          );
+
+        if (!hasDirectClientButton) {
+          return row;
+        }
+
+        return [
+          {
+            text:
+              "💬 Написать клиенту через бота",
+
+            callback_data:
+              `mgr_client_message:${order._id}`,
+          },
+        ];
+      }),
+    };
+
     try {
       await bot.telegram.editMessageText(
         messageChatId,
@@ -7165,7 +7195,64 @@ async function refreshManagerOrderMessage(order) {
         }
       );
     } catch (editErr) {
-      const editMsg = String(editErr?.response?.description || editErr?.message || "").toLowerCase();
+      const editMsg = String(
+        editErr?.response?.description ||
+          editErr?.message ||
+          ""
+      ).toLowerCase();
+
+      const needsClientButtonFallback =
+        editMsg.includes(
+          "button_user_privacy_restricted"
+        ) ||
+        editMsg.includes(
+          "button_user_invalid"
+        );
+
+      if (needsClientButtonFallback) {
+        try {
+          await bot.telegram.editMessageText(
+            messageChatId,
+            messageId,
+            undefined,
+            text,
+            {
+              parse_mode: "HTML",
+              disable_web_page_preview:
+                true,
+
+              reply_markup:
+                fallbackReplyMarkup,
+            }
+          );
+
+          return {
+            ok: true,
+          };
+        } catch (fallbackError) {
+          const fallbackMessage =
+            String(
+              fallbackError?.response
+                ?.description ||
+                fallbackError?.message ||
+                ""
+            ).toLowerCase();
+
+          if (
+            !fallbackMessage.includes(
+              "message is not modified"
+            ) &&
+            !fallbackMessage.includes(
+              "message content is not modified"
+            )
+          ) {
+            console.error(
+              "refreshManagerOrderMessage fallback editMessageText error:",
+              fallbackError
+            );
+          }
+        }
+      }
 
       if (
         editMsg.includes("there is no text in the message to edit") ||
@@ -7181,7 +7268,12 @@ async function refreshManagerOrderMessage(order) {
             text,
             {
               parse_mode: "HTML",
-              reply_markup: replyMarkup,
+              reply_markup:
+              needsClientButtonFallback
+
+                ? fallbackReplyMarkup
+
+                : replyMarkup,
             }
           );
           return { ok: true };
@@ -7196,10 +7288,19 @@ async function refreshManagerOrderMessage(order) {
           ) {
             try {
               await bot.telegram.editMessageReplyMarkup(
+
                 messageChatId,
+
                 messageId,
+
                 undefined,
-                replyMarkup
+
+                needsClientButtonFallback
+
+                  ? fallbackReplyMarkup
+
+                  : replyMarkup
+
               );
             } catch (markupErr) {
               const markupMsg = String(
@@ -7221,10 +7322,19 @@ async function refreshManagerOrderMessage(order) {
 
       try {
         await bot.telegram.editMessageReplyMarkup(
+
           messageChatId,
+
           messageId,
+
           undefined,
-          replyMarkup
+
+          needsClientButtonFallback
+
+            ? fallbackReplyMarkup
+
+            : replyMarkup
+
         );
       } catch (e) {
         const msg = String(e?.response?.description || e?.message || "").toLowerCase();
