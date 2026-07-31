@@ -6011,7 +6011,7 @@ function appendManagerBotContactButton(
     rows.push([
       {
         text: "✉️ Написать клиенту через бота",
-        callback_data: callbackData,
+        callback_data: `manager_message_client:${orderId}`,
       },
     ]);
   }
@@ -14452,6 +14452,76 @@ if (TG_BOT_TOKEN) {
   );
 
   bot.on("text", async (ctx, next) => {
+      const managerTelegramId = String(
+    ctx?.from?.id || ""
+  ).trim();
+
+  const clientMessageState =
+    managerClientMessageState.get(
+      managerTelegramId
+    );
+
+  if (clientMessageState) {
+    const messageText = String(
+      ctx?.message?.text || ""
+    ).trim();
+
+    if (!messageText) {
+      return;
+    }
+
+    managerClientMessageState.delete(
+      managerTelegramId
+    );
+
+    console.log(
+      "[MANAGER CLIENT MESSAGE][SEND]",
+      {
+        orderId:
+          clientMessageState.orderId,
+        orderNo:
+          clientMessageState.orderNo,
+        managerTelegramId,
+        clientTelegramId:
+          clientMessageState
+            .clientTelegramId,
+      }
+    );
+
+    try {
+      await bot.telegram.sendMessage(
+        clientMessageState.clientTelegramId,
+        [
+          "💬 <b>Сообщение от менеджера</b>",
+          "",
+          `Заказ: <b>#${escapeHtml(
+            clientMessageState.orderNo ||
+              "—"
+          )}</b>`,
+          "",
+          escapeHtml(messageText),
+        ].join("\n"),
+        {
+          parse_mode: "HTML",
+        }
+      );
+
+      await ctx.reply(
+        "✅ Сообщение отправлено клиенту."
+      );
+    } catch (error) {
+      console.error(
+        "manager client message send error:",
+        error
+      );
+
+      await ctx.reply(
+        "❌ Не удалось отправить сообщение клиенту. Возможно, клиент заблокировал бота или не запускал его."
+      );
+    }
+
+    return;
+  }
       const stateKey = String(
         ctx.from?.id ||
         ctx.chat?.id ||
@@ -15108,6 +15178,104 @@ if (TG_BOT_TOKEN) {
 } else {
   console.warn("⚠️ TELEGRAM_BOT_TOKEN not set — bot disabled");
 }
+
+bot.action(
+  /^manager_message_client:(.+)$/,
+  async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+
+      const orderId = String(
+        ctx.match?.[1] || ""
+      ).trim();
+
+      if (!orderId) {
+        return ctx.reply(
+          "❌ Не удалось определить заказ."
+        );
+      }
+
+      const order =
+        await Order.findById(orderId).lean();
+
+      if (!order) {
+        return ctx.reply(
+          "❌ Заказ не найден."
+        );
+      }
+
+      const clientTelegramId = String(
+        order?.userTelegramId || ""
+      ).trim();
+
+      if (!clientTelegramId) {
+        return ctx.reply(
+          "❌ У клиента отсутствует Telegram ID."
+        );
+      }
+
+      const managerTelegramId = String(
+        ctx?.from?.id || ""
+      ).trim();
+
+      if (!managerTelegramId) {
+        return;
+      }
+
+      console.log(
+        "[MANAGER CLIENT MESSAGE][OPEN]",
+        {
+          orderId,
+          orderNo: String(
+            order?.orderNo || ""
+          ),
+          managerTelegramId,
+          clientTelegramId,
+        }
+      );
+
+      managerClientMessageState.set(
+        managerTelegramId,
+        {
+          orderId: String(order._id),
+          orderNo: String(
+            order?.orderNo || ""
+          ),
+          clientTelegramId,
+        }
+      );
+
+      return ctx.reply(
+        [
+          "✉️ <b>СООБЩЕНИЕ КЛИЕНТУ</b>",
+          "",
+          `Заказ: <b>#${escapeHtml(
+            order?.orderNo || "—"
+          )}</b>`,
+          "",
+          "Отправьте следующим сообщением текст, который нужно передать клиенту.",
+        ].join("\n"),
+        {
+          parse_mode: "HTML",
+        }
+      );
+    } catch (error) {
+      console.error(
+        "manager_message_client action error:",
+        error
+      );
+
+      try {
+        await ctx.answerCbQuery(
+          "Не удалось открыть отправку сообщения",
+          {
+            show_alert: true,
+          }
+        );
+      } catch {}
+    }
+  }
+);
 
 // старт сервера
 const PORT = process.env.PORT || 8080;
