@@ -59,6 +59,8 @@ let bot = null;
 
 const inpostTrackingInputState = new Map();
 
+const managerClientMessageState = new Map();
+
 const broadcastJobs = new Map();
 
 const PROMO_CODES_COLLECTION = "promo_codes";
@@ -6079,11 +6081,86 @@ console.log("[order-photo-select]", {
   clientPhotoSource,
 });
 
-const sent = await bot.telegram.sendMessage(point.notificationChatId, text, {
-  parse_mode: "HTML",
-  disable_web_page_preview: true,
-  reply_markup: initialReplyMarkup,
-});
+  let sent;
+
+  try {
+    /*
+    * Первая попытка:
+    * отправляем прямую tg://user?id кнопку.
+    */
+    sent = await bot.telegram.sendMessage(
+      notificationChatId,
+      text,
+      {
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
+        reply_markup: initialReplyMarkup,
+      }
+    );
+  } catch (error) {
+    const description = String(
+      error?.response?.description ||
+        error?.message ||
+        ""
+    );
+
+    if (
+      !description.includes(
+        "BUTTON_USER_PRIVACY_RESTRICTED"
+      )
+    ) {
+      throw error;
+    }
+
+    /*
+    * Telegram запретил прямую кнопку.
+    * Заменяем только её на callback-кнопку.
+    */
+    const fallbackReplyMarkup = {
+      inline_keyboard: (
+        initialReplyMarkup?.inline_keyboard ||
+        []
+      ).map((row) => {
+        const hasDirectClientButton =
+          row.some((button) =>
+            String(
+              button?.url || ""
+            ).startsWith(
+              "tg://user?id="
+            )
+          );
+
+        if (!hasDirectClientButton) {
+          return row;
+        }
+
+        return [
+          {
+            text:
+              "💬 Написать клиенту через бота",
+
+            callback_data:
+              `mgr_client_message:${order._id}`,
+          },
+        ];
+      }),
+    };
+
+    /*
+    * Повторная отправка:
+    * вместо прямого чата — связь через бота.
+    */
+    sent = await bot.telegram.sendMessage(
+      notificationChatId,
+      text,
+      {
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
+        reply_markup:
+          fallbackReplyMarkup,
+      }
+    );
+  }
 
     await Order.updateOne(
       { _id: order._id },
@@ -13613,6 +13690,150 @@ if (TG_BOT_TOKEN) {
     }
   });
 
+  bot.action(/mgr_client_message:(.+)/, async (ctx) => {
+      try {
+        const orderId = String(
+          ctx.match?.[1] || ""
+        ).trim();
+
+        const order =
+          await Order.findById(orderId);
+
+        if (!order) {
+          await ctx.answerCbQuery(
+            "Заказ не найден",
+            {
+              show_alert: true,
+            }
+          );
+
+          return;
+        }
+
+        const managerTelegramId =
+          String(
+            ctx.from?.id || ""
+          ).trim();
+
+        const managerChatId =
+          String(
+            ctx.chat?.id || ""
+          ).trim();
+
+        const clientTelegramId =
+          String(
+            order?.userTelegramId || ""
+          ).trim();
+
+        if (
+          !managerTelegramId ||
+          !managerChatId ||
+          !clientTelegramId
+        ) {
+          await ctx.answerCbQuery(
+            "Не удалось определить клиента",
+            {
+              show_alert: true,
+            }
+          );
+
+          return;
+        }
+
+        /*
+        * Сохраняем:
+        * какой менеджер сейчас пишет
+        * какому клиенту и по какому заказу.
+        */
+        managerClientMessageState.set(
+          managerTelegramId,
+          {
+            orderId: String(
+              order._id
+            ),
+
+            orderNo: String(
+              order?.orderNo || ""
+            ),
+
+            clientTelegramId,
+
+            managerChatId,
+
+            requestedAt:
+              Date.now(),
+          }
+        );
+
+        await ctx.answerCbQuery();
+
+        await ctx.reply(
+          [
+            "💬 <b>Введите сообщение клиенту</b>",
+            "",
+            `Заказ: <b>#${escapeHtml(
+              order?.orderNo || "—"
+            )}</b>`,
+            "",
+            "Следующее текстовое сообщение будет отправлено клиенту через бота.",
+          ].join("\n"),
+          {
+            parse_mode: "HTML",
+
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  {
+                    text: "❌ Отмена",
+
+                    callback_data:
+                      "mgr_client_message_cancel",
+                  },
+                ],
+              ],
+            },
+          }
+        );
+      } catch (error) {
+        console.error(
+          "mgr_client_message error:",
+          error
+        );
+
+        try {
+          await ctx.answerCbQuery(
+            "Не удалось начать отправку сообщения",
+            {
+              show_alert: true,
+            }
+          );
+        } catch {}
+      }
+    }
+  );
+
+  bot.action("mgr_client_message_cancel", async (ctx) => {
+      const managerTelegramId =
+        String(
+          ctx.from?.id || ""
+        ).trim();
+
+      managerClientMessageState.delete(
+        managerTelegramId
+      );
+
+      try {
+        await ctx.answerCbQuery(
+          "Отправка отменена"
+        );
+      } catch {}
+
+      try {
+        await ctx.deleteMessage();
+      } catch {}
+    }
+  );
+
   bot.action(/mgr_inpost_tracking_cancel:(.+)/, async (ctx) => {
       try {
         const orderId = String(
@@ -13866,6 +14087,125 @@ if (TG_BOT_TOKEN) {
         ctx.chat?.id ||
         ""
       );
+
+      const managerTelegramId =
+        String(
+          ctx.from?.id || ""
+        ).trim();
+
+      const clientMessageState =
+        managerClientMessageState.get(
+          managerTelegramId
+        );
+
+      if (clientMessageState) {
+        const currentChatId =
+          String(
+            ctx.chat?.id || ""
+          ).trim();
+
+        const expectedChatId =
+          String(
+            clientMessageState
+              ?.managerChatId || ""
+          ).trim();
+
+        /*
+        * Сообщение принимаем только
+        * из того чата, где нажали кнопку.
+        */
+        if (
+          expectedChatId &&
+          currentChatId !==
+            expectedChatId
+        ) {
+          return next();
+        }
+
+        const requestedAt =
+          Number(
+            clientMessageState
+              ?.requestedAt || 0
+          );
+
+        /*
+        * Состояние действует 15 минут.
+        */
+        if (
+          requestedAt > 0 &&
+          Date.now() - requestedAt >
+            15 * 60 * 1000
+        ) {
+          managerClientMessageState.delete(
+            managerTelegramId
+          );
+
+          await ctx.reply(
+            "⌛ Время ввода сообщения истекло. Нажмите кнопку связи с клиентом ещё раз."
+          );
+
+          return;
+        }
+
+        const clientTelegramId =
+          String(
+            clientMessageState
+              ?.clientTelegramId || ""
+          ).trim();
+
+        const managerText =
+          String(
+            ctx.message?.text || ""
+          ).trim();
+
+        if (
+          !clientTelegramId ||
+          !managerText
+        ) {
+          return;
+        }
+
+        try {
+          await bot.telegram.sendMessage(
+            clientTelegramId,
+            [
+              "💬 <b>Сообщение от менеджера ELF DUCK</b>",
+              "",
+              escapeHtml(managerText),
+            ].join("\n"),
+            {
+              parse_mode: "HTML",
+            }
+          );
+
+          managerClientMessageState.delete(
+            managerTelegramId
+          );
+
+          await ctx.reply(
+            "✅ Сообщение отправлено клиенту"
+          );
+        } catch (error) {
+          console.error(
+            "manager send client message error:",
+            error
+          );
+
+          managerClientMessageState.delete(
+            managerTelegramId
+          );
+
+          await ctx.reply(
+            "❌ Не удалось отправить сообщение. Возможно, клиент заблокировал бота."
+          );
+        }
+
+        /*
+        * Не передаём это сообщение
+        * обработчику трекинга InPost.
+        */
+        return;
+      }
 
       const currentState =
         inpostTrackingInputState.get(
