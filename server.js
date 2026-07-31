@@ -6234,6 +6234,324 @@ if (clientOrderPhotoUrl) {
   }
 }
 
+function getTimeZoneOffsetMs(date, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+
+  const values = Object.fromEntries(
+    parts
+      .filter((part) => part.type !== "literal")
+      .map((part) => [
+        part.type,
+        part.value,
+      ])
+  );
+
+  const asUtc = Date.UTC(
+    Number(values.year),
+    Number(values.month) - 1,
+    Number(values.day),
+    Number(values.hour),
+    Number(values.minute),
+    Number(values.second)
+  );
+
+  return asUtc - date.getTime();
+}
+
+function warsawDateTimeToUtc(
+  year,
+  month,
+  day,
+  hour = 0,
+  minute = 0,
+  second = 0
+) {
+  const initialUtc = new Date(
+    Date.UTC(
+      year,
+      month - 1,
+      day,
+      hour,
+      minute,
+      second
+    )
+  );
+
+  const firstOffset =
+    getTimeZoneOffsetMs(
+      initialUtc,
+      "Europe/Warsaw"
+    );
+
+  const firstGuess = new Date(
+    initialUtc.getTime() -
+      firstOffset
+  );
+
+  const secondOffset =
+    getTimeZoneOffsetMs(
+      firstGuess,
+      "Europe/Warsaw"
+    );
+
+  return new Date(
+    initialUtc.getTime() -
+      secondOffset
+  );
+}
+
+function getTodayWarsawUtcRange() {
+  const now = new Date();
+
+  const parts =
+    new Intl.DateTimeFormat(
+      "en-CA",
+      {
+        timeZone:
+          "Europe/Warsaw",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }
+    ).formatToParts(now);
+
+  const values =
+    Object.fromEntries(
+      parts
+        .filter(
+          (part) =>
+            part.type !== "literal"
+        )
+        .map((part) => [
+          part.type,
+          part.value,
+        ])
+    );
+
+  const year =
+    Number(values.year);
+
+  const month =
+    Number(values.month);
+
+  const day =
+    Number(values.day);
+
+  const start =
+    warsawDateTimeToUtc(
+      year,
+      month,
+      day
+    );
+
+  const nextCalendarDay =
+    new Date(
+      Date.UTC(
+        year,
+        month - 1,
+        day + 1
+      )
+    );
+
+  const end =
+    warsawDateTimeToUtc(
+      nextCalendarDay
+        .getUTCFullYear(),
+
+      nextCalendarDay
+        .getUTCMonth() + 1,
+
+      nextCalendarDay
+        .getUTCDate()
+    );
+
+  return {
+    start,
+    end,
+  };
+}
+
+let missedTodayOrderNotificationsRecoveryStarted =
+  false;
+
+async function resendMissedTodayOrderNotifications() {
+  if (
+    missedTodayOrderNotificationsRecoveryStarted
+  ) {
+    return;
+  }
+
+  missedTodayOrderNotificationsRecoveryStarted =
+    true;
+
+  const {
+    start,
+    end,
+  } = getTodayWarsawUtcRange();
+
+  console.log(
+    "[MISSED ORDER RECOVERY] scan started",
+    {
+      start:
+        start.toISOString(),
+
+      end:
+        end.toISOString(),
+    }
+  );
+
+  const orders =
+    await Order.find({
+      createdAt: {
+        $gte: start,
+        $lt: end,
+      },
+
+      $or: [
+        {
+          "payment.managerMessageId":
+            {
+              $exists: false,
+            },
+        },
+
+        {
+          "payment.managerMessageId":
+            null,
+        },
+
+        {
+          "payment.managerMessageId":
+            "",
+        },
+      ],
+    }).sort({
+      createdAt: 1,
+    });
+
+  console.log(
+    "[MISSED ORDER RECOVERY] found",
+    orders.length
+  );
+
+  for (const order of orders) {
+    try {
+      /*
+       * Перечитываем заказ перед отправкой,
+       * чтобы не отправить дубль.
+       */
+      const latestOrder =
+        await Order.findById(
+          order._id
+        );
+
+      if (!latestOrder) {
+        continue;
+      }
+
+      const existingMessageId =
+        String(
+          latestOrder?.payment
+            ?.managerMessageId ||
+            ""
+        ).trim();
+
+      if (existingMessageId) {
+        continue;
+      }
+
+      await sendOrderCreatedNotification(
+        latestOrder
+      );
+
+      const refreshedOrder =
+        await Order.findById(
+          latestOrder._id
+        ).lean();
+
+      const savedMessageId =
+        String(
+          refreshedOrder?.payment
+            ?.managerMessageId ||
+            ""
+        ).trim();
+
+      if (!savedMessageId) {
+        console.warn(
+          "[MISSED ORDER RECOVERY] notification returned without managerMessageId",
+          {
+            orderId:
+              String(
+                latestOrder._id
+              ),
+
+            orderNo:
+              String(
+                latestOrder
+                  .orderNo || ""
+              ),
+          }
+        );
+
+        continue;
+      }
+
+      console.log(
+        "[MISSED ORDER RECOVERY] resent",
+        {
+          orderId:
+            String(
+              latestOrder._id
+            ),
+
+          orderNo:
+            String(
+              latestOrder
+                .orderNo || ""
+            ),
+
+          managerMessageId:
+            savedMessageId,
+        }
+      );
+    } catch (error) {
+      console.error(
+        "[MISSED ORDER RECOVERY] failed",
+        {
+          orderId:
+            String(
+              order?._id || ""
+            ),
+
+          orderNo:
+            String(
+              order?.orderNo || ""
+            ),
+
+          error:
+            error?.response
+              ?.description ||
+            error?.message ||
+            error,
+        }
+      );
+    }
+  }
+
+  console.log(
+    "[MISSED ORDER RECOVERY] scan finished"
+  );
+}
+
 setInterval(() => {
   processDailyPointStats().catch((e) => {
     console.error("daily point stats interval error:", e);
@@ -14986,15 +15304,15 @@ if (TG_BOT_TOKEN) {
       console.error("❌ bot.launch error:", e);
     });
 
-    setTimeout(() => {
-  resendMissedOrderNotificationsFromEnv()
-    .catch((error) => {
-      console.error(
-        "[RESEND MISSED ORDERS] startup error:",
-        error
-      );
-    });
-}, 3000);
+  setTimeout(() => {
+    resendMissedTodayOrderNotifications()
+      .catch((error) => {
+        console.error(
+          "[MISSED ORDER RECOVERY] startup error",
+          error
+        );
+      });
+  }, 5000);
     
   process.once("SIGINT", () => {
     try {
