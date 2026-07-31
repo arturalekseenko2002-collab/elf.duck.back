@@ -11999,7 +11999,39 @@ app.post("/orders/:id/payment-check", async (req, res) => {
 
     await order.save();
     stopPaymentReminder(order._id);
-    await sendOrderCreatedNotification(order);
+    try {
+  console.log("[ORDER NOTIFY] start", {
+    orderId: String(order?._id || ""),
+    orderNo: String(order?.orderNo || ""),
+    userTelegramId: String(
+      order?.userTelegramId || ""
+    ),
+  });
+
+  await sendOrderCreatedNotification(
+    order
+  );
+
+  console.log("[ORDER NOTIFY] success", {
+    orderId: String(order?._id || ""),
+    orderNo: String(order?.orderNo || ""),
+  });
+} catch (notifyError) {
+  console.error("[ORDER NOTIFY] failed", {
+    orderId: String(order?._id || ""),
+    orderNo: String(order?.orderNo || ""),
+
+    error:
+      notifyError?.response?.description ||
+      notifyError?.message ||
+      notifyError,
+
+    stack:
+      notifyError?.stack || "",
+  });
+
+  throw notifyError;
+}
     return res.json({ ok: true, order });
   } catch (e) {
     console.error("POST /orders/:id/payment-check error:", e);
