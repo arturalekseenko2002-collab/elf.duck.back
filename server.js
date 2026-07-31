@@ -6244,6 +6244,118 @@ processDailyPointStats().catch((e) => {
   console.error("daily point stats initial run error:", e);
 });
 
+async function resendMissedOrderNotificationsFromEnv() {
+  const rawOrderNos = String(
+    process.env.RESEND_ORDER_NOTIFICATIONS || ""
+  ).trim();
+
+  if (!rawOrderNos) {
+    return;
+  }
+
+  const orderNos = Array.from(
+    new Set(
+      rawOrderNos
+        .split(",")
+        .map((value) =>
+          String(value || "").trim()
+        )
+        .filter(Boolean)
+    )
+  );
+
+  if (!orderNos.length) {
+    return;
+  }
+
+  console.log(
+    "[RESEND MISSED ORDERS] requested:",
+    orderNos
+  );
+
+  for (const orderNo of orderNos) {
+    try {
+      const order = await Order.findOne({
+        orderNo,
+      });
+
+      if (!order) {
+        console.warn(
+          "[RESEND MISSED ORDERS] order not found:",
+          orderNo
+        );
+
+        continue;
+      }
+
+      /*
+       * Если сообщение менеджеру уже было
+       * успешно отправлено — заказ пропускаем.
+       */
+      const existingManagerMessageId =
+        String(
+          order?.payment
+            ?.managerMessageId || ""
+        ).trim();
+
+      if (existingManagerMessageId) {
+        console.log(
+          "[RESEND MISSED ORDERS] skipped, already sent:",
+          orderNo,
+          existingManagerMessageId
+        );
+
+        continue;
+      }
+
+      /*
+       * Повторно используем обычную функцию.
+       * Поэтому применится уже новая fallback-логика:
+       *
+       * tg://user?id
+       * или
+       * «Написать клиенту через бота».
+       */
+      await sendOrderCreatedNotification(
+        order
+      );
+
+      const refreshedOrder =
+        await Order.findById(
+          order._id
+        ).lean();
+
+      console.log(
+        "[RESEND MISSED ORDERS] sent:",
+        orderNo,
+        {
+          managerMessageChatId:
+            String(
+              refreshedOrder?.payment
+                ?.managerMessageChatId ||
+                ""
+            ),
+
+          managerMessageId:
+            String(
+              refreshedOrder?.payment
+                ?.managerMessageId ||
+                ""
+            ),
+        }
+      );
+    } catch (error) {
+      console.error(
+        "[RESEND MISSED ORDERS] failed:",
+        orderNo,
+        error?.response?.description ||
+          error?.message ||
+          error
+      );
+    }
+  }
+}
+
 async function refreshManagerOrderMessage(order) {
   try {
     if (!bot || !order) return { ok: false, reason: "NO_BOT_OR_ORDER" };
@@ -14841,6 +14953,16 @@ if (TG_BOT_TOKEN) {
     .catch((e) => {
       console.error("❌ bot.launch error:", e);
     });
+
+    setTimeout(() => {
+  resendMissedOrderNotificationsFromEnv()
+    .catch((error) => {
+      console.error(
+        "[RESEND MISSED ORDERS] startup error:",
+        error
+      );
+    });
+}, 3000);
     
   process.once("SIGINT", () => {
     try {
