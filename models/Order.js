@@ -167,6 +167,16 @@ const orderSchema = new mongoose.Schema(
       managerMessageChatId: { type: String, default: "" },
       managerMessageId: { type: String, default: "" },
 
+      paymentReminder5SentAt: {
+        type: Date,
+        default: null,
+      },
+
+      paymentReminder9SentAt: {
+        type: Date,
+        default: null,
+      },
+
       referralUsedCode: { type: String, default: "" },
       referralFirstOrderDiscountApplied: { type: Boolean, default: false },
       referralFirstOrderDiscountPercent: { type: Number, default: 0, min: 0 },

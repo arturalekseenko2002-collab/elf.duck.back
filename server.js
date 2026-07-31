@@ -3975,22 +3975,257 @@ async function processStaleCarts() {
 
 async function processOrdersWithoutPaymentConfirm() {
   try {
-    const timeoutMinutes = Number(process.env.ORDER_PAYMENT_CONFIRM_TIMEOUT_MINUTES || 10);
-    const cutoff = new Date(Date.now() - timeoutMinutes * 60 * 1000);
+    const timeoutMinutes = Number(
+      process.env.ORDER_PAYMENT_CONFIRM_TIMEOUT_MINUTES || 10
+    );
 
-    const staleOrders = await Order.find({
-      status: { $in: ["created", "processing"] },
+    const now = Date.now();
+
+    const timeoutMs =
+      timeoutMinutes * 60 * 1000;
+
+    const fiveMinutesMs =
+      5 * 60 * 1000;
+
+    const nineMinutesMs =
+      9 * 60 * 1000;
+
+    /*
+     * Берём только заказы старше 5 минут.
+     * Более свежие пока не требуют ни напоминания,
+     * ни аннуляции.
+     */
+    const pendingOrders = await Order.find({
+      status: {
+        $in: ["created", "processing"],
+      },
+
       "payment.status": "unpaid",
-      createdAt: { $lte: cutoff },
+
+      createdAt: {
+        $lte: new Date(
+          now - fiveMinutesMs
+        ),
+      },
     });
 
-    for (const order of staleOrders) {
-      await annulOrderBecauseNoPaymentConfirm(order, {
-        reason: "NO_PAYMENT_CONFIRM_TIMEOUT",
-      });
+    for (const order of pendingOrders) {
+      try {
+        const createdAtMs =
+          new Date(
+            order?.createdAt
+          ).getTime();
+
+        if (!Number.isFinite(createdAtMs)) {
+          console.warn(
+            "processOrdersWithoutPaymentConfirm invalid createdAt:",
+            {
+              orderId: String(
+                order?._id || ""
+              ),
+
+              orderNo: String(
+                order?.orderNo || ""
+              ),
+
+              createdAt:
+                order?.createdAt,
+            }
+          );
+
+          continue;
+        }
+
+        const orderAgeMs =
+          now - createdAtMs;
+
+        /*
+         * Сначала проверяем аннуляцию.
+         *
+         * Если заказу уже 10 минут
+         * или значение из env,
+         * старое поведение сохраняется.
+         */
+        if (orderAgeMs >= timeoutMs) {
+          await annulOrderBecauseNoPaymentConfirm(
+            order,
+            {
+              reason:
+                "NO_PAYMENT_CONFIRM_TIMEOUT",
+            }
+          );
+
+          continue;
+        }
+
+        const payment =
+          order?.payment?.toObject?.() ||
+          order?.payment ||
+          {};
+
+        /*
+         * Первое напоминание:
+         * после 5 минут,
+         * но до 9 минут.
+         */
+        const shouldSendFiveMinuteReminder =
+          orderAgeMs >= fiveMinutesMs &&
+          orderAgeMs < nineMinutesMs &&
+          !payment
+            ?.paymentReminder5SentAt;
+
+        /*
+         * Второе напоминание:
+         * после 9 минут,
+         * но до аннуляции.
+         */
+        const shouldSendNineMinuteReminder =
+          orderAgeMs >= nineMinutesMs &&
+          orderAgeMs < timeoutMs &&
+          !payment
+            ?.paymentReminder9SentAt;
+
+        if (
+          !shouldSendFiveMinuteReminder &&
+          !shouldSendNineMinuteReminder
+        ) {
+          continue;
+        }
+
+        if (
+          !bot ||
+          !order?.userTelegramId
+        ) {
+          console.warn(
+            "processOrdersWithoutPaymentConfirm reminder skipped:",
+            {
+              orderId: String(
+                order?._id || ""
+              ),
+
+              orderNo: String(
+                order?.orderNo || ""
+              ),
+
+              reason:
+                "NO_BOT_OR_TELEGRAM_ID",
+            }
+          );
+
+          continue;
+        }
+
+        const orderNo =
+          escapeHtml(
+            order?.orderNo || "—"
+          );
+
+        const reminderText =
+          shouldSendNineMinuteReminder
+            ? [
+                "⚠️ <b>ПОСЛЕДНЕЕ НАПОМИНАНИЕ ОБ ОПЛАТЕ</b>",
+                "",
+                `Заказ <b>#${orderNo}</b> всё ещё не оплачен.`,
+                "",
+                "Заказ будет автоматически аннулирован примерно через 1 минуту.",
+              ].join("\n")
+            : [
+                "⏳ <b>НАПОМИНАНИЕ ОБ ОПЛАТЕ</b>",
+                "",
+                `Заказ <b>#${orderNo}</b> ещё не оплачен.`,
+                "",
+                "Пожалуйста, завершите оплату.",
+              ].join("\n");
+
+        /*
+         * Сначала отправляем.
+         * Только после успешной отправки
+         * сохраняем отметку.
+         */
+        await bot.telegram.sendMessage(
+          String(
+            order.userTelegramId
+          ),
+          reminderText,
+          {
+            parse_mode: "HTML",
+
+            disable_web_page_preview:
+              true,
+          }
+        );
+
+        if (
+          shouldSendNineMinuteReminder
+        ) {
+          order.payment = {
+            ...payment,
+
+            paymentReminder9SentAt:
+              new Date(),
+          };
+        } else {
+          order.payment = {
+            ...payment,
+
+            paymentReminder5SentAt:
+              new Date(),
+          };
+        }
+
+        order.markModified?.(
+          "payment"
+        );
+
+        await order.save();
+
+        console.log(
+          "[PAYMENT REMINDER SENT]",
+          {
+            orderId: String(
+              order?._id || ""
+            ),
+
+            orderNo: String(
+              order?.orderNo || ""
+            ),
+
+            reminderMinute:
+              shouldSendNineMinuteReminder
+                ? 9
+                : 5,
+
+            userTelegramId: String(
+              order?.userTelegramId || ""
+            ),
+          }
+        );
+      } catch (orderError) {
+        console.error(
+          "processOrdersWithoutPaymentConfirm order error:",
+          {
+            orderId: String(
+              order?._id || ""
+            ),
+
+            orderNo: String(
+              order?.orderNo || ""
+            ),
+
+            error:
+              orderError?.response
+                ?.description ||
+              orderError?.message ||
+              orderError,
+          }
+        );
+      }
     }
   } catch (e) {
-    console.error("processOrdersWithoutPaymentConfirm error:", e);
+    console.error(
+      "processOrdersWithoutPaymentConfirm error:",
+      e
+    );
   }
 }
 
