@@ -14231,6 +14231,18 @@ const START_BANNER_URL = String(process.env.START_BANNER_URL || "").trim();
 if (TG_BOT_TOKEN) {
   bot = new Telegraf(TG_BOT_TOKEN);
 
+  bot.use(
+
+    handleManagerClientMessageText
+
+  );
+
+  console.log(
+
+    "[MANAGER CLIENT MESSAGE] middleware registered"
+
+  );
+
   bot.start(async (ctx) => {
     try {
       const payload = String(ctx.startPayload || "").trim();
@@ -14668,12 +14680,6 @@ if (TG_BOT_TOKEN) {
 
     return true;
   }
-
-  bot.use(
-
-    handleManagerClientMessageText
-
-  );
 
   bot.action(/mgr_courier_soon:(.+)/, async (ctx) => {
       try {
