@@ -16257,6 +16257,25 @@ bot.action(/^manager_message_client:(.+)$/, async (ctx) => {
         order?.userTelegramId || ""
       ).trim();
 
+      console.log(
+      "[INPOST SHIPMENT CLIENT DEBUG]",
+      {
+        orderId: String(
+          order?._id || ""
+        ),
+
+        orderNo: String(
+          order?.orderNo || ""
+        ),
+
+        clientTelegramId,
+
+        trackingNumber: String(
+          order?.inpostTrackingNumber || ""
+        ),
+      }
+    );
+
       if (!clientTelegramId) {
         return ctx.reply(
           "❌ У клиента отсутствует Telegram ID."
