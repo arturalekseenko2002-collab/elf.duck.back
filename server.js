@@ -12726,7 +12726,7 @@ app.post("/orders/:id/payment-check", async (req, res) => {
 
     await order.save();
     stopPaymentReminder(order._id);
-    await sendOrderCreatedNotification(order);
+    // await sendOrderCreatedNotification(order);
     return res.json({ ok: true, order });
   } catch (e) {
     console.error("POST /orders/:id/payment-check error:", e);
