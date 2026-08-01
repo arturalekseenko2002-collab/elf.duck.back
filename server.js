@@ -9723,6 +9723,44 @@ app.post("/admin/promo-codes", requireAdmin, async (req, res) => {
       req.body?.amountZl || 0
     );
 
+    const expiresAtRaw =
+      req.body?.expiresAt;
+
+    let expiresAt = null;
+
+    if (
+      expiresAtRaw !== null &&
+      expiresAtRaw !== undefined &&
+      String(expiresAtRaw).trim() !== ""
+    ) {
+      expiresAt = new Date(
+        expiresAtRaw
+      );
+
+      if (
+        !Number.isFinite(
+          expiresAt.getTime()
+        )
+      ) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            "INVALID_PROMO_CODE_EXPIRES_AT",
+        });
+      }
+
+      if (
+        expiresAt.getTime() <=
+        Date.now()
+      ) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            "PROMO_CODE_EXPIRATION_MUST_BE_IN_FUTURE",
+        });
+      }
+    }
+
     if (!code || code.length < 3) {
       return res.status(400).json({
         ok: false,
@@ -9751,10 +9789,15 @@ app.post("/admin/promo-codes", requireAdmin, async (req, res) => {
         {
           $set: {
             code,
+
             amountZl: Number(
               amountZl.toFixed(2)
             ),
+
             isActive: true,
+
+            expiresAt,
+
             updatedAt: now,
           },
 
