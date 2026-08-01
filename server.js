@@ -1087,6 +1087,138 @@ function normalizePhotoLookupText(input) {
     .replace(/\bsrodmiescie\b/g, "srodmiescie");
 }
 
+async function getOrderManagerTelegramUrl(order) {
+  const managerLinks = {
+    praga: "https://t.me/elfduck_praga",
+    mokotow: "https://t.me/elfduck_mokotow",
+    wola: "https://t.me/elfduck_wola",
+    srodmiescie:
+      "https://t.me/elfduck_srodmiescie",
+    delivery:
+      "https://t.me/elfduck_dostawa",
+    inpost:
+      "https://t.me/elfduck_inpost",
+  };
+
+  let point = null;
+
+  try {
+    point =
+      await resolveOrderNotificationPoint(
+        order
+      );
+  } catch (error) {
+    console.error(
+      "getOrderManagerTelegramUrl resolve point error:",
+      error
+    );
+  }
+
+  const deliveryType =
+    normalizePhotoLookupText(
+      order?.deliveryType
+    );
+
+  const deliveryMethod =
+    normalizePhotoLookupText(
+      order?.deliveryMethod
+    );
+
+  /*
+   * Доставка курьером / InPost.
+   */
+  if (deliveryType === "delivery") {
+    if (
+      deliveryMethod.includes(
+        "inpost"
+      )
+    ) {
+      return managerLinks.inpost;
+    }
+
+    return managerLinks.delivery;
+  }
+
+  /*
+   * Самовывоз.
+   */
+  const searchText =
+    normalizePhotoLookupText(
+      [
+        point?.key,
+        point?.title,
+        point?.address,
+
+        order?.pickupPointKey,
+        order?.pickupPointTitle,
+        order?.pickupPointAddress,
+
+        order?.pickupPoint?.key,
+        order?.pickupPoint?.title,
+        order?.pickupPoint?.address,
+
+        order?.methodLabel,
+      ]
+        .filter(Boolean)
+        .join(" ")
+    );
+
+  if (
+    searchText.includes("praga")
+  ) {
+    return managerLinks.praga;
+  }
+
+  if (
+    searchText.includes("mokotow")
+  ) {
+    return managerLinks.mokotow;
+  }
+
+  if (
+    searchText.includes("wola")
+  ) {
+    return managerLinks.wola;
+  }
+
+  if (
+    searchText.includes(
+      "srodmiescie"
+    )
+  ) {
+    return managerLinks.srodmiescie;
+  }
+
+  console.warn(
+    "[MANAGER LINK] pickup point unresolved",
+    {
+      orderId: String(
+        order?._id || ""
+      ),
+
+      orderNo: String(
+        order?.orderNo || ""
+      ),
+
+      pickupPointId: String(
+        order?.pickupPointId || ""
+      ),
+
+      pointKey: String(
+        point?.key || ""
+      ),
+
+      pointTitle: String(
+        point?.title || ""
+      ),
+
+      searchText,
+    }
+  );
+
+  return "";
+}
+
 function isSrodmiesciePoint(searchText) {
   const normalized = normalizePhotoLookupText(searchText);
 
@@ -14034,12 +14166,14 @@ if (TG_BOT_TOKEN) {
     order,
     managerTelegramId
   ) {
-    if (!bot || !order) return false;
+    if (!bot || !order) {
+      return false;
+    }
 
     if (
-      String(
-        order?.deliveryType || ""
-      ) !== "pickup"
+      String(order?.deliveryType || "")
+        .trim()
+        .toLowerCase() !== "pickup"
     ) {
       return false;
     }
@@ -14062,13 +14196,12 @@ if (TG_BOT_TOKEN) {
         order?.arrivalTime || ""
       ).trim() || "указанное время";
 
-    const pointAddress =
-      String(
-        point?.address ||
-          order?.pickupPointAddress ||
-          order?.methodLabel ||
-          "указанная точка самовывоза"
-      ).trim();
+    const pointAddress = String(
+      point?.address ||
+        order?.pickupPointAddress ||
+        order?.methodLabel ||
+        "указанная точка самовывоза"
+    ).trim();
 
     const paymentMethod = String(
       order?.payment?.method || ""
@@ -14118,7 +14251,9 @@ if (TG_BOT_TOKEN) {
     * BLIK / крипта / украинская карта:
     * менеджер нажал «Оплачено».
     */
-    else if (paymentStatus === "paid") {
+    else if (
+      paymentStatus === "paid"
+    ) {
       text = [
         "✅ <b>ОПЛАТА ПОДТВЕРЖДЕНА!</b>",
         "",
@@ -14134,26 +14269,58 @@ if (TG_BOT_TOKEN) {
       return false;
     }
 
-    const managerId = String(
-      managerTelegramId || ""
-    ).trim();
+    /*
+    * Получаем ссылку именно для точки,
+    * где был оформлен заказ.
+    */
+    const managerTelegramUrl =
+      await getOrderManagerTelegramUrl(
+        order
+      );
 
-    const replyMarkup = managerId
-      ? {
-          inline_keyboard: [
-            [
-              {
-                text:
-                  "💬 Связаться с менеджером",
+    console.log(
+      "[PICKUP MANAGER LINK]",
+      {
+        orderNo: String(
+          order?.orderNo || ""
+        ),
 
-                url: `tg://user?id=${encodeURIComponent(
-                  managerId
-                )}`,
-              },
+        pickupPointId: String(
+          order?.pickupPointId || ""
+        ),
+
+        pointKey: String(
+          point?.key || ""
+        ),
+
+        pointTitle: String(
+          point?.title || ""
+        ),
+
+        managerTelegramId: String(
+          managerTelegramId || ""
+        ),
+
+        managerTelegramUrl,
+      }
+    );
+
+    const replyMarkup =
+      managerTelegramUrl
+        ? {
+            inline_keyboard: [
+              [
+                {
+                  text:
+                    "💬 Связаться с менеджером",
+
+                  url:
+                    managerTelegramUrl,
+                },
+              ],
             ],
-          ],
-        }
-      : undefined;
+          }
+        : undefined;
 
     await bot.telegram.sendMessage(
       clientTelegramId,
@@ -14161,7 +14328,8 @@ if (TG_BOT_TOKEN) {
       {
         parse_mode: "HTML",
 
-        disable_web_page_preview: true,
+        disable_web_page_preview:
+          true,
 
         ...(replyMarkup
           ? {
