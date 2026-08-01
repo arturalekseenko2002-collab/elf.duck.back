@@ -6589,6 +6589,19 @@ async function sendOrderCreatedNotification(order, options = {}) {
     //   )}`,
     // };
 
+const isCourierOrder =
+  String(order?.deliveryType || "")
+    .trim()
+    .toLowerCase() === "delivery" &&
+  String(order?.deliveryMethod || "")
+    .trim()
+    .toLowerCase() === "courier";
+
+const isCashPayment =
+  String(order?.payment?.method || "")
+    .trim()
+    .toLowerCase() === "cash";
+
 const initialReplyMarkup =
   String(order?.deliveryType || "") === "pickup" &&
   String(order?.payment?.method || "") === "cash"
@@ -6625,39 +6638,46 @@ const initialReplyMarkup =
           ],
         ],
       }
-    : {
-        inline_keyboard: [
-          [
-            {
-              text: "✅ Оплачено",
-              callback_data:
-                `mgr_pay_paid:${order._id}`,
-            },
-            {
-              text: "❌ Отклонить",
-              callback_data:
-                `mgr_pay_unpaid:${order._id}`,
-            },
-          ],
-          [
-            {
-              text: "💬 Написать клиенту",
-              url: `tg://user?id=${encodeURIComponent(
-                String(
-                  order?.userTelegramId || ""
-                )
-              )}`,
-            },
-          ],
-          [
-            {
-              text: "🔄 Изменить статус",
-              callback_data:
-                `mgr_change_status:${order._id}`,
-            },
-          ],
+  : {
+      inline_keyboard: [
+        [
+          {
+            text:
+              isCourierOrder && isCashPayment
+                ? "✅ Принят"
+                : "✅ Оплачено",
+
+            callback_data:
+              `mgr_pay_paid:${order._id}`,
+          },
+          {
+            text: "❌ Отклонить",
+
+            callback_data:
+              `mgr_pay_unpaid:${order._id}`,
+          },
         ],
-      };
+        [
+          {
+            text: "💬 Написать клиенту",
+
+            url: `tg://user?id=${encodeURIComponent(
+              String(
+                order?.userTelegramId || ""
+              )
+            )}`,
+          },
+        ],
+        [
+          {
+            text: "🔄 Изменить статус",
+
+            callback_data:
+              `mgr_change_status:${order._id}`,
+          },
+        ],
+      ],
+    };
 
 const pickupPoint = order?.pickupPointId
   ? await PickupPoint.findById(order.pickupPointId).lean().catch(() => null)
