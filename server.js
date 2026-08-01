@@ -7378,7 +7378,10 @@ async function refreshManagerOrderMessage(order) {
         ? [
             [
               {
-                text: "✅ Оплачено",
+                text:
+                isCourierOrder && isCashPayment
+                  ? "✅ Принят"
+                  : "✅ Оплачено",
 
                 callback_data:
                   `mgr_done:${order._id}`,
