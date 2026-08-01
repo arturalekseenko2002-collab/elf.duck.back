@@ -9966,56 +9966,346 @@ app.patch("/admin/pickup-points/:id", requireAdmin, async (req, res) => {
       };
     }
 
-    if (update.scheduleByDatePatch !== undefined) {
-      const patch = update.scheduleByDatePatch && typeof update.scheduleByDatePatch === "object"
-        ? update.scheduleByDatePatch
-        : {};
+    if (
+      update.scheduleByDatePatch !==
+      undefined
+    ) {
+      const patch =
+        update.scheduleByDatePatch &&
+        typeof update.scheduleByDatePatch ===
+          "object" &&
+        !Array.isArray(
+          update.scheduleByDatePatch
+        )
+          ? update.scheduleByDatePatch
+          : {};
 
-      const existingPoint = await PickupPoint.findById(id).lean();
+      const existingPoint =
+        await PickupPoint.findById(
+          id
+        ).lean();
+
       if (!existingPoint) {
-        return res.status(404).json({ ok: false, error: "Pickup point not found" });
+        return res.status(404).json({
+          ok: false,
+          error:
+            "Pickup point not found",
+        });
       }
 
       const currentSchedule =
-        existingPoint.scheduleByDate && typeof existingPoint.scheduleByDate === "object"
-          ? { ...existingPoint.scheduleByDate }
+        existingPoint.scheduleByDate &&
+        typeof existingPoint
+          .scheduleByDate === "object"
+          ? {
+              ...existingPoint
+                .scheduleByDate,
+            }
           : {};
 
-      Object.entries(patch).forEach(([dateKey, value]) => {
-        const periods = Array.isArray(value?.periods)
-          ? value.periods
-              .map((period) => ({
-                openFrom: String(period?.openFrom || period?.from || "").trim(),
-                openTo: String(period?.openTo || period?.to || "").trim(),
-                from: String(period?.from || period?.openFrom || "").trim(),
-                to: String(period?.to || period?.openTo || "").trim(),
-              }))
-              .filter((period) => period.openFrom && period.openTo)
-          : [];
+      const datePattern =
+        /^\d{4}-\d{2}-\d{2}$/;
 
-        currentSchedule[dateKey] = {
-          isOpen: Boolean(value?.isOpen),
-          from: String(value?.from || value?.openFrom || periods[0]?.openFrom || "").trim(),
-          to: String(
-            value?.to ||
-            value?.openTo ||
-            periods[periods.length - 1]?.openTo ||
-            ""
+      const timePattern =
+        /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+      const timeToMinutes = (
+        value
+      ) => {
+        const [hours, minutes] =
+          String(value)
+            .split(":")
+            .map(Number);
+
+        return (
+          hours * 60 + minutes
+        );
+      };
+
+      for (
+        const [dateKey, value] of
+          Object.entries(patch)
+      ) {
+        /*
+        * Проверка формата даты.
+        */
+        if (
+          !datePattern.test(dateKey)
+        ) {
+          return res
+            .status(400)
+            .json({
+              ok: false,
+              error:
+                "INVALID_SCHEDULE_DATE_KEY",
+              dateKey,
+            });
+        }
+
+        /*
+        * Проверка существования даты.
+        */
+        const [
+          year,
+          month,
+          day,
+        ] = dateKey
+          .split("-")
+          .map(Number);
+
+        const parsedDate =
+          new Date(
+            Date.UTC(
+              year,
+              month - 1,
+              day
+            )
+          );
+
+        const isRealDate =
+          parsedDate.getUTCFullYear() ===
+            year &&
+          parsedDate.getUTCMonth() ===
+            month - 1 &&
+          parsedDate.getUTCDate() ===
+            day;
+
+        if (!isRealDate) {
+          return res
+            .status(400)
+            .json({
+              ok: false,
+              error:
+                "INVALID_SCHEDULE_DATE",
+              dateKey,
+            });
+        }
+
+        const isOpen =
+          value?.isOpen === true;
+
+        /*
+        * Закрытый день.
+        */
+        if (!isOpen) {
+          currentSchedule[dateKey] = {
+            isOpen: false,
+
+            from: "",
+            to: "",
+
+            openFrom: "",
+            openTo: "",
+
+            periods: [],
+
+            note: String(
+              value?.note ||
+                "закрыто"
+            ).trim(),
+          };
+
+          continue;
+        }
+
+        /*
+        * Рабочий день.
+        */
+        const sourcePeriods =
+          Array.isArray(
+            value?.periods
+          )
+            ? value.periods
+            : [];
+
+        if (
+          !sourcePeriods.length
+        ) {
+          return res
+            .status(400)
+            .json({
+              ok: false,
+              error:
+                "SCHEDULE_PERIODS_REQUIRED",
+              dateKey,
+            });
+        }
+
+        if (
+          sourcePeriods.length > 8
+        ) {
+          return res
+            .status(400)
+            .json({
+              ok: false,
+              error:
+                "TOO_MANY_SCHEDULE_PERIODS",
+              dateKey,
+            });
+        }
+
+        const periods = [];
+
+        for (
+          const sourcePeriod of
+            sourcePeriods
+        ) {
+          const from = String(
+            sourcePeriod?.from ||
+              sourcePeriod?.openFrom ||
+              ""
+          ).trim();
+
+          const to = String(
+            sourcePeriod?.to ||
+              sourcePeriod?.openTo ||
+              ""
+          ).trim();
+
+          if (
+            !timePattern.test(from) ||
+            !timePattern.test(to)
+          ) {
+            return res
+              .status(400)
+              .json({
+                ok: false,
+                error:
+                  "INVALID_SCHEDULE_TIME",
+                dateKey,
+                period:
+                  sourcePeriod,
+              });
+          }
+
+          const fromMinutes =
+            timeToMinutes(from);
+
+          const toMinutes =
+            timeToMinutes(to);
+
+          if (
+            toMinutes <=
+            fromMinutes
+          ) {
+            return res
+              .status(400)
+              .json({
+                ok: false,
+                error:
+                  "INVALID_SCHEDULE_PERIOD",
+                dateKey,
+                period:
+                  sourcePeriod,
+              });
+          }
+
+          periods.push({
+            openFrom: from,
+            openTo: to,
+
+            from,
+            to,
+
+            fromMinutes,
+            toMinutes,
+          });
+        }
+
+        /*
+        * Сортируем периоды.
+        */
+        periods.sort(
+          (a, b) =>
+            a.fromMinutes -
+            b.fromMinutes
+        );
+
+        /*
+        * Проверяем пересечения.
+        */
+        for (
+          let index = 1;
+          index < periods.length;
+          index += 1
+        ) {
+          if (
+            periods[index]
+              .fromMinutes <
+            periods[index - 1]
+              .toMinutes
+          ) {
+            return res
+              .status(400)
+              .json({
+                ok: false,
+                error:
+                  "SCHEDULE_PERIODS_OVERLAP",
+                dateKey,
+              });
+          }
+        }
+
+        const normalizedPeriods =
+          periods.map(
+            ({
+              openFrom,
+              openTo,
+              from,
+              to,
+            }) => ({
+              openFrom,
+              openTo,
+              from,
+              to,
+            })
+          );
+
+        currentSchedule[
+          dateKey
+        ] = {
+          isOpen: true,
+
+          from:
+            normalizedPeriods[0]
+              .from,
+
+          to:
+            normalizedPeriods[
+              normalizedPeriods.length -
+                1
+            ].to,
+
+          openFrom:
+            normalizedPeriods[0]
+              .openFrom,
+
+          openTo:
+            normalizedPeriods[
+              normalizedPeriods.length -
+                1
+            ].openTo,
+
+          periods:
+            normalizedPeriods,
+
+          note: String(
+            value?.note ||
+              normalizedPeriods
+                .map(
+                  (period) =>
+                    `${period.from}-${period.to}`
+                )
+                .join(", ")
           ).trim(),
-          openFrom: String(value?.openFrom || value?.from || periods[0]?.openFrom || "").trim(),
-          openTo: String(
-            value?.openTo ||
-            value?.to ||
-            periods[periods.length - 1]?.openTo ||
-            ""
-          ).trim(),
-          periods,
-          note: String(value?.note || "").trim(),
         };
-      });
+      }
 
-      update.scheduleByDate = currentSchedule;
-      delete update.scheduleByDatePatch;
+      update.scheduleByDate =
+        currentSchedule;
+
+      delete update
+        .scheduleByDatePatch;
     }
 
     const updated = await PickupPoint.findByIdAndUpdate(id, update, { new: true });
