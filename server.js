@@ -84,15 +84,29 @@ async function ensurePromoCodeIndexes() {
       );
 
     await Promise.all([
+
       collection.createIndex(
+
         { code: 1 },
+
         { unique: true }
+
       ),
 
       collection.createIndex({
+
         isActive: 1,
+
         createdAt: -1,
+
       }),
+
+      collection.createIndex({
+
+        expiresAt: 1,
+
+      }),
+
     ]);
   } catch (error) {
     console.error(
@@ -9722,6 +9736,44 @@ app.post("/admin/promo-codes", requireAdmin, async (req, res) => {
     const amountZl = Number(
       req.body?.amountZl || 0
     );
+
+    const expiresAtRaw =
+      req.body?.expiresAt;
+
+    let expiresAt = null;
+
+    if (
+      expiresAtRaw !== null &&
+      expiresAtRaw !== undefined &&
+      String(expiresAtRaw).trim() !== ""
+    ) {
+      expiresAt = new Date(
+        expiresAtRaw
+      );
+
+      if (
+        !Number.isFinite(
+          expiresAt.getTime()
+        )
+      ) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            "INVALID_PROMO_CODE_EXPIRES_AT",
+        });
+      }
+
+      if (
+        expiresAt.getTime() <=
+        Date.now()
+      ) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            "PROMO_CODE_EXPIRATION_MUST_BE_IN_FUTURE",
+        });
+      }
+    }
 
     const expiresAtRaw =
       req.body?.expiresAt;
