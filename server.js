@@ -636,6 +636,100 @@ function getInpostTrackingUrl(trackingNumber) {
   )}`;
 }
 
+async function notifyClientAboutInpostPaymentConfirmed(
+  order
+) {
+  if (!bot || !order) {
+    return false;
+  }
+
+  const deliveryType = String(
+    order?.deliveryType || ""
+  )
+    .trim()
+    .toLowerCase();
+
+  const deliveryMethod = String(
+    order?.deliveryMethod || ""
+  )
+    .trim()
+    .toLowerCase();
+
+  /*
+   * Уведомление только для InPost.
+   */
+  if (
+    deliveryType !== "delivery" ||
+    deliveryMethod !== "inpost"
+  ) {
+    return false;
+  }
+
+  /*
+   * Защита от повторной отправки.
+   */
+  if (
+    order
+      ?.inpostPaymentConfirmedNotifiedAt
+  ) {
+    return false;
+  }
+
+  const clientTelegramId = String(
+    order?.userTelegramId || ""
+  ).trim();
+
+  if (!clientTelegramId) {
+    return false;
+  }
+
+  const text = [
+    "✅ <b>МЕНЕДЖЕР ПОДТВЕРДИЛ ВАШУ ТРАНЗАКЦИЮ!</b>",
+    "",
+    `Заказ <b>#${escapeHtml(
+      order?.orderNo || "—"
+    )}</b> оплачен.`,
+    "",
+    "Мы уже собираем ваш заказ и отправим его до конца рабочего дня.",
+    "",
+    "Ожидайте дальнейших сообщений.",
+  ].join("\n");
+
+  await bot.telegram.sendMessage(
+    clientTelegramId,
+    text,
+    {
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text:
+                "💬 Связаться с менеджером",
+
+              url:
+                "https://t.me/elfduck_inpost",
+            },
+          ],
+        ],
+      },
+    }
+  );
+
+  /*
+   * Отмечаем только после успешной отправки.
+   */
+  order
+    .inpostPaymentConfirmedNotifiedAt =
+      new Date();
+
+  await order.save();
+
+  return true;
+}
+
 async function notifyClientAboutInpostShipment(order) {
   if (!bot || !order) return false;
 
@@ -14074,6 +14168,20 @@ if (TG_BOT_TOKEN) {
           .toLowerCase() ===
           "courier";
 
+      const isInpostOrder =
+
+        String(order?.deliveryType || "")
+
+          .trim()
+
+          .toLowerCase() === "delivery" &&
+
+        String(order?.deliveryMethod || "")
+
+          .trim()
+
+          .toLowerCase() === "inpost";
+
       const isCashPayment =
         String(order?.payment?.method || "")
           .trim()
@@ -14138,6 +14246,7 @@ if (TG_BOT_TOKEN) {
       * Не отправляем одинаковое сообщение
       * повторно при повторном нажатии кнопки.
       */
+
       if (
         previousPaymentStatus !==
         nextPaymentStatus
@@ -14147,6 +14256,42 @@ if (TG_BOT_TOKEN) {
             await sendCourierClientMessage(
               freshPaidOrder,
               "accepted"
+            );
+          } else if (isInpostOrder) {
+            await bot.telegram.sendMessage(
+              String(
+                freshPaidOrder?.userTelegramId ||
+                  ""
+              ),
+              [
+                "✅ <b>МЕНЕДЖЕР ПОДТВЕРДИЛ ВАШУ ТРАНЗАКЦИЮ!</b>",
+                "",
+                `Заказ <b>#${escapeHtml(
+                  freshPaidOrder?.orderNo || "—"
+                )}</b> оплачен.`,
+                "",
+                "Мы в процессе сбора вашего заказа и отправим его до конца рабочего дня.",
+                "",
+                "Ожидайте дальнейших сообщений.",
+              ].join("\n"),
+              {
+                parse_mode: "HTML",
+                disable_web_page_preview: true,
+
+                reply_markup: {
+                  inline_keyboard: [
+                    [
+                      {
+                        text:
+                          "💬 Связаться с менеджером",
+
+                        url:
+                          "https://t.me/elfduck_inpost",
+                      },
+                    ],
+                  ],
+                },
+              }
             );
           } else {
             await notifyPickupClientAfterManagerPaymentStatus(
@@ -14161,6 +14306,7 @@ if (TG_BOT_TOKEN) {
           );
         }
       }
+      
       // --- END PATCH 1 ---
 
       // Для доставки отправляем отдельное сообщение-напоминание менеджеру

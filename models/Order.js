@@ -128,6 +128,11 @@ const orderSchema = new mongoose.Schema(
       default: null,
     },
 
+    inpostPaymentConfirmedNotifiedAt: {
+      type: Date,
+      default: null,
+    },
+
     arrivalTime: { type: String, default: null },
     deliveryTimeWindow: { type: String, default: null },
     comment: { type: String, default: null, maxlength: 500 },
