@@ -61,6 +61,9 @@ const inpostTrackingInputState = new Map();
 
 const managerClientMessageState = new Map();
 
+const managerClientMessageStateByChat =
+  new Map();
+
 const handleManagerClientMessageText =
   async (ctx, next) => {
     if (!ctx?.message?.text) {
@@ -71,27 +74,50 @@ const handleManagerClientMessageText =
       ctx?.from?.id || ""
     ).trim();
 
-    if (!managerTelegramId) {
-      return next();
-    }
+    const currentChatId = String(
+      ctx?.chat?.id || ""
+    );
+
+    const stateByManager =
+      managerTelegramId
+        ? managerClientMessageState.get(
+            managerTelegramId
+          )
+        : null;
+
+    const stateByChat =
+      currentChatId
+        ? managerClientMessageStateByChat.get(
+            currentChatId
+          )
+        : null;
 
     const clientMessageState =
-      managerClientMessageState.get(
-        managerTelegramId
-      );
+      stateByManager || stateByChat;
 
     if (!clientMessageState) {
       return next();
     }
 
-    const currentChatId = String(
-      ctx?.chat?.id || ""
-    );
-
     const expectedChatId = String(
       clientMessageState
         ?.managerChatId || ""
     );
+
+    const expectedManagerTelegramId =
+      String(
+        clientMessageState
+          ?.managerTelegramId || ""
+      ).trim();
+
+    if (
+      expectedManagerTelegramId &&
+      managerTelegramId &&
+      managerTelegramId !==
+        expectedManagerTelegramId
+    ) {
+      return next();
+    }
 
     if (
       expectedChatId &&
@@ -155,9 +181,25 @@ const handleManagerClientMessageText =
         }
       );
 
-      managerClientMessageState.delete(
-        managerTelegramId
-      );
+      if (expectedManagerTelegramId) {
+
+        managerClientMessageState.delete(
+
+          expectedManagerTelegramId
+
+        );
+
+      }
+
+      if (currentChatId) {
+
+        managerClientMessageStateByChat.delete(
+
+          currentChatId
+
+        );
+
+      }
 
       const successMessage =
         await ctx.reply(
@@ -16506,6 +16548,7 @@ managerClientMessageState.set(
     ),
 
     clientTelegramId,
+    managerTelegramId,
 
     managerChatId: String(
       ctx?.chat?.id || ""
@@ -16515,6 +16558,42 @@ managerClientMessageState.set(
       instructionMessage?.message_id || 0
     ),
   }
+);
+
+managerClientMessageStateByChat.set(
+
+  String(ctx?.chat?.id || ""),
+
+  {
+
+    orderId: String(order._id),
+
+    orderNo: String(
+
+      order?.orderNo || ""
+
+    ),
+
+    clientTelegramId,
+
+    managerTelegramId,
+
+    managerChatId: String(
+
+      ctx?.chat?.id || ""
+
+    ),
+
+    instructionMessageId: Number(
+
+      instructionMessage
+
+        ?.message_id || 0
+
+    ),
+
+  }
+
 );
 
 return instructionMessage;
