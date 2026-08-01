@@ -6415,7 +6415,9 @@ function buildSafeFallbackManagerMarkup(
   );
 }
 
-async function sendOrderCreatedNotification(order) {
+async function sendOrderCreatedNotification(order, options = {}) {
+  const skipClientNotification =
+  options?.skipClientNotification === true;
   try {
     if (!bot || !order) return;
 
@@ -6862,40 +6864,60 @@ try {
         inline_keyboard: [[{ text: "💳 Перейти к оплате", web_app: { url: `${APP_URL}/cart?orderId=${encodeURIComponent(String(order?._id || ""))}` } }]],
       };
 
-if (clientOrderPhotoUrl) {
-  try {
-    await bot.telegram.sendPhoto(
+if (!skipClientNotification) {
+  if (clientOrderPhotoUrl) {
+    try {
+      await bot.telegram.sendPhoto(
+        safeTelegramId,
+        { url: clientOrderPhotoUrl },
+        {
+          caption: clientText,
+          parse_mode: "HTML",
+          reply_markup: clientReplyMarkup,
+        }
+      );
+    } catch (clientPhotoErr) {
+      console.error(
+        "sendOrderCreatedNotification client photo send failed:",
+        {
+          orderNo: String(
+            order?.orderNo || ""
+          ),
+          safeTelegramId,
+          clientOrderPhotoUrl,
+          error:
+            clientPhotoErr?.response
+              ?.description ||
+            clientPhotoErr?.message ||
+            String(clientPhotoErr),
+        }
+      );
+
+      await bot.telegram.sendMessage(
+        safeTelegramId,
+        clientText,
+        {
+          parse_mode: "HTML",
+          disable_web_page_preview:
+            true,
+          reply_markup:
+            clientReplyMarkup,
+        }
+      );
+    }
+  } else {
+    await bot.telegram.sendMessage(
       safeTelegramId,
-      { url: clientOrderPhotoUrl },
+      clientText,
       {
-        caption: clientText,
         parse_mode: "HTML",
-        reply_markup: clientReplyMarkup,
+        disable_web_page_preview:
+          true,
+        reply_markup:
+          clientReplyMarkup,
       }
     );
-  } catch (clientPhotoErr) {
-    console.error("sendOrderCreatedNotification client photo send failed:", {
-      orderNo: String(order?.orderNo || ""),
-      safeTelegramId,
-      clientOrderPhotoUrl,
-      error:
-        clientPhotoErr?.response?.description ||
-        clientPhotoErr?.message ||
-        String(clientPhotoErr),
-    });
-
-    await bot.telegram.sendMessage(safeTelegramId, clientText, {
-      parse_mode: "HTML",
-      disable_web_page_preview: true,
-      reply_markup: clientReplyMarkup,
-    });
   }
-} else {
-  await bot.telegram.sendMessage(safeTelegramId, clientText, {
-    parse_mode: "HTML",
-    disable_web_page_preview: true,
-    reply_markup: clientReplyMarkup,
-  });
 }
     }
   } catch (e) {
@@ -12725,8 +12747,20 @@ app.post("/orders/:id/payment-check", async (req, res) => {
     };
 
     await order.save();
+
     stopPaymentReminder(order._id);
-    // await sendOrderCreatedNotification(order);
+
+    await sendOrderCreatedNotification(
+
+      order,
+
+      {
+
+        skipClientNotification: true,
+
+      }
+
+    );
     return res.json({ ok: true, order });
   } catch (e) {
     console.error("POST /orders/:id/payment-check error:", e);
