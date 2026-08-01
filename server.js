@@ -61,6 +61,196 @@ const inpostTrackingInputState = new Map();
 
 const managerClientMessageState = new Map();
 
+const handleManagerClientMessageText =
+  async (ctx, next) => {
+    if (!ctx?.message?.text) {
+      return next();
+    }
+
+    const managerTelegramId = String(
+      ctx?.from?.id || ""
+    ).trim();
+
+    if (!managerTelegramId) {
+      return next();
+    }
+
+    const clientMessageState =
+      managerClientMessageState.get(
+        managerTelegramId
+      );
+
+    if (!clientMessageState) {
+      return next();
+    }
+
+    const currentChatId = String(
+      ctx?.chat?.id || ""
+    );
+
+    const expectedChatId = String(
+      clientMessageState
+        ?.managerChatId || ""
+    );
+
+    if (
+      expectedChatId &&
+      currentChatId !== expectedChatId
+    ) {
+      return next();
+    }
+
+    const messageText = String(
+      ctx?.message?.text || ""
+    ).trim();
+
+    if (!messageText) {
+      return next();
+    }
+
+    console.log(
+      "[MANAGER CLIENT MESSAGE][RECEIVED]",
+      {
+        orderId: String(
+          clientMessageState
+            ?.orderId || ""
+        ),
+
+        orderNo: String(
+          clientMessageState
+            ?.orderNo || ""
+        ),
+
+        managerTelegramId,
+
+        clientTelegramId: String(
+          clientMessageState
+            ?.clientTelegramId || ""
+        ),
+
+        currentChatId,
+
+        messageText,
+      }
+    );
+
+    try {
+      await bot.telegram.sendMessage(
+        String(
+          clientMessageState
+            .clientTelegramId
+        ),
+        [
+          "💬 <b>Сообщение от менеджера</b>",
+          "",
+          `Заказ: <b>#${escapeHtml(
+            clientMessageState
+              .orderNo || "—"
+          )}</b>`,
+          "",
+          escapeHtml(messageText),
+        ].join("\n"),
+        {
+          parse_mode: "HTML",
+        }
+      );
+
+      managerClientMessageState.delete(
+        managerTelegramId
+      );
+
+      const successMessage =
+        await ctx.reply(
+          "✅ Сообщение отправлено клиенту."
+        );
+
+      const cleanupMessageIds = [
+        Number(
+          clientMessageState
+            ?.instructionMessageId || 0
+        ),
+
+        Number(
+          ctx?.message?.message_id || 0
+        ),
+
+        Number(
+          successMessage?.message_id || 0
+        ),
+      ].filter(Boolean);
+
+      setTimeout(async () => {
+        for (
+          const messageId of
+          cleanupMessageIds
+        ) {
+          try {
+            await bot.telegram
+              .deleteMessage(
+                currentChatId,
+                messageId
+              );
+          } catch (deleteError) {
+            const description =
+              String(
+                deleteError?.response
+                  ?.description ||
+                  deleteError?.message ||
+                  ""
+              ).toLowerCase();
+
+            if (
+              !description.includes(
+                "message to delete not found"
+              ) &&
+              !description.includes(
+                "message can't be deleted"
+              )
+            ) {
+              console.error(
+                "manager client message cleanup error:",
+                deleteError
+              );
+            }
+          }
+        }
+      }, 1200);
+
+      return;
+    } catch (error) {
+      console.error(
+        "manager client message send error:",
+        {
+          error:
+            error?.response
+              ?.description ||
+            error?.message ||
+            error,
+
+          managerTelegramId,
+
+          clientTelegramId:
+            clientMessageState
+              ?.clientTelegramId,
+
+          orderNo:
+            clientMessageState
+              ?.orderNo,
+        }
+      );
+
+      await ctx.reply(
+        [
+          "❌ Не удалось отправить сообщение клиенту.",
+          "",
+          "Возможно, клиент заблокировал бота или ни разу его не запускал.",
+        ].join("\n")
+      );
+
+      return;
+    }
+  };
+
 const broadcastJobs = new Map();
 
 const PROMO_CODES_COLLECTION = "promo_codes";
@@ -14479,6 +14669,12 @@ if (TG_BOT_TOKEN) {
     return true;
   }
 
+  bot.use(
+
+    handleManagerClientMessageText
+
+  );
+
   bot.action(/mgr_courier_soon:(.+)/, async (ctx) => {
       try {
         const orderId = String(
@@ -15401,165 +15597,165 @@ if (TG_BOT_TOKEN) {
   );
 
   bot.on("text", async (ctx, next) => {
-      const managerTelegramId = String(
-        ctx?.from?.id || ""
-      ).trim();
+//       const managerTelegramId = String(
+//         ctx?.from?.id || ""
+//       ).trim();
 
-  const clientMessageState =
-    managerClientMessageState.get(
-      managerTelegramId
-    );
+//   const clientMessageState =
+//     managerClientMessageState.get(
+//       managerTelegramId
+//     );
 
-  if (clientMessageState) {
-    const currentChatId = String(
-      ctx?.chat?.id || ""
-    );
+//   if (clientMessageState) {
+//     const currentChatId = String(
+//       ctx?.chat?.id || ""
+//     );
 
-    const expectedChatId = String(
-      clientMessageState
-        ?.managerChatId || ""
-    );
+//     const expectedChatId = String(
+//       clientMessageState
+//         ?.managerChatId || ""
+//     );
 
-    if (
-      expectedChatId &&
-      currentChatId !== expectedChatId
-    ) {
-      return next();
-    }
+//     if (
+//       expectedChatId &&
+//       currentChatId !== expectedChatId
+//     ) {
+//       return next();
+//     }
 
-    const messageText = String(
-      ctx?.message?.text || ""
-    ).trim();
+//     const messageText = String(
+//       ctx?.message?.text || ""
+//     ).trim();
 
-    if (!messageText) {
-      return next();
-    }
+//     if (!messageText) {
+//       return next();
+//     }
 
-    managerClientMessageState.delete(
-      managerTelegramId
-    );
+//     managerClientMessageState.delete(
+//       managerTelegramId
+//     );
 
-    console.log(
-      "[MANAGER CLIENT MESSAGE][SEND]",
-      {
-        orderId:
-          clientMessageState.orderId,
-        orderNo:
-          clientMessageState.orderNo,
-        managerTelegramId,
-        clientTelegramId:
-          clientMessageState
-            .clientTelegramId,
-      }
-    );
+//     console.log(
+//       "[MANAGER CLIENT MESSAGE][SEND]",
+//       {
+//         orderId:
+//           clientMessageState.orderId,
+//         orderNo:
+//           clientMessageState.orderNo,
+//         managerTelegramId,
+//         clientTelegramId:
+//           clientMessageState
+//             .clientTelegramId,
+//       }
+//     );
 
-    try {
-    await bot.telegram.sendMessage(
-    clientMessageState.clientTelegramId,
-    [
-      "💬 <b>Сообщение от менеджера</b>",
-      "",
-      `Заказ: <b>#${escapeHtml(
-        clientMessageState.orderNo || "—"
-      )}</b>`,
-      "",
-      escapeHtml(messageText),
-    ].join("\n"),
-    {
-    parse_mode: "HTML",
-  }
-);
+//     try {
+//     await bot.telegram.sendMessage(
+//     clientMessageState.clientTelegramId,
+//     [
+//       "💬 <b>Сообщение от менеджера</b>",
+//       "",
+//       `Заказ: <b>#${escapeHtml(
+//         clientMessageState.orderNo || "—"
+//       )}</b>`,
+//       "",
+//       escapeHtml(messageText),
+//     ].join("\n"),
+//     {
+//     parse_mode: "HTML",
+//   }
+// );
 
-const confirmationMessage =
-  await ctx.reply(
-    "✅ Сообщение отправлено клиенту."
-  );
+// const confirmationMessage =
+//   await ctx.reply(
+//     "✅ Сообщение отправлено клиенту."
+//   );
 
-/*
- * Небольшая задержка, чтобы менеджер
- * успел увидеть подтверждение.
- */
-await new Promise((resolve) =>
-  setTimeout(resolve, 100)
-);
+// /*
+//  * Небольшая задержка, чтобы менеджер
+//  * успел увидеть подтверждение.
+//  */
+// await new Promise((resolve) =>
+//   setTimeout(resolve, 100)
+// );
 
-const managerChatId = String(
-  clientMessageState.managerChatId ||
-    ctx?.chat?.id ||
-    ""
-).trim();
+// const managerChatId = String(
+//   clientMessageState.managerChatId ||
+//     ctx?.chat?.id ||
+//     ""
+// ).trim();
 
-const messageIdsToDelete = [
-  /*
-   * Сообщение-инструкция.
-   */
-  Number(
-    clientMessageState
-      .instructionMessageId || 0
-  ),
+// const messageIdsToDelete = [
+//   /*
+//    * Сообщение-инструкция.
+//    */
+//   Number(
+//     clientMessageState
+//       .instructionMessageId || 0
+//   ),
 
-  /*
-   * Текст, который написал менеджер.
-   */
-  Number(
-    ctx?.message?.message_id || 0
-  ),
+//   /*
+//    * Текст, который написал менеджер.
+//    */
+//   Number(
+//     ctx?.message?.message_id || 0
+//   ),
 
-  /*
-   * Подтверждение успешной отправки.
-   */
-  Number(
-    confirmationMessage?.message_id || 0
-  ),
-].filter(Boolean);
+//   /*
+//    * Подтверждение успешной отправки.
+//    */
+//   Number(
+//     confirmationMessage?.message_id || 0
+//   ),
+// ].filter(Boolean);
 
-if (managerChatId) {
-  const deleteResults =
-    await Promise.allSettled(
-      messageIdsToDelete.map(
-        (messageId) =>
-          bot.telegram.deleteMessage(
-            managerChatId,
-            messageId
-          )
-      )
-    );
+// if (managerChatId) {
+//   const deleteResults =
+//     await Promise.allSettled(
+//       messageIdsToDelete.map(
+//         (messageId) =>
+//           bot.telegram.deleteMessage(
+//             managerChatId,
+//             messageId
+//           )
+//       )
+//     );
 
-  deleteResults.forEach(
-    (result, index) => {
-      if (result.status === "rejected") {
-        console.warn(
-          "manager client message cleanup failed:",
-          {
-            managerChatId,
+//   deleteResults.forEach(
+//     (result, index) => {
+//       if (result.status === "rejected") {
+//         console.warn(
+//           "manager client message cleanup failed:",
+//           {
+//             managerChatId,
 
-            messageId:
-              messageIdsToDelete[index],
+//             messageId:
+//               messageIdsToDelete[index],
 
-            error:
-              result.reason?.response
-                ?.description ||
-              result.reason?.message ||
-              result.reason,
-          }
-        );
-      }
-    }
-  );
-}
-    } catch (error) {
-      console.error(
-        "manager client message send error:",
-        error
-      );
+//             error:
+//               result.reason?.response
+//                 ?.description ||
+//               result.reason?.message ||
+//               result.reason,
+//           }
+//         );
+//       }
+//     }
+//   );
+// }
+//     } catch (error) {
+//       console.error(
+//         "manager client message send error:",
+//         error
+//       );
 
-      await ctx.reply(
-        "❌ Не удалось отправить сообщение клиенту. Возможно, клиент заблокировал бота или не запускал его."
-      );
-    }
+//       await ctx.reply(
+//         "❌ Не удалось отправить сообщение клиенту. Возможно, клиент заблокировал бота или не запускал его."
+//       );
+//     }
 
-    return;
-  }
+//     return;
+//   }
       const stateKey = String(
         ctx.from?.id ||
         ctx.chat?.id ||
