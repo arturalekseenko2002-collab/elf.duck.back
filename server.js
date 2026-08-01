@@ -15402,8 +15402,8 @@ if (TG_BOT_TOKEN) {
 
   bot.on("text", async (ctx, next) => {
       const managerTelegramId = String(
-    ctx?.from?.id || ""
-  ).trim();
+        ctx?.from?.id || ""
+      ).trim();
 
   const clientMessageState =
     managerClientMessageState.get(
@@ -15415,37 +15415,24 @@ if (TG_BOT_TOKEN) {
       ctx?.chat?.id || ""
     );
 
-    const replyToMessageId = Number(
-      ctx?.message?.reply_to_message
-        ?.message_id || 0
-    );
-
     const expectedChatId = String(
       clientMessageState
         ?.managerChatId || ""
     );
 
-    const expectedInstructionMessageId =
-      Number(
-        clientMessageState
-          ?.instructionMessageId || 0
-      );
-
-    const isReplyToInstruction =
-      currentChatId ===
-        expectedChatId &&
-      replyToMessageId ===
-        expectedInstructionMessageId;
-
-    if (!isReplyToInstruction) {
-      return;
+    if (
+      expectedChatId &&
+      currentChatId !== expectedChatId
+    ) {
+      return next();
     }
+
     const messageText = String(
       ctx?.message?.text || ""
     ).trim();
 
     if (!messageText) {
-      return;
+      return next();
     }
 
     managerClientMessageState.delete(
@@ -15467,18 +15454,18 @@ if (TG_BOT_TOKEN) {
     );
 
     try {
-await bot.telegram.sendMessage(
-  clientMessageState.clientTelegramId,
-  [
-    "💬 <b>Сообщение от менеджера</b>",
-    "",
-    `Заказ: <b>#${escapeHtml(
-      clientMessageState.orderNo || "—"
-    )}</b>`,
-    "",
-    escapeHtml(messageText),
-  ].join("\n"),
-  {
+    await bot.telegram.sendMessage(
+    clientMessageState.clientTelegramId,
+    [
+      "💬 <b>Сообщение от менеджера</b>",
+      "",
+      `Заказ: <b>#${escapeHtml(
+        clientMessageState.orderNo || "—"
+      )}</b>`,
+      "",
+      escapeHtml(messageText),
+    ].join("\n"),
+    {
     parse_mode: "HTML",
   }
 );
@@ -16256,25 +16243,6 @@ bot.action(/^manager_message_client:(.+)$/, async (ctx) => {
       const clientTelegramId = String(
         order?.userTelegramId || ""
       ).trim();
-
-      console.log(
-      "[INPOST SHIPMENT CLIENT DEBUG]",
-      {
-        orderId: String(
-          order?._id || ""
-        ),
-
-        orderNo: String(
-          order?.orderNo || ""
-        ),
-
-        clientTelegramId,
-
-        trackingNumber: String(
-          order?.inpostTrackingNumber || ""
-        ),
-      }
-    );
 
       if (!clientTelegramId) {
         return ctx.reply(
