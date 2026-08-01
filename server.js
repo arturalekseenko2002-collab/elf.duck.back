@@ -7828,101 +7828,45 @@ function stopPaymentReminder(orderId) {
 }
 
 async function startPaymentReminder(order) {
+
   try {
-    if (!bot || !order?._id || !order?.userTelegramId) return;
 
-    const orderId = String(order._id || "").trim();
-    if (!orderId) return;
+    const orderId = String(
 
-    // если вдруг уже есть таймер по этому заказу — пересоздаём
+      order?._id || ""
+
+    ).trim();
+
+    if (!orderId) {
+
+      return;
+
+    }
+
+    /*
+
+     * Старая система индивидуальных таймеров отключена.
+
+     * Напоминания на 5-й и 9-й минуте отправляет
+
+     * processOrdersWithoutPaymentConfirm().
+
+     */
+
     stopPaymentReminder(orderId);
 
-    const tick = async () => {
-      try {
-        const fresh = await Order.findById(orderId, {
-          _id: 1,
-          orderNo: 1,
-          userTelegramId: 1,
-          totalZl: 1,
-          currency: 1,
-          status: 1,
-          payment: 1,
-        }).lean();
-
-        if (!fresh) {
-          stopPaymentReminder(orderId);
-          return;
-        }
-
-        const paymentStatus = String(fresh?.payment?.status || "unpaid");
-        const orderStatus = String(fresh?.status || "").toLowerCase();
-
-        // как только заказ ушёл на проверку / подтверждён / отменён / аннулирован — останавливаем напоминания
-        if (
-          ["checking", "paid", "refunded"].includes(paymentStatus) ||
-          ["canceled", "annulled", "completed", "done", "shipped"].includes(orderStatus)
-        ) {
-          stopPaymentReminder(orderId);
-          return;
-        }
-
-        const webAppBaseUrl = String(process.env.WEB_APP_URL || process.env.WEBAPP_URL || "")
-          .trim()
-          .replace(/\/$/, "");
-
-        const orderLink =
-          /^https:\/\/.+/i.test(webAppBaseUrl)
-            ? `${webAppBaseUrl}/orders`
-            : null;
-
-        const lines = [
-          `⏰ <b>НАПОМИНАНИЕ ОБ ОПЛАТЕ</b>`,
-          ``,
-          `🔢 <b>Номер заказа:</b> #${escapeHtml(fresh.orderNo)}`,
-          `💰 <b>Сумма:</b> ${Number(fresh.totalZl || 0)} ${escapeHtml(fresh.currency || "PLN")}`,
-          ``,
-          `Менеджер получит информацию о вашем заказе <b>только после оплаты</b>.`,
-          ``,
-          `💵 Если вам удобнее, выберите способ оплаты <b>Наличные</b> — тогда менеджер тоже получит уведомление и начнёт готовить заказ.`,
-        ];
-
-        const extra = {
-          parse_mode: "HTML",
-          disable_web_page_preview: true,
-        };
-
-        if (orderLink) {
-          extra.reply_markup = {
-            inline_keyboard: [
-              [{ text: "💳 Перейти к оплате", web_app: { url: orderLink } }],
-            ],
-          };
-        }
-
-        await bot.telegram.sendMessage(
-          String(fresh.userTelegramId),
-          lines.join("\n"),
-          extra
-        );
-      } catch (e) {
-        console.error("payment reminder tick error:", e);
-      }
-    };
-
-    const startTimeoutId = setTimeout(() => {
-      tick();
-
-      const intervalId = setInterval(() => {
-        tick();
-      }, ORDER_PAYMENT_REMINDER_INTERVAL_MS);
-
-      paymentReminderIntervals.set(orderId, intervalId);
-    }, ORDER_PAYMENT_REMINDER_START_DELAY_MS);
-
-    paymentReminderTimeouts.set(orderId, startTimeoutId);
   } catch (e) {
-    console.error("startPaymentReminder error:", e);
+
+    console.error(
+
+      "startPaymentReminder disable error:",
+
+      e
+
+    );
+
   }
+
 }
 
 async function resolveOrderReservePickupPointIds(order) {
@@ -14306,7 +14250,7 @@ if (TG_BOT_TOKEN) {
           );
         }
       }
-      
+
       // --- END PATCH 1 ---
 
       // Для доставки отправляем отдельное сообщение-напоминание менеджеру
