@@ -15411,6 +15411,35 @@ if (TG_BOT_TOKEN) {
     );
 
   if (clientMessageState) {
+    const currentChatId = String(
+      ctx?.chat?.id || ""
+    );
+
+    const replyToMessageId = Number(
+      ctx?.message?.reply_to_message
+        ?.message_id || 0
+    );
+
+    const expectedChatId = String(
+      clientMessageState
+        ?.managerChatId || ""
+    );
+
+    const expectedInstructionMessageId =
+      Number(
+        clientMessageState
+          ?.instructionMessageId || 0
+      );
+
+    const isReplyToInstruction =
+      currentChatId ===
+        expectedChatId &&
+      replyToMessageId ===
+        expectedInstructionMessageId;
+
+    if (!isReplyToInstruction) {
+      return;
+    }
     const messageText = String(
       ctx?.message?.text || ""
     ).trim();
@@ -16263,10 +16292,18 @@ const instructionMessage =
         order?.orderNo || "—"
       )}</b>`,
       "",
-      "Отправьте следующим сообщением текст, который нужно передать клиенту.",
+      "Ответьте на это сообщение текстом, который нужно передать клиенту.",
     ].join("\n"),
     {
       parse_mode: "HTML",
+
+      reply_markup: {
+        force_reply: true,
+        selective: true,
+
+        input_field_placeholder:
+          "Введите сообщение клиенту",
+      },
     }
   );
 
