@@ -5407,24 +5407,24 @@ async function sendDailyPointStatsToGoogleSheet(point, orders, dayKey) {
       .toFixed(2)
   );
 
-  const clientsCount = new Set(
-    (Array.isArray(orders) ? orders : [])
-      .filter((order) =>
-        shouldCountOrderInDailyStats(order)
-      )
-      .map((order) =>
-        String(
-          order?.userTelegramId ||
-            order?.telegramId ||
-            order?.user?.telegramId ||
-            order?.userSnapshot?.telegramId ||
-            order?.customerTelegramId ||
-            order?._id ||
-            ""
-        ).trim()
-      )
-      .filter(Boolean)
-  ).size;
+  // const clientsCount = new Set(
+  //   (Array.isArray(orders) ? orders : [])
+  //     .filter((order) =>
+  //       shouldCountOrderInDailyStats(order)
+  //     )
+  //     .map((order) =>
+  //       String(
+  //         order?.userTelegramId ||
+  //           order?.telegramId ||
+  //           order?.user?.telegramId ||
+  //           order?.userSnapshot?.telegramId ||
+  //           order?.customerTelegramId ||
+  //           order?._id ||
+  //           ""
+  //       ).trim()
+  //     )
+  //     .filter(Boolean)
+  // ).size;
 
   const payload = {
     date: String(dayKey || ""),
@@ -5438,8 +5438,8 @@ async function sendDailyPointStatsToGoogleSheet(point, orders, dayKey) {
     assortmentItems,
     totals: {
       discounts,
-      clients: clientsCount,
-      clientsCount,
+      // clients: clientsCount,
+      // clientsCount,
     },
   };
 
