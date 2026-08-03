@@ -13841,6 +13841,366 @@ app.patch("/admin/products/:id/flavors/:flavorId/stock", requireAdmin, async (re
   }
 });
 
+// app.post(
+//   "/admin/products/manual-sheet-stock-sync",
+//   requireAdmin,
+//   async (req, res) => {
+//     try {
+//       const pointKey = String(
+//         req.body?.pointKey || ""
+//       )
+//         .trim()
+//         .replace(/,+$/, "");
+
+//       const modelName = String(
+//         req.body?.modelName || ""
+//       ).trim();
+
+//       const normalizedModel =
+//         String(
+//           req.body
+//             ?.normalizedModel ||
+//           modelName
+//         )
+//           .trim()
+//           .toUpperCase();
+
+//       const flavorLabel = String(
+//         req.body?.flavorLabel || ""
+//       ).trim();
+
+//       const normalizedFlavor =
+//         String(
+//           req.body
+//             ?.normalizedFlavor ||
+//           flavorLabel
+//         )
+//           .trim()
+//           .toUpperCase();
+
+//       const qty =
+//         Number(req.body?.qty);
+
+//       if (
+//         !pointKey ||
+//         !modelName ||
+//         !flavorLabel ||
+//         !Number.isInteger(qty) ||
+//         qty < 0
+//       ) {
+//         return res.status(400).json({
+//           ok: false,
+//           error:
+//             "INVALID_MANUAL_STOCK_DATA",
+//         });
+//       }
+
+//       const pickupPoint =
+//         await PickupPoint.findOne({
+//           key: {
+//             $in: [
+//               pointKey,
+//               `${pointKey},`,
+//             ],
+//           },
+//         });
+
+//       if (!pickupPoint) {
+//         return res.status(404).json({
+//           ok: false,
+//           error:
+//             "PICKUP_POINT_NOT_FOUND",
+//           pointKey,
+//         });
+//       }
+
+//       const normalizeValue = (
+//         value
+//       ) =>
+//         String(value || "")
+//           .toUpperCase()
+//           .replace(/🦆/g, "")
+//           .replace(
+//             /CARTRIDGE/g,
+//             "CATRIDGE"
+//           )
+//           .replace(
+//             /\s*30\s*ML/g,
+//             ""
+//           )
+//           .replace(
+//             /^CHASER\s+/g,
+//             ""
+//           )
+//           .replace(/\s+/g, " ")
+//           .trim();
+
+//       const compactValue = (
+//         value
+//       ) =>
+//         normalizeValue(value)
+//           .replace(
+//             /[^A-ZА-ЯІЇЄҐ0-9]+/g,
+//             ""
+//           );
+
+//       const wantedModel =
+//         normalizeValue(
+//           normalizedModel
+//         );
+
+//       const wantedFlavor =
+//         compactValue(
+//           normalizedFlavor
+//         );
+
+//       const products =
+//         await Product.find({});
+
+//       let foundProduct = null;
+//       let foundFlavor = null;
+
+//       for (
+//         const product of products
+//       ) {
+//         const productNames = [
+//           product?.productKey,
+//           product?.title,
+//           product?.title1,
+//           product?.title2,
+//           [
+//             product?.title1,
+//             product?.title2,
+//           ]
+//             .filter(Boolean)
+//             .join(" "),
+//           product?.name,
+//           product?.model,
+//         ]
+//           .map(normalizeValue)
+//           .filter(Boolean);
+
+//         const modelMatches =
+//           productNames.some(
+//             (candidate) =>
+//               candidate ===
+//                 wantedModel ||
+//               candidate.includes(
+//                 wantedModel
+//               ) ||
+//               wantedModel.includes(
+//                 candidate
+//               )
+//           );
+
+//         if (!modelMatches) {
+//           continue;
+//         }
+
+//         const flavors =
+//           Array.isArray(
+//             product?.flavors
+//           )
+//             ? product.flavors
+//             : [];
+
+//         for (
+//           const flavor of flavors
+//         ) {
+//           const flavorNames = [
+//             flavor?.flavorKey,
+//             flavor?.flavorLabel,
+//             flavor?.label,
+//             flavor?.name,
+//           ]
+//             .map(compactValue)
+//             .filter(Boolean);
+
+//           if (
+//             flavorNames.includes(
+//               wantedFlavor
+//             )
+//           ) {
+//             foundProduct =
+//               product;
+
+//             foundFlavor =
+//               flavor;
+
+//             break;
+//           }
+//         }
+
+//         if (
+//           foundProduct &&
+//           foundFlavor
+//         ) {
+//           break;
+//         }
+//       }
+
+//       if (!foundProduct) {
+//         return res.status(404).json({
+//           ok: false,
+//           error:
+//             "PRODUCT_NOT_FOUND",
+//           modelName,
+//           normalizedModel,
+//         });
+//       }
+
+//       if (!foundFlavor) {
+//         return res.status(404).json({
+//           ok: false,
+//           error:
+//             "FLAVOR_NOT_FOUND",
+//           modelName,
+//           flavorLabel,
+//           normalizedFlavor,
+//         });
+//       }
+
+//       foundFlavor
+//         .stockByPickupPoint =
+//           Array.isArray(
+//             foundFlavor
+//               ?.stockByPickupPoint
+//           )
+//             ? foundFlavor
+//                 .stockByPickupPoint
+//             : [];
+
+//       let stockRow =
+//         foundFlavor
+//           .stockByPickupPoint
+//           .find(
+//             (row) =>
+//               String(
+//                 row?.pickupPointId ||
+//                 ""
+//               ) ===
+//               String(
+//                 pickupPoint._id
+//               )
+//           );
+
+//       if (!stockRow) {
+//         foundFlavor
+//           .stockByPickupPoint
+//           .push({
+//             pickupPointId:
+//               pickupPoint._id,
+
+//             qty,
+
+//             reservedQty: 0,
+//           });
+//       } else {
+//         /*
+//          * Меняем только физический остаток.
+//          *
+//          * reservedQty не трогаем,
+//          * потому что там могут быть
+//          * активные заказы.
+//          */
+//         stockRow.qty = qty;
+//       }
+
+//       foundProduct.markModified(
+//         "flavors"
+//       );
+
+//       await foundProduct.save();
+
+//       cacheInvalidate(
+//         "products"
+//       );
+
+//       console.log(
+//         "[MANUAL SHEET STOCK SYNC]",
+//         {
+//           source:
+//             req.body?.source,
+
+//           spreadsheetId:
+//             req.body
+//               ?.spreadsheetId,
+
+//           sheetName:
+//             req.body?.sheetName,
+
+//           editorEmail:
+//             req.body
+//               ?.editorEmail,
+
+//           pointKey,
+
+//           pickupPointId:
+//             String(
+//               pickupPoint._id
+//             ),
+
+//           productId:
+//             String(
+//               foundProduct._id
+//             ),
+
+//           productKey:
+//             String(
+//               foundProduct
+//                 ?.productKey || ""
+//             ),
+
+//           modelName,
+
+//           flavorLabel,
+
+//           qty,
+//         }
+//       );
+
+//       return res.json({
+//         ok: true,
+
+//         pointKey,
+
+//         pickupPointId:
+//           String(
+//             pickupPoint._id
+//           ),
+
+//         productId:
+//           String(
+//             foundProduct._id
+//           ),
+
+//         productKey:
+//           String(
+//             foundProduct
+//               ?.productKey || ""
+//           ),
+
+//         modelName,
+
+//         flavorLabel,
+
+//         qty,
+//       });
+//     } catch (error) {
+//       console.error(
+//         "POST /admin/products/manual-sheet-stock-sync error:",
+//         error
+//       );
+
+//       return res.status(500).json({
+//         ok: false,
+//         error:
+//           "MANUAL_SHEET_STOCK_SYNC_FAILED",
+//       });
+//     }
+//   }
+// );
+
 app.post(
   "/admin/products/manual-sheet-stock-sync",
   requireAdmin,
@@ -14084,387 +14444,79 @@ app.post(
               )
           );
 
-      if (!stockRow) {
-        foundFlavor
-          .stockByPickupPoint
-          .push({
-            pickupPointId:
-              pickupPoint._id,
-
-            qty,
-
-            reservedQty: 0,
-          });
-      } else {
-        /*
-         * Меняем только физический остаток.
-         *
-         * reservedQty не трогаем,
-         * потому что там могут быть
-         * активные заказы.
-         */
-        stockRow.qty = qty;
-      }
-
-      foundProduct.markModified(
-        "flavors"
-      );
-
-      await foundProduct.save();
-
-      cacheInvalidate(
-        "products"
-      );
-
-      console.log(
-        "[MANUAL SHEET STOCK SYNC]",
-        {
-          source:
-            req.body?.source,
-
-          spreadsheetId:
-            req.body
-              ?.spreadsheetId,
-
-          sheetName:
-            req.body?.sheetName,
-
-          editorEmail:
-            req.body
-              ?.editorEmail,
-
-          pointKey,
-
-          pickupPointId:
-            String(
-              pickupPoint._id
-            ),
-
-          productId:
-            String(
-              foundProduct._id
-            ),
-
-          productKey:
-            String(
-              foundProduct
-                ?.productKey || ""
-            ),
-
-          modelName,
-
-          flavorLabel,
-
-          qty,
-        }
-      );
-
-      return res.json({
-        ok: true,
-
-        pointKey,
-
-        pickupPointId:
-          String(
+        const syncedPointIds =
+          await getSyncedPickupPointIdsByAnyPoint(
             pickupPoint._id
-          ),
-
-        productId:
-          String(
-            foundProduct._id
-          ),
-
-        productKey:
-          String(
-            foundProduct
-              ?.productKey || ""
-          ),
-
-        modelName,
-
-        flavorLabel,
-
-        qty,
-      });
-    } catch (error) {
-      console.error(
-        "POST /admin/products/manual-sheet-stock-sync error:",
-        error
-      );
-
-      return res.status(500).json({
-        ok: false,
-        error:
-          "MANUAL_SHEET_STOCK_SYNC_FAILED",
-      });
-    }
-  }
-);
-
-app.post(
-  "/admin/products/manual-sheet-stock-sync",
-  requireAdmin,
-  async (req, res) => {
-    try {
-      const pointKey = String(
-        req.body?.pointKey || ""
-      )
-        .trim()
-        .replace(/,+$/, "");
-
-      const modelName = String(
-        req.body?.modelName || ""
-      ).trim();
-
-      const normalizedModel =
-        String(
-          req.body
-            ?.normalizedModel ||
-          modelName
-        )
-          .trim()
-          .toUpperCase();
-
-      const flavorLabel = String(
-        req.body?.flavorLabel || ""
-      ).trim();
-
-      const normalizedFlavor =
-        String(
-          req.body
-            ?.normalizedFlavor ||
-          flavorLabel
-        )
-          .trim()
-          .toUpperCase();
-
-      const qty =
-        Number(req.body?.qty);
-
-      if (
-        !pointKey ||
-        !modelName ||
-        !flavorLabel ||
-        !Number.isInteger(qty) ||
-        qty < 0
-      ) {
-        return res.status(400).json({
-          ok: false,
-          error:
-            "INVALID_MANUAL_STOCK_DATA",
-        });
-      }
-
-      const pickupPoint =
-        await PickupPoint.findOne({
-          key: {
-            $in: [
-              pointKey,
-              `${pointKey},`,
-            ],
-          },
-        });
-
-      if (!pickupPoint) {
-        return res.status(404).json({
-          ok: false,
-          error:
-            "PICKUP_POINT_NOT_FOUND",
-          pointKey,
-        });
-      }
-
-      const normalizeValue = (
-        value
-      ) =>
-        String(value || "")
-          .toUpperCase()
-          .replace(/🦆/g, "")
-          .replace(
-            /CARTRIDGE/g,
-            "CATRIDGE"
-          )
-          .replace(
-            /\s*30\s*ML/g,
-            ""
-          )
-          .replace(
-            /^CHASER\s+/g,
-            ""
-          )
-          .replace(/\s+/g, " ")
-          .trim();
-
-      const compactValue = (
-        value
-      ) =>
-        normalizeValue(value)
-          .replace(
-            /[^A-ZА-ЯІЇЄҐ0-9]+/g,
-            ""
           );
 
-      const wantedModel =
-        normalizeValue(
-          normalizedModel
-        );
+        const pointIdsToSync =
+          syncedPointIds.length
+            ? syncedPointIds
+            : [String(pickupPoint._id)];
 
-      const wantedFlavor =
-        compactValue(
-          normalizedFlavor
-        );
-
-      const products =
-        await Product.find({});
-
-      let foundProduct = null;
-      let foundFlavor = null;
-
-      for (
-        const product of products
-      ) {
-        const productNames = [
-          product?.productKey,
-          product?.title,
-          product?.title1,
-          product?.title2,
-          [
-            product?.title1,
-            product?.title2,
-          ]
-            .filter(Boolean)
-            .join(" "),
-          product?.name,
-          product?.model,
-        ]
-          .map(normalizeValue)
-          .filter(Boolean);
-
-        const modelMatches =
-          productNames.some(
-            (candidate) =>
-              candidate ===
-                wantedModel ||
-              candidate.includes(
-                wantedModel
-              ) ||
-              wantedModel.includes(
-                candidate
+        const existingRows =
+          (foundFlavor.stockByPickupPoint || [])
+            .filter((row) =>
+              pointIdsToSync.includes(
+                String(row?.pickupPointId || "")
               )
-          );
+            );
 
-        if (!modelMatches) {
-          continue;
-        }
+        const syncedReservedQty =
+          existingRows.length
+            ? Math.max(
+                ...existingRows.map((row) =>
+                  Math.max(
+                    0,
+                    Number(row?.reservedQty || 0)
+                  )
+                )
+              )
+            : 0;
 
-        const flavors =
-          Array.isArray(
-            product?.flavors
-          )
-            ? product.flavors
-            : [];
+        for (const syncPickupPointId of pointIdsToSync) {
+          const existing =
+            (foundFlavor.stockByPickupPoint || [])
+              .find(
+                (row) =>
+                  String(row?.pickupPointId || "") ===
+                  String(syncPickupPointId)
+              );
 
-        for (
-          const flavor of flavors
-        ) {
-          const flavorNames = [
-            flavor?.flavorKey,
-            flavor?.flavorLabel,
-            flavor?.label,
-            flavor?.name,
-          ]
-            .map(compactValue)
-            .filter(Boolean);
+          if (existing) {
+            existing.totalQty = qty;
 
-          if (
-            flavorNames.includes(
-              wantedFlavor
-            )
-          ) {
-            foundProduct =
-              product;
+            existing.reservedQty = Math.min(
+              syncedReservedQty,
+              qty
+            );
 
-            foundFlavor =
-              flavor;
+            existing.updatedAt = new Date();
 
-            break;
+            existing.updatedByTelegramId =
+              "google-sheet";
+          } else {
+            foundFlavor.stockByPickupPoint.push({
+              pickupPointId:
+                syncPickupPointId,
+
+              totalQty:
+                qty,
+
+              reservedQty:
+                Math.min(
+                  syncedReservedQty,
+                  qty
+                ),
+
+              updatedAt:
+                new Date(),
+
+              updatedByTelegramId:
+                "google-sheet",
+            });
           }
         }
-
-        if (
-          foundProduct &&
-          foundFlavor
-        ) {
-          break;
-        }
-      }
-
-      if (!foundProduct) {
-        return res.status(404).json({
-          ok: false,
-          error:
-            "PRODUCT_NOT_FOUND",
-          modelName,
-          normalizedModel,
-        });
-      }
-
-      if (!foundFlavor) {
-        return res.status(404).json({
-          ok: false,
-          error:
-            "FLAVOR_NOT_FOUND",
-          modelName,
-          flavorLabel,
-          normalizedFlavor,
-        });
-      }
-
-      foundFlavor
-        .stockByPickupPoint =
-          Array.isArray(
-            foundFlavor
-              ?.stockByPickupPoint
-          )
-            ? foundFlavor
-                .stockByPickupPoint
-            : [];
-
-      let stockRow =
-        foundFlavor
-          .stockByPickupPoint
-          .find(
-            (row) =>
-              String(
-                row?.pickupPointId ||
-                ""
-              ) ===
-              String(
-                pickupPoint._id
-              )
-          );
-
-      if (!stockRow) {
-        foundFlavor
-          .stockByPickupPoint
-          .push({
-            pickupPointId:
-              pickupPoint._id,
-
-            qty,
-
-            reservedQty: 0,
-          });
-      } else {
-        /*
-         * Меняем только физический остаток.
-         *
-         * reservedQty не трогаем,
-         * потому что там могут быть
-         * активные заказы.
-         */
-        stockRow.qty = qty;
-      }
 
       foundProduct.markModified(
         "flavors"
@@ -14472,9 +14524,7 @@ app.post(
 
       await foundProduct.save();
 
-      cacheInvalidate(
-        "products"
-      );
+      cacheInvalidate("products:");
 
       console.log(
         "[MANUAL SHEET STOCK SYNC]",
