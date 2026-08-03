@@ -95,6 +95,9 @@ const handleManagerClientMessageText =
     const clientMessageState =
       stateByManager || stateByChat;
 
+    const resolvedByManager =
+      Boolean(stateByManager);
+
     if (!clientMessageState) {
       return next();
     }
@@ -111,12 +114,37 @@ const handleManagerClientMessageText =
       ).trim();
 
     if (
+
+      resolvedByManager &&
+
       expectedManagerTelegramId &&
+
       managerTelegramId &&
+
       managerTelegramId !==
+
         expectedManagerTelegramId
+
     ) {
+
+      console.log(
+
+        "[MANAGER CLIENT MESSAGE][SKIP MANAGER MISMATCH]",
+
+        {
+
+          expectedManagerTelegramId,
+
+          managerTelegramId,
+
+          currentChatId,
+
+        }
+
+      );
+
       return next();
+
     }
 
     if (
@@ -155,6 +183,8 @@ const handleManagerClientMessageText =
         ),
 
         currentChatId,
+
+        resolvedByManager,
 
         messageText,
       }
