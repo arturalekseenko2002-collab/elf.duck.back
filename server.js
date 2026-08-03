@@ -14201,10 +14201,7 @@ app.patch("/admin/products/:id/flavors/:flavorId/stock", requireAdmin, async (re
 //   }
 // );
 
-app.post(
-  "/admin/products/manual-sheet-stock-sync",
-  requireAdmin,
-  async (req, res) => {
+app.post("/admin/products/manual-sheet-stock-sync", requireAdmin, async (req, res) => {
     try {
       const pointKey = String(
         req.body?.pointKey || ""
@@ -14274,26 +14271,61 @@ app.post(
         });
       }
 
-      const normalizeValue = (
-        value
-      ) =>
-        String(value || "")
-          .toUpperCase()
-          .replace(/🦆/g, "")
-          .replace(
-            /CARTRIDGE/g,
-            "CATRIDGE"
-          )
-          .replace(
-            /\s*30\s*ML/g,
-            ""
-          )
-          .replace(
-            /^CHASER\s+/g,
-            ""
-          )
-          .replace(/\s+/g, " ")
-          .trim();
+    const normalizeValue = (value) =>
+      String(value || "")
+        .toUpperCase()
+        .replace(/🦆/g, "")
+        .replace(/CARTRIDGE/g, "CATRIDGE")
+        .replace(/\s*30\s*ML/g, "")
+        .replace(/^CHASER\s+/g, "")
+
+        // жидкости
+        .replace(/\bLIQ\s+ELFLIQ\b/g, "ELFLIQ")
+        .replace(/\bLIQ\s+HQD\b/g, "HQD")
+        .replace(/\bLIQ\s+ETHEREUM\b/g, "ETHEREUM")
+        .replace(/\bLIQ\s+SPECIAL\b/g, "SPECIAL")
+        .replace(/\bLIQ\s+BLACK\b/g, "BLACK")
+        .replace(/\bLIQ\s+FOR\s+PODS\b/g, "FOR PODS")
+        .replace(/\bLIQ\s+VOZOL\s+PRIME\b/g, "VOZOL PRIME")
+        .replace(/\bLIQ\s+PUFFY\b/g, "PUFFY")
+
+        // ELF BAR / ELF DUCK
+        .replace(/\bELF\s+DUCK\s+D3\s+25K\b/g, "ELF BAR D3")
+        .replace(/\bELF\s+DUCK\s+D3\b/g, "ELF BAR D3")
+        .replace(/\bELF\s+BAR\s+D3\s+25K\b/g, "ELF BAR D3")
+
+        .replace(/\bELF\s+DUCK\s+1500\b/g, "ELF BAR 1500")
+        .replace(/\bELF\s+BAR\s+1500\b/g, "ELF BAR 1500")
+
+        .replace(/\bELF\s+DUCK\s+2000\b/g, "ELF BAR 2000")
+        .replace(/\bELF\s+BAR\s+2000\b/g, "ELF BAR 2000")
+
+        .replace(/\bELF\s+DUCK\s+3000\s+RI\b/g, "ELF BAR 3000")
+        .replace(/\bELF\s+DUCK\s+3000\b/g, "ELF BAR 3000")
+        .replace(/\bELF\s+3000\b/g, "ELF BAR 3000")
+        .replace(/\bELF\s+BAR\s+3000\s+RI\b/g, "ELF BAR 3000")
+        .replace(/\bELF\s+BAR\s+RI\s+3000\b/g, "ELF BAR 3000")
+        .replace(/\bELF\s+BAR\s+3000\b/g, "ELF BAR 3000")
+
+        .replace(/\bELF\s+DUCK\s+GH\s+33000\s+PRO\b/g, "ELF BAR GH 33000")
+        .replace(/\bELF\s+BAR\s+GH\s+33000\s+PRO\b/g, "ELF BAR GH 33000")
+        .replace(/\bELF\s+BAR\s+GH\s+33000\b/g, "ELF BAR GH 33000")
+
+        .replace(/\bELF\s+DUCK\s+MOON\s+40K\b/g, "ELF BAR MOON 40K")
+        .replace(/\bELF\s+BAR\s+MOON\s+40K\b/g, "ELF BAR MOON 40K")
+
+        .replace(/\bELF\s+DUCK\s+KING\s+30K\b/g, "ELF BAR KING 30K")
+        .replace(/\bELF\s+DUCK\s+ICE\s+KING\s+30K\b/g, "ELF BAR KING 30K")
+        .replace(/\bELF\s+BAR\s+KING\s+30K\b/g, "ELF BAR KING 30K")
+
+        .replace(/\bELF\s+DUCK\s+DUKE\s+30K\b/g, "ELF BAR DUKE 30K")
+        .replace(/\bELF\s+BAR\s+DUKE\s+30K\b/g, "ELF BAR DUKE 30K")
+
+        .replace(/\bELF\s+DUCK\s+TRIO\s+40K\b/g, "ELF TRIO 40K")
+        .replace(/\bELF\s+BAR\s+TRIO\s+40K\b/g, "ELF TRIO 40K")
+
+        .replace(/\s+/g, " ")
+        .trim();
 
       const compactValue = (
         value
@@ -14397,6 +14429,27 @@ app.post(
         ) {
           break;
         }
+      }
+
+      console.log("=== MANUAL STOCK SEARCH ===");
+
+      console.log({
+        wantedModel,
+        wantedFlavor,
+      });
+
+      for (const product of products) {
+        console.log({
+          product: product.productKey,
+          names: [
+            product.productKey,
+            product.title,
+            product.title1,
+            product.title2,
+            product.name,
+            product.model,
+          ].map(normalizeValue),
+        });
       }
 
       if (!foundProduct) {
