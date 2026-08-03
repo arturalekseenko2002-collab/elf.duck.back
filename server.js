@@ -66,17 +66,44 @@ const managerClientMessageStateByChat =
 
 const handleManagerClientMessageText =
   async (ctx, next) => {
-    if (!ctx?.message?.text) {
-      return next();
-    }
+const incomingMessage =
+  ctx?.message ||
+  ctx?.channelPost ||
+  ctx?.update?.message ||
+  ctx?.update?.channel_post ||
+  null;
 
-    const managerTelegramId = String(
-      ctx?.from?.id || ""
-    ).trim();
+const incomingText = String(
+  incomingMessage?.text || ""
+).trim();
 
-    const currentChatId = String(
-      ctx?.chat?.id || ""
-    );
+if (!incomingText) {
+  return next();
+}
+
+if (incomingText.startsWith("/")) {
+  return next();
+}
+
+const managerTelegramId = String(
+
+  ctx?.from?.id ||
+
+  incomingMessage?.from?.id ||
+
+  ""
+
+).trim();
+
+const currentChatId = String(
+
+  ctx?.chat?.id ||
+
+  incomingMessage?.chat?.id ||
+
+  ""
+
+).trim();
 
     const stateByManager =
       managerTelegramId
@@ -92,11 +119,19 @@ const handleManagerClientMessageText =
           )
         : null;
 
-    const clientMessageState =
-      stateByManager || stateByChat;
+const clientMessageState =
 
-    const resolvedByManager =
-      Boolean(stateByManager);
+  stateByChat || stateByManager;
+
+const resolvedByManager =
+
+  Boolean(
+
+    stateByManager &&
+
+    !stateByChat
+
+  );
 
     if (!clientMessageState) {
       return next();
@@ -154,13 +189,9 @@ const handleManagerClientMessageText =
       return next();
     }
 
-    const messageText = String(
-      ctx?.message?.text || ""
-    ).trim();
+    const messageText =
 
-    if (!messageText) {
-      return next();
-    }
+      incomingText;
 
     console.log(
       "[MANAGER CLIENT MESSAGE][RECEIVED]",
@@ -243,7 +274,9 @@ const handleManagerClientMessageText =
         ),
 
         Number(
-          ctx?.message?.message_id || 0
+
+          incomingMessage?.message_id || 0
+
         ),
 
         Number(
@@ -16817,7 +16850,7 @@ if (TG_BOT_TOKEN) {
           }
         }
       }
-      
+
       const stateKey = String(
         ctx.from?.id ||
         ctx.chat?.id ||
