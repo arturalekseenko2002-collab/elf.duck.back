@@ -15126,11 +15126,7 @@ const START_BANNER_URL = String(process.env.START_BANNER_URL || "").trim();
 if (TG_BOT_TOKEN) {
   bot = new Telegraf(TG_BOT_TOKEN);
 
-  bot.use(
-
-    handleManagerClientMessageText
-
-  );
+  bot.use(handleManagerClientMessageText);
 
   console.log(
 
@@ -16657,6 +16653,171 @@ if (TG_BOT_TOKEN) {
 
 //     return;
 //   }
+
+      const incomingText = String(
+        ctx?.message?.text || ""
+      ).trim();
+
+      const managerTelegramId = String(
+        ctx?.from?.id || ""
+      ).trim();
+
+      const currentChatId = String(
+        ctx?.chat?.id || ""
+      ).trim();
+
+      if (
+        incomingText &&
+        !incomingText.startsWith("/")
+      ) {
+        const stateByChat = currentChatId
+          ? managerClientMessageStateByChat.get(
+              currentChatId
+            )
+          : null;
+
+        const stateByManager = managerTelegramId
+          ? managerClientMessageState.get(
+              managerTelegramId
+            )
+          : null;
+
+        const clientMessageState =
+          stateByChat || stateByManager;
+
+        if (clientMessageState) {
+          const expectedChatId = String(
+            clientMessageState?.managerChatId || ""
+          ).trim();
+
+          if (
+            !expectedChatId ||
+            expectedChatId === currentChatId
+          ) {
+            console.log(
+              "[MANAGER CLIENT MESSAGE][RECEIVED]",
+              {
+                orderId: String(
+                  clientMessageState?.orderId || ""
+                ),
+                orderNo: String(
+                  clientMessageState?.orderNo || ""
+                ),
+                managerTelegramId,
+                currentChatId,
+                clientTelegramId: String(
+                  clientMessageState?.clientTelegramId || ""
+                ),
+                resolvedBy:
+                  stateByChat ? "chat" : "manager",
+                messageText: incomingText,
+              }
+            );
+
+            try {
+              await bot.telegram.sendMessage(
+                String(
+                  clientMessageState.clientTelegramId
+                ),
+                [
+                  "💬 <b>Сообщение от менеджера</b>",
+                  "",
+                  `Заказ: <b>#${escapeHtml(
+                    clientMessageState.orderNo || "—"
+                  )}</b>`,
+                  "",
+                  escapeHtml(incomingText),
+                ].join("\n"),
+                {
+                  parse_mode: "HTML",
+                }
+              );
+
+              managerClientMessageState.delete(
+                managerTelegramId
+              );
+
+              const savedManagerTelegramId =
+                String(
+                  clientMessageState
+                    ?.managerTelegramId || ""
+                ).trim();
+
+              if (savedManagerTelegramId) {
+                managerClientMessageState.delete(
+                  savedManagerTelegramId
+                );
+              }
+
+              managerClientMessageStateByChat.delete(
+                currentChatId
+              );
+
+              const successMessage =
+                await ctx.reply(
+                  "✅ Сообщение отправлено клиенту."
+                );
+
+              const cleanupMessageIds = [
+                Number(
+                  clientMessageState
+                    ?.instructionMessageId || 0
+                ),
+                Number(
+                  ctx?.message?.message_id || 0
+                ),
+                Number(
+                  successMessage?.message_id || 0
+                ),
+              ].filter(Boolean);
+
+              setTimeout(async () => {
+                for (
+                  const messageId of cleanupMessageIds
+                ) {
+                  try {
+                    await bot.telegram.deleteMessage(
+                      currentChatId,
+                      messageId
+                    );
+                  } catch {}
+                }
+              }, 1200);
+
+              return;
+            } catch (error) {
+              console.error(
+                "manager client message send error:",
+                {
+                  error:
+                    error?.response?.description ||
+                    error?.message ||
+                    error,
+                  managerTelegramId,
+                  currentChatId,
+                  clientTelegramId:
+                    clientMessageState
+                      ?.clientTelegramId,
+                  orderNo:
+                    clientMessageState
+                      ?.orderNo,
+                }
+              );
+
+              await ctx.reply(
+                [
+                  "❌ Не удалось отправить сообщение клиенту.",
+                  "",
+                  "Возможно, клиент заблокировал бота или ни разу его не запускал.",
+                ].join("\n")
+              );
+
+              return;
+            }
+          }
+        }
+      }
+      
       const stateKey = String(
         ctx.from?.id ||
         ctx.chat?.id ||
