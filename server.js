@@ -242,6 +242,42 @@ const resolvedByManager =
         }
       );
 
+      const managerMessageId = Number(
+        incomingMessage?.message_id || 0
+      );
+
+      if (
+        currentChatId &&
+        managerMessageId
+      ) {
+        try {
+          await bot.telegram.deleteMessage(
+            currentChatId,
+            managerMessageId
+          );
+
+          console.log(
+            "[MANAGER CLIENT MESSAGE][MANAGER MESSAGE DELETED]",
+            {
+              currentChatId,
+              managerMessageId,
+            }
+          );
+        } catch (deleteError) {
+          console.error(
+            "[MANAGER CLIENT MESSAGE][MANAGER MESSAGE DELETE FAILED]",
+            {
+              currentChatId,
+              managerMessageId,
+              error:
+                deleteError?.response?.description ||
+                deleteError?.message ||
+                deleteError,
+            }
+          );
+        }
+      }
+
       if (expectedManagerTelegramId) {
 
         managerClientMessageState.delete(
@@ -271,12 +307,6 @@ const resolvedByManager =
         Number(
           clientMessageState
             ?.instructionMessageId || 0
-        ),
-
-        Number(
-
-          incomingMessage?.message_id || 0
-
         ),
 
         Number(
